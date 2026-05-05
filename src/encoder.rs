@@ -370,8 +370,9 @@ fn to_rgba(image: &TgaImage) -> Result<Vec<u8>> {
 /// size — and the on-disk overhead is only 1024 bytes for a full
 /// palette.
 ///
-/// Returns [`TgaError::Unsupported`] if the input contains more than
-/// 256 unique RGBA colours (the indexed palette can't represent them).
+/// Returns [`crate::TgaError::Unsupported`] if the input contains more
+/// than 256 unique RGBA colours (the indexed palette can't represent
+/// them).
 pub fn encode_tga_palette(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
     encode_palette_inner(width, height, rgba, ImageType::UncompressedColourMapped)
 }
