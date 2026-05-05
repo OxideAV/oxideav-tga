@@ -18,20 +18,34 @@
 //!
 //! Bottom-up and top-down row orders are auto-detected from
 //! image-descriptor bit 5; output is always normalised to top-left
-//! origin. The optional 26-byte TGA 2.0 footer is recognised and its
-//! extension-area / developer-area pointers are surfaced via
-//! [`parse_tga_footer`]; the extension-area body parse (gamma, software
-//! ID + version, postage-stamp thumbnail, colour-correction table) is
-//! deferred to round 2.
+//! origin. The optional 26-byte TGA 2.0 footer is recognised — use
+//! [`parse_tga_footer`] for the offsets, [`parse_tga_extension_area`]
+//! for the 495-byte extension-area body (author / comments / timestamp
+//! / software ID + version / aspect-ratio / gamma / attributes-type /
+//! pointers to colour-correction table + postage-stamp + scan-line
+//! tables), and [`parse_tga_postage_stamp`] for the embedded thumbnail.
 //!
 //! ## Write coverage
 //!
-//! * [`encode_tga_uncompressed`] — image type 2, 24 / 32 bpp.
-//! * [`encode_tga_rle`] — image type 10, 24 / 32 bpp.
+//! | Type | Compression | Pixel input        | API                       |
+//! | ---- | ----------- | ------------------ | ------------------------- |
+//! | 1    | uncompressed | RGBA → 8-bit index | [`encode_tga_palette`]    |
+//! | 2    | uncompressed | RGBA / RGB         | [`encode_tga_uncompressed`] |
+//! | 3    | uncompressed | Gray8              | [`encode_tga_grayscale`]  |
+//! | 9    | RLE          | RGBA → 8-bit index | [`encode_tga_palette_rle`] |
+//! | 10   | RLE          | RGBA / RGB         | [`encode_tga_rle`]        |
+//! | 11   | RLE          | Gray8              | [`encode_tga_grayscale_rle`] |
 //!
-//! Output depth is auto-selected: 32 bpp if any input alpha byte is
-//! `< 0xFF`, otherwise 24 bpp. Top-down origin (descriptor bit 5 set)
-//! is used unconditionally.
+//! Output depth for true-colour writers is auto-selected: 32 bpp if
+//! any input alpha byte is `< 0xFF`, otherwise 24 bpp. Palette writers
+//! cap the input at 256 unique RGBA colours and emit a 32-bit BGRA
+//! colour-map. Top-down origin (descriptor bit 5 set) is used
+//! unconditionally.
+//!
+//! [`encode_tga_with_extension`] wraps any of the encoders above and
+//! appends a TGA 2.0 footer + 495-byte extension-area body authored
+//! from an [`ExtensionAreaInput`] (optionally with a postage-stamp
+//! thumbnail).
 //!
 //! ## Standalone vs registry-integrated
 //!
@@ -56,14 +70,17 @@ pub mod types;
 /// Codec id for TGA image frames.
 pub const CODEC_ID_STR: &str = "tga";
 
-pub use decoder::{parse_tga, parse_tga_footer};
+pub use decoder::{parse_tga, parse_tga_extension_area, parse_tga_footer, parse_tga_postage_stamp};
 pub use encoder::{
+    encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
     encode_tga_rle, encode_tga_rle_image, encode_tga_uncompressed, encode_tga_uncompressed_image,
+    encode_tga_with_extension, ExtensionAreaInput,
 };
 pub use error::{Result, TgaError};
 pub use image::{TgaImage, TgaPixelFormat};
 pub use types::{
-    parse_footer, parse_header, ImageType, TgaFooter, TgaHeader, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
+    parse_extension_area, parse_footer, parse_header, ImageType, TgaExtensionArea, TgaFooter,
+    TgaHeader, TgaTimestamp, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
     TGA_HEADER_SIZE,
 };
 

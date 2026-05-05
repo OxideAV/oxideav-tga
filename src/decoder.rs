@@ -14,9 +14,10 @@
 //! * Type 10 — RLE true-colour, 15 / 16 / 24 / 32 bpp.
 //! * Type 11 — RLE grayscale, 8 bpp.
 //!
-//! Optional 26-byte TGA 2.0 footer is recognised. The pointers it
-//! carries (extension area / developer area) are parsed but not
-//! followed in round 1.
+//! Optional 26-byte TGA 2.0 footer is recognised. The extension area
+//! (gamma, software ID + version, postage-stamp thumbnail, attributes
+//! type, …) is parsed by [`parse_tga_extension_area`]; the embedded
+//! thumbnail is decoded by [`parse_tga_postage_stamp`].
 //!
 //! Image-descriptor bit 5 (bottom-up vs top-down) is honoured. Bit 4
 //! (right-to-left columns) is rejected as `Unsupported` rather than
@@ -27,7 +28,10 @@
 
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
-use crate::types::*;
+use crate::types::{
+    parse_extension_area, parse_footer, parse_header, ImageType, TgaExtensionArea, TgaFooter,
+    TgaHeader, TGA_HEADER_SIZE,
+};
 
 #[cfg(feature = "registry")]
 use oxideav_core::Decoder;
@@ -206,6 +210,139 @@ pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
 /// TGA 1.0 files (no footer) or files truncated before the footer.
 pub fn parse_tga_footer(input: &[u8]) -> Option<TgaFooter> {
     parse_footer(input)
+}
+
+/// Parse the TGA 2.0 extension-area body if the file has one.
+///
+/// Locates the footer + follows the `extension_area_offset` it carries,
+/// returning the parsed [`TgaExtensionArea`]. Returns `None` when the
+/// file has no footer, no extension area (`offset == 0`), or the
+/// extension area is truncated.
+pub fn parse_tga_extension_area(input: &[u8]) -> Option<TgaExtensionArea> {
+    let footer = parse_footer(input)?;
+    parse_extension_area(input, footer.extension_area_offset)
+}
+
+/// Decode the TGA 2.0 postage-stamp (thumbnail) image from a file with
+/// an extension area.
+///
+/// The postage stamp is a tiny preview image (typically 64×64) embedded
+/// at the byte offset given by [`TgaExtensionArea::postage_stamp_offset`].
+/// On disk it is two `u8` size bytes (width, height) followed by
+/// uncompressed pixel data using the *same* image type / pixel
+/// depth / palette as the main image (spec §C.6.10): never RLE,
+/// regardless of the parent image's compression.
+///
+/// Returns `Ok(None)` when the file has no extension area or no
+/// postage stamp; `Err` for truncated / malformed thumbnails.
+pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
+    let Some(footer) = parse_footer(input) else {
+        return Ok(None);
+    };
+    let Some(ext) = parse_extension_area(input, footer.extension_area_offset) else {
+        return Ok(None);
+    };
+    if ext.postage_stamp_offset == 0 {
+        return Ok(None);
+    }
+
+    // Re-parse the main header so we know the original pixel format
+    // and (if applicable) the colour map. The postage stamp shares
+    // both with the main image.
+    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
+        Error::unsupported(format!(
+            "TGA: image type {} not supported (postage stamp)",
+            header.image_type_raw
+        ))
+    })?;
+    if image_type == ImageType::None {
+        return Err(Error::invalid(
+            "TGA: image_type == 0 (postage stamp parent has no main image)",
+        ));
+    }
+
+    // Walk past the header + image ID + colour map to locate the
+    // colour map for palette lookups.
+    let mut cursor = TGA_HEADER_SIZE + header.id_length as usize;
+    if input.len() < cursor {
+        return Err(Error::invalid("TGA: truncated past image ID"));
+    }
+    let palette = if header.cmap_type == 1 {
+        if header.cmap_entry_size == 0 || header.cmap_length == 0 {
+            return Err(Error::invalid(
+                "TGA: cmap_type == 1 but cmap_entry_size / cmap_length == 0",
+            ));
+        }
+        let entry_bytes = header.cmap_entry_size.div_ceil(8) as usize;
+        let cmap_bytes = entry_bytes * header.cmap_length as usize;
+        if input.len() < cursor + cmap_bytes {
+            return Err(Error::invalid("TGA: colour map truncated"));
+        }
+        let cmap = &input[cursor..cursor + cmap_bytes];
+        cursor += cmap_bytes;
+        let _ = cursor;
+        Some(decode_palette(cmap, header.cmap_entry_size, entry_bytes)?)
+    } else {
+        None
+    };
+
+    let pp_off = ext.postage_stamp_offset as usize;
+    if input.len() < pp_off + 2 {
+        return Err(Error::invalid("TGA: postage stamp size header truncated"));
+    }
+    let stamp_w = input[pp_off] as u16;
+    let stamp_h = input[pp_off + 1] as u16;
+    if stamp_w == 0 || stamp_h == 0 {
+        return Err(Error::invalid("TGA: postage stamp has zero dimension"));
+    }
+
+    // Postage stamps are always uncompressed regardless of the parent
+    // image's compression. Construct a synthetic header so we can reuse
+    // decode_raw_pixels().
+    let stamp_header = TgaHeader {
+        id_length: 0,
+        cmap_type: header.cmap_type,
+        image_type_raw: match image_type {
+            ImageType::RleColourMapped => ImageType::UncompressedColourMapped as u8,
+            ImageType::RleTrueColour => ImageType::UncompressedTrueColour as u8,
+            ImageType::RleGrayscale => ImageType::UncompressedGrayscale as u8,
+            other => other as u8,
+        },
+        cmap_first: header.cmap_first,
+        cmap_length: header.cmap_length,
+        cmap_entry_size: header.cmap_entry_size,
+        x_origin: 0,
+        y_origin: 0,
+        width: stamp_w,
+        height: stamp_h,
+        depth: header.depth,
+        descriptor: 0x20, // top-down — postage stamps don't carry their own descriptor
+    };
+    let stamp_image_type =
+        ImageType::from_u8(stamp_header.image_type_raw).expect("converted from validated parent");
+
+    let pixels_in = &input[pp_off + 2..];
+    let pixels = decode_raw_pixels(
+        &stamp_header,
+        stamp_image_type,
+        pixels_in,
+        palette.as_deref(),
+    )?;
+
+    let pixel_format = if stamp_image_type.is_grayscale() {
+        TgaPixelFormat::Gray8
+    } else {
+        TgaPixelFormat::Rgba
+    };
+
+    Ok(Some(TgaImage {
+        width: stamp_w as u32,
+        height: stamp_h as u32,
+        pixel_format,
+        data: pixels,
+        pts: None,
+    }))
 }
 
 // ---------------------------------------------------------------------------

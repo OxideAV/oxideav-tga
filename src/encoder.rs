@@ -1,6 +1,6 @@
 //! TGA encode.
 //!
-//! Round 1 ships two write paths, both true-colour:
+//! Six write paths, one per image type the spec defines:
 //!
 //! * [`encode_tga_uncompressed`] — image type 2 (uncompressed BGR /
 //!   BGRA), 24 or 32 bpp depending on the input alpha channel.
@@ -8,16 +8,24 @@
 //!   The RLE encoder picks runs of ≥ 2 consecutive identical pixels
 //!   (max 128 per run-packet) vs raw runs (max 128 per raw-packet) per
 //!   spec §C.5.
+//! * [`encode_tga_palette`] — image type 1 (uncompressed colour-mapped),
+//!   8-bit indices into a 32-bit BGRA colour map (max 256 unique RGBA
+//!   colours in the input).
+//! * [`encode_tga_palette_rle`] — image type 9 (RLE colour-mapped).
+//! * [`encode_tga_grayscale`] — image type 3 (uncompressed grayscale),
+//!   8 bpp luma.
+//! * [`encode_tga_grayscale_rle`] — image type 11 (RLE grayscale).
 //!
-//! Both write a top-down image (image-descriptor bit 5 set) so decoders
-//! that don't honour the bit (some old viewers) still display them
-//! right-side up. The output is a TGA 1.0 file: no footer, no extension
-//! area. Round 2 will optionally append the 26-byte footer + extension
-//! area.
+//! All writers produce a top-down image (image-descriptor bit 5 set) so
+//! decoders that don't honour the bit (some old viewers) still display
+//! them right-side up. The base output is a TGA 1.0 file: no footer, no
+//! extension area; use [`encode_tga_with_extension`] to append a
+//! 26-byte TGA 2.0 footer + 495-byte extension-area body authored from
+//! [`ExtensionAreaInput`] (optionally with a postage-stamp thumbnail).
 
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
-use crate::types::*;
+use crate::types::{ImageType, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE};
 
 #[cfg(feature = "registry")]
 use oxideav_core::Encoder;
@@ -338,8 +346,433 @@ fn to_rgba(image: &TgaImage) -> Result<Vec<u8>> {
             }
             Ok(out)
         }
-        TgaPixelFormat::Gray8 => Err(Error::unsupported(
-            "TGA encoder: Gray8 input not supported in round 1 (use Rgba/Rgb24)",
-        )),
+        TgaPixelFormat::Gray8 => {
+            // Promote luma → grey RGBA so RGBA-only encoders accept it.
+            let mut out = Vec::with_capacity(image.data.len() * 4);
+            for &g in &image.data {
+                out.extend_from_slice(&[g, g, g, 0xFF]);
+            }
+            Ok(out)
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Image type 1 / 9 — uncompressed + RLE colour-mapped (palette indexed).
+// ---------------------------------------------------------------------------
+
+/// Encode `width × height` RGBA bytes into an uncompressed colour-mapped
+/// TGA file (image type 1) with an 8-bit palette index.
+///
+/// The palette is built from the unique RGBA colours in the input. A
+/// 32-bit BGRA colour map is always emitted (even if the input is fully
+/// opaque) because the spec doesn't require us to pick a smaller entry
+/// size — and the on-disk overhead is only 1024 bytes for a full
+/// palette.
+///
+/// Returns [`TgaError::Unsupported`] if the input contains more than
+/// 256 unique RGBA colours (the indexed palette can't represent them).
+pub fn encode_tga_palette(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
+    encode_palette_inner(width, height, rgba, ImageType::UncompressedColourMapped)
+}
+
+/// Encode `width × height` RGBA bytes into an RLE colour-mapped TGA
+/// file (image type 9). Palette construction matches
+/// [`encode_tga_palette`]; RLE packetisation runs on the 8-bit indices,
+/// per spec §C.5.
+pub fn encode_tga_palette_rle(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
+    encode_palette_inner(width, height, rgba, ImageType::RleColourMapped)
+}
+
+fn encode_palette_inner(
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+    image_type: ImageType,
+) -> Result<Vec<u8>> {
+    if rgba.len() % 4 != 0 {
+        return Err(Error::invalid(
+            "TGA encoder: palette input length not multiple of 4",
+        ));
+    }
+    if rgba.len() < width as usize * height as usize * 4 {
+        return Err(Error::invalid(
+            "TGA palette encoder: input shorter than w*h*4",
+        ));
+    }
+    // Build palette + index stream.
+    let mut palette: Vec<[u8; 4]> = Vec::new();
+    let mut indices: Vec<u8> = Vec::with_capacity(width as usize * height as usize);
+    // Linear scan is fine for the ≤ 256 unique-colour budget.
+    for chunk in rgba.chunks_exact(4).take(width as usize * height as usize) {
+        let p = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        let idx = match palette.iter().position(|q| *q == p) {
+            Some(i) => i,
+            None => {
+                if palette.len() == 256 {
+                    return Err(Error::unsupported(
+                        "TGA palette encoder: input has > 256 unique RGBA colours \
+                         (use encode_tga_uncompressed/encode_tga_rle for true-colour)",
+                    ));
+                }
+                palette.push(p);
+                palette.len() - 1
+            }
+        };
+        indices.push(idx as u8);
+    }
+
+    // Header. cmap_type=1, depth=8, cmap_entry_size=32.
+    let palette_len: u16 = palette.len() as u16;
+    let mut out = Vec::with_capacity(TGA_HEADER_SIZE + (palette_len as usize) * 4 + indices.len());
+    out.push(0); // id_length
+    out.push(1); // cmap_type
+    out.push(image_type as u8);
+    out.extend_from_slice(&0u16.to_le_bytes()); // cmap_first
+    out.extend_from_slice(&palette_len.to_le_bytes()); // cmap_length
+    out.push(32); // cmap_entry_size — BGRA
+    out.extend_from_slice(&0u16.to_le_bytes()); // x_origin
+    out.extend_from_slice(&0u16.to_le_bytes()); // y_origin
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    out.push(8); // depth — palette indices are always 8 bpp
+                 // Indexed images don't carry an alpha-bit count in the descriptor:
+                 // the palette entry holds the alpha channel.
+    out.push(0x20); // top-down
+
+    // Colour map: BGRA per entry.
+    for p in &palette {
+        out.push(p[2]);
+        out.push(p[1]);
+        out.push(p[0]);
+        out.push(p[3]);
+    }
+
+    // Pixel data.
+    if image_type.is_rle() {
+        for y in 0..height as usize {
+            let row = &indices[y * width as usize..(y + 1) * width as usize];
+            rle_one_row_u8(row, &mut out);
+        }
+    } else {
+        out.extend_from_slice(&indices);
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Image type 3 / 11 — uncompressed + RLE grayscale.
+// ---------------------------------------------------------------------------
+
+/// Encode `width × height` Gray8 bytes (1 byte per pixel, top-down,
+/// row-major) into an uncompressed grayscale TGA file (image type 3).
+pub fn encode_tga_grayscale(width: u16, height: u16, gray: &[u8]) -> Result<Vec<u8>> {
+    encode_grayscale_inner(width, height, gray, ImageType::UncompressedGrayscale)
+}
+
+/// Encode `width × height` Gray8 bytes into an RLE grayscale TGA file
+/// (image type 11). RLE packetisation per spec §C.5.
+pub fn encode_tga_grayscale_rle(width: u16, height: u16, gray: &[u8]) -> Result<Vec<u8>> {
+    encode_grayscale_inner(width, height, gray, ImageType::RleGrayscale)
+}
+
+fn encode_grayscale_inner(
+    width: u16,
+    height: u16,
+    gray: &[u8],
+    image_type: ImageType,
+) -> Result<Vec<u8>> {
+    if gray.len() < width as usize * height as usize {
+        return Err(Error::invalid(
+            "TGA grayscale encoder: input shorter than w*h",
+        ));
+    }
+    let mut out = Vec::with_capacity(TGA_HEADER_SIZE + gray.len());
+    out.push(0); // id_length
+    out.push(0); // cmap_type
+    out.push(image_type as u8);
+    out.extend_from_slice(&0u16.to_le_bytes()); // cmap_first
+    out.extend_from_slice(&0u16.to_le_bytes()); // cmap_length
+    out.push(0); // cmap_entry_size
+    out.extend_from_slice(&0u16.to_le_bytes()); // x_origin
+    out.extend_from_slice(&0u16.to_le_bytes()); // y_origin
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    out.push(8); // depth
+    out.push(0x20); // top-down
+    let pixels = &gray[..width as usize * height as usize];
+    if image_type.is_rle() {
+        for y in 0..height as usize {
+            let row = &pixels[y * width as usize..(y + 1) * width as usize];
+            rle_one_row_u8(row, &mut out);
+        }
+    } else {
+        out.extend_from_slice(pixels);
+    }
+    Ok(out)
+}
+
+/// Single-byte-per-pixel RLE packetisation (used by both 8-bit
+/// palette-indexed and 8-bit grayscale streams). Same algorithm as
+/// [`rle_one_row`] but with `bpp=1` and no BGR swap.
+fn rle_one_row_u8(row: &[u8], out: &mut Vec<u8>) {
+    let mut i = 0;
+    let n = row.len();
+    while i < n {
+        let mut run = 1;
+        while i + run < n && row[i + run] == row[i] && run < 128 {
+            run += 1;
+        }
+        if run >= 2 {
+            out.push(0x80 | (run as u8 - 1));
+            out.push(row[i]);
+            i += run;
+        } else {
+            let raw_start = i;
+            let mut raw_end = i + 1;
+            while raw_end < n && raw_end - raw_start < 128 {
+                if raw_end + 1 < n && row[raw_end + 1] == row[raw_end] {
+                    break;
+                }
+                raw_end += 1;
+            }
+            let count = raw_end - raw_start;
+            out.push(((count as u8) - 1) & 0x7F);
+            out.extend_from_slice(&row[raw_start..raw_end]);
+            i = raw_end;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TGA 2.0 footer + extension area write.
+// ---------------------------------------------------------------------------
+
+/// Author-supplied fields for the TGA 2.0 extension area body.
+///
+/// Pass to [`encode_tga_with_extension`]. All fields are optional —
+/// leave string fields empty (`String::new()`) and ratio fields at
+/// `(0, 0)` to opt out of advertising them. Strings are silently
+/// truncated to the spec's per-field limit (40 chars for author/job/
+/// software, 80 chars per comment line).
+#[derive(Debug, Clone, Default)]
+pub struct ExtensionAreaInput {
+    pub author_name: String,
+    pub author_comment: [String; 4],
+    pub timestamp: crate::types::TgaTimestamp,
+    pub job_name: String,
+    pub job_time: (u16, u16, u16),
+    pub software_id: String,
+    pub software_version: (u16, char),
+    pub key_color: [u8; 4],
+    pub pixel_aspect_ratio: (u16, u16),
+    pub gamma: (u16, u16),
+    pub attributes_type: u8,
+    /// Optional postage-stamp / thumbnail. Always emitted in
+    /// uncompressed BGR(A) form (per spec §C.6.10) regardless of the
+    /// parent image's compression.
+    pub postage_stamp: Option<TgaImage>,
+}
+
+/// Append a TGA 2.0 footer + extension area body to a TGA byte stream
+/// produced by any of the [`encode_tga_uncompressed`] / [`encode_tga_rle`]
+/// / [`encode_tga_palette`] / [`encode_tga_palette_rle`] /
+/// [`encode_tga_grayscale`] / [`encode_tga_grayscale_rle`] writers.
+///
+/// Returns a new `Vec<u8>` that is a complete TGA 2.0 file: original
+/// pixel data, then the extension area, then the optional postage-stamp
+/// (if `ext.postage_stamp` is `Some`), then the 26-byte footer with the
+/// `extension_area_offset` pointing at the extension area we just wrote
+/// and `developer_directory_offset` set to 0.
+///
+/// When a postage stamp is supplied it is serialised in the same pixel
+/// format the parent TGA uses on disk (spec §C.6.10): 24-bit BGR if the
+/// parent header reports `depth = 24`, 32-bit BGRA if it reports
+/// `depth = 32`, etc. The supplied `stamp.pixel_format` is treated as
+/// the source representation and converted automatically.
+pub fn encode_tga_with_extension(base_tga: &[u8], ext: &ExtensionAreaInput) -> Result<Vec<u8>> {
+    // We need the parent depth to know how to lay out the postage
+    // stamp on disk. Cheap header peek.
+    let parent_depth = if base_tga.len() >= TGA_HEADER_SIZE {
+        base_tga[16]
+    } else {
+        return Err(Error::invalid(
+            "TGA encoder: base_tga too short to contain a header",
+        ));
+    };
+
+    let mut out = Vec::with_capacity(
+        base_tga.len()
+            + TGA_EXTENSION_AREA_SIZE
+            + 2
+            + ext
+                .postage_stamp
+                .as_ref()
+                .map(|s| s.data.len())
+                .unwrap_or(0)
+            + TGA_FOOTER_SIZE,
+    );
+    out.extend_from_slice(base_tga);
+
+    let extension_area_offset = out.len() as u32;
+
+    // Write extension area, leaving the 4 pointer fields blank for
+    // back-patching once we've appended the postage stamp.
+    let ext_area_start = out.len();
+    write_extension_area_skeleton(&mut out, ext);
+
+    // Postage stamp (optional).
+    let postage_stamp_offset = if let Some(stamp) = &ext.postage_stamp {
+        let off = out.len() as u32;
+        write_postage_stamp(&mut out, stamp, parent_depth)?;
+        off
+    } else {
+        0
+    };
+
+    // Back-patch the 4 pointer fields (colour-correction, postage
+    // stamp, scan-line, attributes-type) at offsets 482/486/490/494.
+    out[ext_area_start + 482..ext_area_start + 486].copy_from_slice(&0u32.to_le_bytes());
+    out[ext_area_start + 486..ext_area_start + 490]
+        .copy_from_slice(&postage_stamp_offset.to_le_bytes());
+    out[ext_area_start + 490..ext_area_start + 494].copy_from_slice(&0u32.to_le_bytes());
+    out[ext_area_start + 494] = ext.attributes_type;
+
+    // Footer.
+    out.extend_from_slice(&extension_area_offset.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // developer_directory_offset
+    out.extend_from_slice(crate::types::TGA_FOOTER_MAGIC.as_slice());
+    Ok(out)
+}
+
+fn write_extension_area_skeleton(out: &mut Vec<u8>, ext: &ExtensionAreaInput) {
+    let start = out.len();
+    // Pre-fill 495 bytes of zero so we can patch fields by offset.
+    out.resize(start + TGA_EXTENSION_AREA_SIZE, 0u8);
+
+    // extension_size — always the canonical 495.
+    let sz_bytes = (TGA_EXTENSION_AREA_SIZE as u16).to_le_bytes();
+    out[start..start + 2].copy_from_slice(&sz_bytes);
+
+    write_str_field(out, start + 2, &ext.author_name, 41);
+    for (i, line) in ext.author_comment.iter().enumerate() {
+        write_str_field(out, start + 43 + i * 81, line, 81);
+    }
+    let t = ext.timestamp;
+    out[start + 367..start + 369].copy_from_slice(&t.month.to_le_bytes());
+    out[start + 369..start + 371].copy_from_slice(&t.day.to_le_bytes());
+    out[start + 371..start + 373].copy_from_slice(&t.year.to_le_bytes());
+    out[start + 373..start + 375].copy_from_slice(&t.hour.to_le_bytes());
+    out[start + 375..start + 377].copy_from_slice(&t.minute.to_le_bytes());
+    out[start + 377..start + 379].copy_from_slice(&t.second.to_le_bytes());
+    write_str_field(out, start + 379, &ext.job_name, 41);
+    out[start + 420..start + 422].copy_from_slice(&ext.job_time.0.to_le_bytes());
+    out[start + 422..start + 424].copy_from_slice(&ext.job_time.1.to_le_bytes());
+    out[start + 424..start + 426].copy_from_slice(&ext.job_time.2.to_le_bytes());
+    write_str_field(out, start + 426, &ext.software_id, 41);
+    out[start + 467..start + 469].copy_from_slice(&ext.software_version.0.to_le_bytes());
+    out[start + 469] = ext.software_version.1 as u8;
+    out[start + 470..start + 474].copy_from_slice(&ext.key_color);
+    out[start + 474..start + 476].copy_from_slice(&ext.pixel_aspect_ratio.0.to_le_bytes());
+    out[start + 476..start + 478].copy_from_slice(&ext.pixel_aspect_ratio.1.to_le_bytes());
+    out[start + 478..start + 480].copy_from_slice(&ext.gamma.0.to_le_bytes());
+    out[start + 480..start + 482].copy_from_slice(&ext.gamma.1.to_le_bytes());
+    // 482-485: colour_correction_offset, 486-489: postage_stamp_offset,
+    // 490-493: scan_line_offset, 494: attributes_type — all back-patched
+    // by the caller after the postage stamp is written.
+}
+
+fn write_str_field(out: &mut [u8], start: usize, s: &str, capacity: usize) {
+    // Spec convention: NUL-terminated strings inside a fixed-width
+    // field, padded with NULs (already pre-filled by `resize(0)`).
+    let max = capacity.saturating_sub(1);
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(max);
+    out[start..start + n].copy_from_slice(&bytes[..n]);
+    // Trailing NUL is already there from the resize.
+}
+
+fn write_postage_stamp(out: &mut Vec<u8>, stamp: &TgaImage, parent_depth: u8) -> Result<()> {
+    if stamp.width == 0 || stamp.height == 0 {
+        return Err(Error::invalid("TGA encoder: postage stamp zero dimension"));
+    }
+    if stamp.width > 255 || stamp.height > 255 {
+        return Err(Error::invalid(
+            "TGA encoder: postage stamp dimensions exceed 255 (the on-disk size header is u8)",
+        ));
+    }
+    out.push(stamp.width as u8);
+    out.push(stamp.height as u8);
+
+    // Spec §C.6.10: postage stamp pixel format mirrors the parent's
+    // (image type + depth). For colour-mapped parents the stamp stores
+    // 8-bit indices into the *same* colour map; for true-colour parents
+    // it stores BGR(A) at the parent's depth; for grayscale parents it
+    // stores 8 bpp luma.
+    match stamp.pixel_format {
+        TgaPixelFormat::Rgba => match parent_depth {
+            32 => {
+                for c in stamp.data.chunks_exact(4) {
+                    out.push(c[2]);
+                    out.push(c[1]);
+                    out.push(c[0]);
+                    out.push(c[3]);
+                }
+            }
+            24 => {
+                for c in stamp.data.chunks_exact(4) {
+                    out.push(c[2]);
+                    out.push(c[1]);
+                    out.push(c[0]);
+                }
+            }
+            8 => {
+                // Parent is colour-mapped: we'd need to map every RGBA
+                // pixel through the parent's palette to get an index.
+                // That's a separate computation the caller can do; we
+                // refuse here to avoid silently producing wrong output.
+                return Err(Error::unsupported(
+                    "TGA encoder: postage_stamp with Rgba pixel format and a colour-mapped parent — \
+                     map the thumbnail through the parent palette and pass it as a Gray8 \
+                     pixel buffer of indices instead",
+                ));
+            }
+            other => {
+                return Err(Error::unsupported(format!(
+                    "TGA encoder: postage stamp with parent depth {other} not supported"
+                )));
+            }
+        },
+        TgaPixelFormat::Rgb24 => match parent_depth {
+            24 => {
+                for c in stamp.data.chunks_exact(3) {
+                    out.push(c[2]);
+                    out.push(c[1]);
+                    out.push(c[0]);
+                }
+            }
+            32 => {
+                for c in stamp.data.chunks_exact(3) {
+                    out.push(c[2]);
+                    out.push(c[1]);
+                    out.push(c[0]);
+                    out.push(0xFF);
+                }
+            }
+            other => {
+                return Err(Error::unsupported(format!(
+                    "TGA encoder: postage stamp Rgb24 with parent depth {other} not supported"
+                )));
+            }
+        },
+        TgaPixelFormat::Gray8 => {
+            if parent_depth != 8 {
+                return Err(Error::unsupported(format!(
+                    "TGA encoder: postage stamp Gray8 only valid with parent depth 8, got {parent_depth}"
+                )));
+            }
+            out.extend_from_slice(&stamp.data);
+        }
+    }
+    Ok(())
 }

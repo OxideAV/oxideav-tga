@@ -27,24 +27,39 @@ consulted.
   top-down on the output. Bit 4 (right-to-left columns) is rejected
   rather than producing silently-mirrored pixels — no real-world TGA
   encoder sets it.
-* The optional 26-byte TGA 2.0 footer is recognised; its
-  extension-area / developer-area pointers are surfaced via
-  [`parse_tga_footer`]. Full extension-area body parse (gamma,
-  software ID + version, postage-stamp thumbnail, colour-correction
-  table) is on the round-2 roadmap.
+* The optional 26-byte TGA 2.0 footer is recognised. Use
+  `parse_tga_footer` for the extension/developer-area offsets,
+  `parse_tga_extension_area` for the 495-byte extension-area body
+  (author / comments / timestamp / job / software ID + version /
+  pixel-aspect / gamma / colour-correction + postage-stamp +
+  scan-line offsets / attributes-type), and `parse_tga_postage_stamp`
+  to pull out the embedded thumbnail.
 
 ## Encode
 
-* `encode_tga_uncompressed(w, h, &rgba)` writes image type 2.
-* `encode_tga_rle(w, h, &rgba)` writes image type 10. RLE packets are
-  selected per spec §C.5: a run of ≥ 2 consecutive identical pixels
-  is emitted as a run-length packet (max 128 pixels per packet);
-  isolated pixels are coalesced into raw packets (max 128 pixels per
-  packet). RLE doesn't cross scanline boundaries.
+| Type | Compression  | Pixel input  | API                          |
+| ---- | ------------ | ------------ | ---------------------------- |
+| 1    | uncompressed | RGBA → index | `encode_tga_palette`         |
+| 2    | uncompressed | RGBA / RGB   | `encode_tga_uncompressed`    |
+| 3    | uncompressed | Gray8        | `encode_tga_grayscale`       |
+| 9    | RLE          | RGBA → index | `encode_tga_palette_rle`     |
+| 10   | RLE          | RGBA / RGB   | `encode_tga_rle`             |
+| 11   | RLE          | Gray8        | `encode_tga_grayscale_rle`   |
 
-Output depth is auto-selected: 32 bpp if any input alpha byte is
-`< 0xFF`, otherwise 24 bpp. Top-down origin (descriptor bit 5 set)
-is used unconditionally.
+* RLE packets selected per spec §C.5: a run of ≥ 2 consecutive
+  identical pixels emits a run-length packet (max 128 pixels per
+  packet); isolated pixels coalesce into raw packets (max 128 pixels
+  per packet). RLE doesn't cross scanline boundaries.
+* True-colour writers auto-select depth: 32 bpp if any input alpha
+  byte is `< 0xFF`, else 24 bpp.
+* Palette writers cap at 256 unique RGBA colours and emit a 32-bit
+  BGRA colour map (with a clear `Unsupported` error past that).
+* Top-down origin (descriptor bit 5 set) is used unconditionally.
+
+`encode_tga_with_extension(base, &ExtensionAreaInput { … })` wraps
+any of the writers above and appends a TGA 2.0 footer + extension
+area body (and optional postage-stamp thumbnail in the parent's
+pixel format) to the output.
 
 ```rust
 use oxideav_tga::{encode_tga_rle, parse_tga};
@@ -81,10 +96,11 @@ oxideav_tga::register(&mut codecs, &mut containers);
 
 ## Lacks
 
-Round 1 limits — followups for round 2:
-
-* Full TGA 2.0 extension area body parse (gamma, software ID +
-  version, postage-stamp thumbnail, colour-correction table,
-  attributes type, time/date stamp, …).
-* Postage-stamp / thumbnail extraction.
-* Write paths for image types 1 / 3 / 9 / 11 (palette + grayscale).
+* Developer area / developer directory parsing — the footer offset
+  is surfaced via `parse_tga_footer` but the variable-length tag
+  table at that offset isn't decoded.
+* Colour-correction table read/write (4 × 256 × u16 entries pointed
+  at by the extension area). Decoders that consult it are rare in
+  the wild.
+* Scan-line table parsing (per-row byte offsets in the extension
+  area; only useful for partial-image readers).
