@@ -40,18 +40,21 @@ consulted.
 | Type | Compression  | Pixel input  | API                          |
 | ---- | ------------ | ------------ | ---------------------------- |
 | 1    | uncompressed | RGBA → index | `encode_tga_palette`         |
-| 2    | uncompressed | RGBA / RGB   | `encode_tga_uncompressed`    |
+| 2    | uncompressed | RGBA         | `encode_tga_uncompressed`    |
+| 2    | uncompressed | RGB24        | `encode_tga_uncompressed_rgb24` |
 | 3    | uncompressed | Gray8        | `encode_tga_grayscale`       |
 | 9    | RLE          | RGBA → index | `encode_tga_palette_rle`     |
-| 10   | RLE          | RGBA / RGB   | `encode_tga_rle`             |
+| 10   | RLE          | RGBA         | `encode_tga_rle`             |
+| 10   | RLE          | RGB24        | `encode_tga_rle_rgb24`       |
 | 11   | RLE          | Gray8        | `encode_tga_grayscale_rle`   |
 
 * RLE packets selected per spec §C.5: a run of ≥ 2 consecutive
   identical pixels emits a run-length packet (max 128 pixels per
   packet); isolated pixels coalesce into raw packets (max 128 pixels
   per packet). RLE doesn't cross scanline boundaries.
-* True-colour writers auto-select depth: 32 bpp if any input alpha
-  byte is `< 0xFF`, else 24 bpp.
+* True-colour RGBA writers auto-select depth: 32 bpp if any input
+  alpha byte is `< 0xFF`, else 24 bpp. The RGB24-input variants
+  always emit 24 bpp BGR (no alpha-detection scan).
 * Palette writers cap at 256 unique RGBA colours and emit a 32-bit
   BGRA colour map (with a clear `Unsupported` error past that).
 * Top-down origin (descriptor bit 5 set) is used unconditionally.

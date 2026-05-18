@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 3: standalone RGB24-input entry points
+  `encode_tga_uncompressed_rgb24` (image type 2, 24 bpp) and
+  `encode_tga_rle_rgb24` (image type 10, 24 bpp). Symmetric to the
+  RGBA writers but skip the alpha-detection scan — output is always
+  24 bpp BGR on the wire, so callers that already know the input is
+  fully opaque avoid the per-pixel alpha-byte walk.
+- Round 3: 23 hardening tests in `tests/round3.rs`:
+  RGB24-input roundtrip on both uncompressed + RLE writers,
+  extension-area roundtrip across every writer surface (types
+  1/2/3/9/10/11), extension-area encode→parse→re-encode→parse
+  fixed-point convergence, postage-stamp coverage at 24-bit/32-bit/
+  Gray8/palette parent depths (incl. the §C.6.10 "indices into
+  parent palette" path via a Gray8-shaped index buffer), RLE
+  pathological inputs (exact-128 runs, 129-pixel split, 300-pixel
+  multi-packet rows, all-raw-packet alternation), 1×1 every-writer
+  smoke. Brings the suite from 45 → 68 tests, all green standalone
+  and with `--no-default-features`.
+
 - Round 2: write paths for image types 1 (uncompressed colour-mapped),
   3 (uncompressed grayscale), 9 (RLE colour-mapped), and 11 (RLE
   grayscale) — `encode_tga_palette`, `encode_tga_grayscale`,

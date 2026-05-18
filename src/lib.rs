@@ -73,8 +73,9 @@ pub const CODEC_ID_STR: &str = "tga";
 pub use decoder::{parse_tga, parse_tga_extension_area, parse_tga_footer, parse_tga_postage_stamp};
 pub use encoder::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_rle, encode_tga_rle_image, encode_tga_uncompressed, encode_tga_uncompressed_image,
-    encode_tga_with_extension, ExtensionAreaInput,
+    encode_tga_rle, encode_tga_rle_image, encode_tga_rle_rgb24, encode_tga_uncompressed,
+    encode_tga_uncompressed_image, encode_tga_uncompressed_rgb24, encode_tga_with_extension,
+    ExtensionAreaInput,
 };
 pub use error::{Result, TgaError};
 pub use image::{TgaImage, TgaPixelFormat};

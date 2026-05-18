@@ -187,6 +187,74 @@ pub fn encode_tga_uncompressed(width: u16, height: u16, rgba: &[u8]) -> Result<V
     Ok(out)
 }
 
+/// Encode `width × height` **RGB24** bytes (3 bytes per pixel, top-down,
+/// row-major) into an uncompressed TGA file (image type 2) at 24 bpp.
+///
+/// Symmetric to [`encode_tga_uncompressed`] but skips the alpha-channel
+/// detection — the output is always 24 bpp BGR. Use this when the
+/// caller already knows the input is fully opaque and wants to avoid
+/// the auto-detection scan over the alpha channel.
+pub fn encode_tga_uncompressed_rgb24(width: u16, height: u16, rgb: &[u8]) -> Result<Vec<u8>> {
+    if rgb.len() % 3 != 0 {
+        return Err(Error::invalid(
+            "TGA encoder: rgb input length not multiple of 3",
+        ));
+    }
+    if rgb.len() < width as usize * height as usize * 3 {
+        return Err(Error::invalid("TGA encoder: rgb input shorter than w*h*3"));
+    }
+    let mut out = Vec::with_capacity(TGA_HEADER_SIZE + rgb.len());
+    write_header(
+        &mut out,
+        ImageType::UncompressedTrueColour,
+        width,
+        height,
+        24,
+        0,
+    );
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let off = (y * width as usize + x) * 3;
+            // BGR on the wire.
+            out.push(rgb[off + 2]);
+            out.push(rgb[off + 1]);
+            out.push(rgb[off]);
+        }
+    }
+    Ok(out)
+}
+
+/// Encode `width × height` **RGB24** bytes (3 bytes per pixel, top-down,
+/// row-major) into an RLE TGA file (image type 10) at 24 bpp.
+///
+/// Symmetric to [`encode_tga_rle`] but for RGB24-only inputs — the
+/// output is always 24 bpp BGR. RLE packetisation per spec §C.5 (same
+/// algorithm as the RGBA variant, just with no alpha channel on the
+/// wire).
+pub fn encode_tga_rle_rgb24(width: u16, height: u16, rgb: &[u8]) -> Result<Vec<u8>> {
+    if rgb.len() % 3 != 0 {
+        return Err(Error::invalid(
+            "TGA encoder: rgb input length not multiple of 3",
+        ));
+    }
+    if rgb.len() < width as usize * height as usize * 3 {
+        return Err(Error::invalid("TGA encoder: rgb input shorter than w*h*3"));
+    }
+    let mut out = Vec::with_capacity(TGA_HEADER_SIZE + rgb.len() / 2);
+    write_header(&mut out, ImageType::RleTrueColour, width, height, 24, 0);
+
+    let mut row_pixels: Vec<[u8; 3]> = Vec::with_capacity(width as usize);
+    for y in 0..height as usize {
+        row_pixels.clear();
+        for x in 0..width as usize {
+            let off = (y * width as usize + x) * 3;
+            row_pixels.push([rgb[off], rgb[off + 1], rgb[off + 2]]);
+        }
+        rle_one_row_rgb24(&row_pixels, &mut out);
+    }
+    Ok(out)
+}
+
 /// Encode `width × height` RGBA bytes (4 bytes per pixel, top-down,
 /// row-major) into an RLE TGA file (image type 10). Output depth is
 /// 32 bpp if any input alpha byte is `< 0xFF`, otherwise 24 bpp.
@@ -320,6 +388,44 @@ fn write_pixel(p: &[u8; 4], bpp: usize, out: &mut Vec<u8>) {
     out.push(p[0]);
     if bpp == 4 {
         out.push(p[3]);
+    }
+}
+
+/// RLE packetisation for `[u8; 3]` (RGB24) pixels. Same algorithm as
+/// [`rle_one_row`] but always 24 bpp BGR on the wire and no alpha.
+fn rle_one_row_rgb24(row: &[[u8; 3]], out: &mut Vec<u8>) {
+    let mut i = 0;
+    let n = row.len();
+    while i < n {
+        let mut run = 1;
+        while i + run < n && row[i + run] == row[i] && run < 128 {
+            run += 1;
+        }
+        if run >= 2 {
+            out.push(0x80 | (run as u8 - 1));
+            // BGR on wire.
+            out.push(row[i][2]);
+            out.push(row[i][1]);
+            out.push(row[i][0]);
+            i += run;
+        } else {
+            let raw_start = i;
+            let mut raw_end = i + 1;
+            while raw_end < n && raw_end - raw_start < 128 {
+                if raw_end + 1 < n && row[raw_end + 1] == row[raw_end] {
+                    break;
+                }
+                raw_end += 1;
+            }
+            let count = raw_end - raw_start;
+            out.push(((count as u8) - 1) & 0x7F);
+            for p in &row[raw_start..raw_end] {
+                out.push(p[2]);
+                out.push(p[1]);
+                out.push(p[0]);
+            }
+            i = raw_end;
+        }
     }
 }
 
