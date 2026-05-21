@@ -23,7 +23,11 @@
 //! for the 495-byte extension-area body (author / comments / timestamp
 //! / software ID + version / aspect-ratio / gamma / attributes-type /
 //! pointers to colour-correction table + postage-stamp + scan-line
-//! tables), and [`parse_tga_postage_stamp`] for the embedded thumbnail.
+//! tables), [`parse_tga_postage_stamp`] for the embedded thumbnail,
+//! [`parse_tga_colour_correction_table`] for the §C.6.8 4×256×u16
+//! ARGB curves, [`parse_tga_scan_line_table`] for the §C.6.9 per-row
+//! byte offsets, and [`parse_tga_developer_area`] for the §C.7
+//! application-extensible tag directory.
 //!
 //! ## Write coverage
 //!
@@ -70,18 +74,23 @@ pub mod types;
 /// Codec id for TGA image frames.
 pub const CODEC_ID_STR: &str = "tga";
 
-pub use decoder::{parse_tga, parse_tga_extension_area, parse_tga_footer, parse_tga_postage_stamp};
+pub use decoder::{
+    parse_tga, parse_tga_colour_correction_table, parse_tga_developer_area,
+    parse_tga_extension_area, parse_tga_footer, parse_tga_postage_stamp, parse_tga_scan_line_table,
+};
 pub use encoder::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
     encode_tga_rle, encode_tga_rle_image, encode_tga_rle_rgb24, encode_tga_uncompressed,
     encode_tga_uncompressed_image, encode_tga_uncompressed_rgb24, encode_tga_with_extension,
-    ExtensionAreaInput,
+    DeveloperTagInput, ExtensionAreaInput,
 };
 pub use error::{Result, TgaError};
 pub use image::{TgaImage, TgaPixelFormat};
 pub use types::{
-    parse_extension_area, parse_footer, parse_header, ImageType, TgaExtensionArea, TgaFooter,
-    TgaHeader, TgaTimestamp, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
+    parse_extension_area, parse_footer, parse_header, AttributesType, ImageType,
+    TgaColourCorrectionTable, TgaDeveloperArea, TgaDeveloperTag, TgaExtensionArea, TgaFooter,
+    TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
+    TGA_COLOUR_CORRECTION_TABLE_SIZE, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
     TGA_HEADER_SIZE,
 };
 

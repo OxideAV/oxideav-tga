@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 4: TGA 2.0 developer area (spec §C.7) parse + write. New
+  `parse_tga_developer_area` returns a `TgaDeveloperArea` holding the
+  tag directory (`Vec<TgaDeveloperTag>`), with a `payload(input, tag)`
+  borrow accessor for each tag's application-defined bytes. New
+  `DeveloperTagInput` lets callers attach an arbitrary list of
+  application tags to `ExtensionAreaInput::developer_tags`; the writer
+  lays the payloads down before the extension area, builds the
+  directory, and back-patches the footer's
+  `developer_directory_offset`. Marker tags (empty payload) round-trip
+  with on-disk offset/size of zero.
+- Round 4: colour-correction table (spec §C.6.8) parse + write.
+  `TgaColourCorrectionTable` carries the four 256-entry u16 curves in
+  ARGB order; `parse_tga_colour_correction_table` walks the
+  `colour_correction_offset` from the extension area, and
+  `ExtensionAreaInput::colour_correction_table` opts the writer into
+  emitting the 2048-byte table and back-patching the offset.
+  `TgaColourCorrectionTable::default()` is an identity curve (out = in
+  with the input byte replicated in both bytes of the u16).
+- Round 4: scan-line table (spec §C.6.9) parse + write.
+  `TgaScanLineTable` holds the per-row u32 byte offsets (one entry per
+  scanline); `parse_tga_scan_line_table` peeks the header to size the
+  table from `height`. `ExtensionAreaInput::scan_line_table` writes
+  the table and back-patches the offset.
+- Round 4: typed `AttributesType` enum over the §C.6.13 byte
+  (`NoAlpha`, `UndefinedIgnore`, `UndefinedRetain`, `UsefulAlpha`,
+  `PremultipliedAlpha`, plus a `Reserved(u8)` catch-all so non-
+  standard files round-trip bit-exactly). Reachable via
+  `TgaExtensionArea::attributes()` while the raw `attributes_type` u8
+  stays on the struct. New `has_meaningful_alpha()` /
+  `is_premultiplied()` predicates surface the common-case decisions.
+- Round 4: 24 new tests in `tests/round4.rs` covering typed-
+  attributes roundtrip + reserved-byte preservation, CCT identity
+  curve + tweaked-entry roundtrip + truncation rejection, SCT
+  on-disk u32-LE layout + height-sized roundtrip + zero/zero-height/
+  truncated rejection, developer area three-tag roundtrip + marker
+  tags + payload-overrun rejection + truncated directory rejection,
+  and an all-four-sections combined roundtrip. Brings the suite from
+  68 → 92 tests, green standalone and with the `registry` feature on.
+
 - Round 3: standalone RGB24-input entry points
   `encode_tga_uncompressed_rgb24` (image type 2, 24 bpp) and
   `encode_tga_rle_rgb24` (image type 10, 24 bpp). Symmetric to the

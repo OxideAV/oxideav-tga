@@ -25,7 +25,10 @@
 
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
-use crate::types::{ImageType, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE};
+use crate::types::{
+    ImageType, TgaColourCorrectionTable, TgaDeveloperTag, TgaScanLineTable,
+    TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
+};
 
 #[cfg(feature = "registry")]
 use oxideav_core::Encoder;
@@ -655,6 +658,24 @@ fn rle_one_row_u8(row: &[u8], out: &mut Vec<u8>) {
 // TGA 2.0 footer + extension area write.
 // ---------------------------------------------------------------------------
 
+/// One developer-area tag payload supplied by the caller.
+///
+/// `encode_tga_with_extension` writes each payload into the developer-
+/// area data region, fills in the tag directory at the configured
+/// `developer_directory_offset`, and back-patches `tag.offset` /
+/// `tag.size` to the on-disk byte range it landed at. Tags with an
+/// empty `payload` are emitted as marker tags (directory entry with
+/// `offset == 0` and `size == 0` — spec-legal).
+#[derive(Debug, Clone)]
+pub struct DeveloperTagInput {
+    /// Tag identifier. `0..=32767` reserved for Truevision,
+    /// `32768..=65535` available for user-defined tags (spec §C.7).
+    pub tag_id: u16,
+    /// Application-defined payload bytes. Empty = marker tag (no
+    /// payload region written).
+    pub payload: Vec<u8>,
+}
+
 /// Author-supplied fields for the TGA 2.0 extension area body.
 ///
 /// Pass to [`encode_tga_with_extension`]. All fields are optional —
@@ -679,6 +700,24 @@ pub struct ExtensionAreaInput {
     /// uncompressed BGR(A) form (per spec §C.6.10) regardless of the
     /// parent image's compression.
     pub postage_stamp: Option<TgaImage>,
+    /// Optional colour-correction table (spec §C.6.8). If `Some`, the
+    /// table is appended to the file and the extension area's
+    /// `colour_correction_offset` field is back-patched to point at
+    /// it. Decoders that consult the CCT can recover the table via
+    /// [`crate::parse_tga_colour_correction_table`].
+    pub colour_correction_table: Option<TgaColourCorrectionTable>,
+    /// Optional scan-line table (spec §C.6.9). If `Some`, the table
+    /// is appended and the extension area's `scan_line_offset` is
+    /// back-patched. The number of entries should match the parent
+    /// image height; supplying a different length is permitted (no
+    /// hard check) for callers that intentionally write a partial
+    /// or padded table.
+    pub scan_line_table: Option<TgaScanLineTable>,
+    /// Optional developer-area tags (spec §C.7). If non-empty, the
+    /// caller-supplied payload bytes are written first, then the tag
+    /// directory, and the footer's `developer_directory_offset` is
+    /// back-patched.
+    pub developer_tags: Vec<DeveloperTagInput>,
 }
 
 /// Append a TGA 2.0 footer + extension area body to a TGA byte stream
@@ -708,18 +747,74 @@ pub fn encode_tga_with_extension(base_tga: &[u8], ext: &ExtensionAreaInput) -> R
         ));
     };
 
+    let dev_payload_total: usize = ext.developer_tags.iter().map(|t| t.payload.len()).sum();
+    let dev_dir_size = if ext.developer_tags.is_empty() {
+        0
+    } else {
+        2 + ext.developer_tags.len() * 10
+    };
+    let cct_size = if ext.colour_correction_table.is_some() {
+        crate::types::TGA_COLOUR_CORRECTION_TABLE_SIZE
+    } else {
+        0
+    };
+    let sct_size = ext
+        .scan_line_table
+        .as_ref()
+        .map(|t| t.offsets.len() * 4)
+        .unwrap_or(0);
+    let stamp_bytes = ext
+        .postage_stamp
+        .as_ref()
+        .map(|s| s.data.len())
+        .unwrap_or(0);
     let mut out = Vec::with_capacity(
         base_tga.len()
+            + dev_payload_total
+            + dev_dir_size
             + TGA_EXTENSION_AREA_SIZE
             + 2
-            + ext
-                .postage_stamp
-                .as_ref()
-                .map(|s| s.data.len())
-                .unwrap_or(0)
+            + stamp_bytes
+            + cct_size
+            + sct_size
             + TGA_FOOTER_SIZE,
     );
     out.extend_from_slice(base_tga);
+
+    // Developer-area payloads + tag directory go BEFORE the extension
+    // area so the directory offset is known at the time we lay down
+    // the footer. We write the payloads first (back-patching each
+    // tag's offset), then the directory at the end.
+    let mut directory_entries: Vec<TgaDeveloperTag> = Vec::with_capacity(ext.developer_tags.len());
+    for input_tag in &ext.developer_tags {
+        if input_tag.payload.is_empty() {
+            directory_entries.push(TgaDeveloperTag {
+                tag_id: input_tag.tag_id,
+                offset: 0,
+                size: 0,
+            });
+        } else {
+            let off = out.len() as u32;
+            out.extend_from_slice(&input_tag.payload);
+            directory_entries.push(TgaDeveloperTag {
+                tag_id: input_tag.tag_id,
+                offset: off,
+                size: input_tag.payload.len() as u32,
+            });
+        }
+    }
+    let developer_directory_offset = if directory_entries.is_empty() {
+        0
+    } else {
+        let off = out.len() as u32;
+        out.extend_from_slice(&(directory_entries.len() as u16).to_le_bytes());
+        for tag in &directory_entries {
+            out.extend_from_slice(&tag.tag_id.to_le_bytes());
+            out.extend_from_slice(&tag.offset.to_le_bytes());
+            out.extend_from_slice(&tag.size.to_le_bytes());
+        }
+        off
+    };
 
     let extension_area_offset = out.len() as u32;
 
@@ -737,17 +832,37 @@ pub fn encode_tga_with_extension(base_tga: &[u8], ext: &ExtensionAreaInput) -> R
         0
     };
 
+    // Colour-correction table (optional, spec §C.6.8).
+    let colour_correction_offset = if let Some(cct) = &ext.colour_correction_table {
+        let off = out.len() as u32;
+        out.extend_from_slice(&cct.to_bytes());
+        off
+    } else {
+        0
+    };
+
+    // Scan-line table (optional, spec §C.6.9).
+    let scan_line_offset = if let Some(sct) = &ext.scan_line_table {
+        let off = out.len() as u32;
+        out.extend_from_slice(&sct.to_bytes());
+        off
+    } else {
+        0
+    };
+
     // Back-patch the 4 pointer fields (colour-correction, postage
     // stamp, scan-line, attributes-type) at offsets 482/486/490/494.
-    out[ext_area_start + 482..ext_area_start + 486].copy_from_slice(&0u32.to_le_bytes());
+    out[ext_area_start + 482..ext_area_start + 486]
+        .copy_from_slice(&colour_correction_offset.to_le_bytes());
     out[ext_area_start + 486..ext_area_start + 490]
         .copy_from_slice(&postage_stamp_offset.to_le_bytes());
-    out[ext_area_start + 490..ext_area_start + 494].copy_from_slice(&0u32.to_le_bytes());
+    out[ext_area_start + 490..ext_area_start + 494]
+        .copy_from_slice(&scan_line_offset.to_le_bytes());
     out[ext_area_start + 494] = ext.attributes_type;
 
     // Footer.
     out.extend_from_slice(&extension_area_offset.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes()); // developer_directory_offset
+    out.extend_from_slice(&developer_directory_offset.to_le_bytes());
     out.extend_from_slice(crate::types::TGA_FOOTER_MAGIC.as_slice());
     Ok(out)
 }

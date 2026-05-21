@@ -238,6 +238,71 @@ pub struct TgaExtensionArea {
     pub attributes_type: u8,
 }
 
+/// Typed view of the extension-area `attributes_type` byte (spec §C.6.13).
+///
+/// The on-disk value is a single byte; this enum is the friendlier
+/// surface that pattern-matches over its five defined values. Use
+/// [`AttributesType::from_u8`] to decode and [`AttributesType::as_u8`]
+/// to encode. Any value outside `0..=4` decodes as
+/// [`AttributesType::Reserved`] carrying the raw byte so round-tripping
+/// stays bit-exact even for non-standard files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AttributesType {
+    /// `0` — no alpha data included.
+    #[default]
+    NoAlpha,
+    /// `1` — undefined alpha data, may be ignored.
+    UndefinedIgnore,
+    /// `2` — undefined alpha data, but should be retained.
+    UndefinedRetain,
+    /// `3` — useful alpha-channel data (straight, non-premultiplied).
+    UsefulAlpha,
+    /// `4` — pre-multiplied alpha.
+    PremultipliedAlpha,
+    /// Any value not assigned by the spec; preserved verbatim.
+    Reserved(u8),
+}
+
+impl AttributesType {
+    /// Decode the §C.6.13 byte. Values 0..=4 map to the named variants;
+    /// anything else becomes [`Self::Reserved`] preserving the byte.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::NoAlpha,
+            1 => Self::UndefinedIgnore,
+            2 => Self::UndefinedRetain,
+            3 => Self::UsefulAlpha,
+            4 => Self::PremultipliedAlpha,
+            other => Self::Reserved(other),
+        }
+    }
+
+    /// Encode back to the §C.6.13 byte.
+    pub fn as_u8(self) -> u8 {
+        match self {
+            Self::NoAlpha => 0,
+            Self::UndefinedIgnore => 1,
+            Self::UndefinedRetain => 2,
+            Self::UsefulAlpha => 3,
+            Self::PremultipliedAlpha => 4,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    /// `true` for the variants that mean "the alpha channel carries
+    /// meaningful image data" (`UsefulAlpha` or `PremultipliedAlpha`).
+    /// Consumers can use this to decide whether the alpha channel is
+    /// safe to composite against.
+    pub fn has_meaningful_alpha(self) -> bool {
+        matches!(self, Self::UsefulAlpha | Self::PremultipliedAlpha)
+    }
+
+    /// `true` for [`Self::PremultipliedAlpha`].
+    pub fn is_premultiplied(self) -> bool {
+        matches!(self, Self::PremultipliedAlpha)
+    }
+}
+
 /// Date/time stamp embedded in the extension area's "save date" field
 /// (spec §C.6.4). All zeros means "not set".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -248,6 +313,14 @@ pub struct TgaTimestamp {
     pub hour: u16,
     pub minute: u16,
     pub second: u16,
+}
+
+impl TgaExtensionArea {
+    /// Typed view of [`Self::attributes_type`] per spec §C.6.13.
+    /// Equivalent to `AttributesType::from_u8(self.attributes_type)`.
+    pub fn attributes(&self) -> AttributesType {
+        AttributesType::from_u8(self.attributes_type)
+    }
 }
 
 impl TgaTimestamp {
@@ -380,6 +453,261 @@ pub fn parse_footer(input: &[u8]) -> Option<TgaFooter> {
         extension_area_offset: read_u32_le(input, off),
         developer_directory_offset: read_u32_le(input, off + 4),
     })
+}
+
+/// Number of entries per colour-correction table channel (spec §C.6.8).
+///
+/// The table is `4 × 256 × u16` little-endian — one 256-entry curve per
+/// channel in (A, R, G, B) order. Each entry is in the 0..=65535 range,
+/// representing a 16-bit corrected sample value for the 8-bit input
+/// index.
+pub const TGA_COLOUR_CORRECTION_TABLE_ENTRIES: usize = 256;
+
+/// Total size of the colour-correction table in bytes
+/// (`4 × 256 × 2 = 2048`).
+pub const TGA_COLOUR_CORRECTION_TABLE_SIZE: usize = 4 * TGA_COLOUR_CORRECTION_TABLE_ENTRIES * 2;
+
+/// 4 × 256 × u16 colour-correction table (spec §C.6.8).
+///
+/// On disk the table is a flat `2048-byte` block of little-endian
+/// u16s laid out as 4 contiguous 256-entry curves in (A, R, G, B)
+/// channel order. The table is referenced by
+/// [`TgaExtensionArea::colour_correction_offset`]; when that field is
+/// zero, no table is present.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TgaColourCorrectionTable {
+    /// 256-entry curve for the alpha channel.
+    pub alpha: [u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES],
+    /// 256-entry curve for the red channel.
+    pub red: [u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES],
+    /// 256-entry curve for the green channel.
+    pub green: [u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES],
+    /// 256-entry curve for the blue channel.
+    pub blue: [u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES],
+}
+
+impl Default for TgaColourCorrectionTable {
+    fn default() -> Self {
+        // Identity table: out[i] = i << 8 | i  (so 0x00 → 0x0000,
+        // 0xFF → 0xFFFF). Callers that want a no-op CCT can use this.
+        let mut chan = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
+        for (i, slot) in chan.iter_mut().enumerate() {
+            *slot = ((i as u16) << 8) | (i as u16);
+        }
+        Self {
+            alpha: chan,
+            red: chan,
+            green: chan,
+            blue: chan,
+        }
+    }
+}
+
+impl TgaColourCorrectionTable {
+    /// Parse a colour-correction table from `input` starting at byte
+    /// offset `offset`. Returns `None` if `offset == 0` (the convention
+    /// for "no table"), or if the input is truncated before the full
+    /// `4 × 256 × 2 = 2048` bytes.
+    pub fn parse(input: &[u8], offset: u32) -> Option<Self> {
+        if offset == 0 {
+            return None;
+        }
+        let off = offset as usize;
+        if input.len() < off + TGA_COLOUR_CORRECTION_TABLE_SIZE {
+            return None;
+        }
+        let mut alpha = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
+        let mut red = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
+        let mut green = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
+        let mut blue = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
+        let mut cursor = off;
+        for slot in &mut alpha {
+            *slot = read_u16_le(input, cursor);
+            cursor += 2;
+        }
+        for slot in &mut red {
+            *slot = read_u16_le(input, cursor);
+            cursor += 2;
+        }
+        for slot in &mut green {
+            *slot = read_u16_le(input, cursor);
+            cursor += 2;
+        }
+        for slot in &mut blue {
+            *slot = read_u16_le(input, cursor);
+            cursor += 2;
+        }
+        Some(Self {
+            alpha,
+            red,
+            green,
+            blue,
+        })
+    }
+
+    /// Serialise the table into its on-disk 2048-byte representation
+    /// (4 contiguous 256-entry curves of little-endian u16s in ARGB
+    /// channel order).
+    pub fn to_bytes(&self) -> [u8; TGA_COLOUR_CORRECTION_TABLE_SIZE] {
+        let mut out = [0u8; TGA_COLOUR_CORRECTION_TABLE_SIZE];
+        let mut off = 0usize;
+        for channel in [&self.alpha, &self.red, &self.green, &self.blue] {
+            for &v in channel {
+                out[off..off + 2].copy_from_slice(&v.to_le_bytes());
+                off += 2;
+            }
+        }
+        out
+    }
+}
+
+/// Per-row byte offsets parsed out of the scan-line table (spec §C.6.9).
+///
+/// On disk the table is a flat array of `height` little-endian u32
+/// values, each holding the byte offset (from the start of the file)
+/// of the corresponding pixel row. The table is intended for partial-
+/// image readers that want to jump to a single row without walking the
+/// preceding RLE-packetised rows.
+///
+/// The number of entries equals the image height; the caller is
+/// expected to pass the parent header's `height` so we can size the
+/// returned Vec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TgaScanLineTable {
+    /// `height` entries. `offsets[y]` is the byte offset of row `y`
+    /// from the start of the file.
+    pub offsets: Vec<u32>,
+}
+
+impl TgaScanLineTable {
+    /// Parse a scan-line table from `input` starting at byte offset
+    /// `offset`. Returns `None` if `offset == 0`, if `height == 0`, or
+    /// if the input is truncated before `height × 4` bytes.
+    pub fn parse(input: &[u8], offset: u32, height: u16) -> Option<Self> {
+        if offset == 0 || height == 0 {
+            return None;
+        }
+        let off = offset as usize;
+        let n = height as usize;
+        if input.len() < off + n * 4 {
+            return None;
+        }
+        let mut offsets = Vec::with_capacity(n);
+        for i in 0..n {
+            offsets.push(read_u32_le(input, off + i * 4));
+        }
+        Some(Self { offsets })
+    }
+
+    /// Serialise the table into its on-disk `4 × len()`-byte
+    /// representation (little-endian u32s, one per row).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.offsets.len() * 4);
+        for &o in &self.offsets {
+            out.extend_from_slice(&o.to_le_bytes());
+        }
+        out
+    }
+}
+
+/// One entry from the developer area's tag directory (spec §C.7).
+///
+/// The developer area is the writer-extensible scratch space TGA 2.0
+/// provides for application-defined tagged data. The directory at
+/// [`TgaFooter::developer_directory_offset`] is a sequence of
+/// `(tag_id, offset, size)` records that point into application-defined
+/// byte ranges elsewhere in the file.
+///
+/// Tag IDs `0..=32767` are reserved for Truevision; `32768..=65535` are
+/// available for user-defined fields. The parser stores all tags
+/// regardless; semantic interpretation is left to the caller (spec
+/// §C.7 declines to enumerate well-known tag IDs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TgaDeveloperTag {
+    /// Tag identifier (Truevision-reserved < 32768, user > 32767).
+    pub tag_id: u16,
+    /// Byte offset of the tag's payload from the start of the file.
+    pub offset: u32,
+    /// Length of the tag's payload in bytes.
+    pub size: u32,
+}
+
+/// Parsed developer area: the tag directory plus a borrowed view of
+/// every tag's payload bytes.
+///
+/// The owned `tags` Vec holds the directory entries; the
+/// [`TgaDeveloperArea::payload`] method returns the slice of the
+/// original input the tag points into. This is by design: the payload
+/// format is application-defined, so the parser doesn't materialise
+/// any further structure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TgaDeveloperArea {
+    /// Directory entries in on-disk order.
+    pub tags: Vec<TgaDeveloperTag>,
+}
+
+impl TgaDeveloperArea {
+    /// Parse the developer-area tag directory referenced by
+    /// [`TgaFooter::developer_directory_offset`].
+    ///
+    /// On disk the directory is `2 + n × 10` bytes: a u16 count
+    /// followed by `n` × `(u16 tag, u32 offset, u32 size)` records.
+    /// Returns `None` if `offset == 0`, the count word is truncated,
+    /// the record array is truncated, or any record points outside
+    /// the input buffer.
+    pub fn parse(input: &[u8], offset: u32) -> Option<Self> {
+        if offset == 0 {
+            return None;
+        }
+        let off = offset as usize;
+        if input.len() < off + 2 {
+            return None;
+        }
+        let n = read_u16_le(input, off) as usize;
+        let dir_bytes = 2 + n * 10;
+        if input.len() < off + dir_bytes {
+            return None;
+        }
+        let mut tags = Vec::with_capacity(n);
+        for i in 0..n {
+            let rec_off = off + 2 + i * 10;
+            let tag_id = read_u16_le(input, rec_off);
+            let tag_offset = read_u32_le(input, rec_off + 2);
+            let tag_size = read_u32_le(input, rec_off + 6);
+            // Reject tags whose payload doesn't fit in the file:
+            // tag_offset can legitimately be 0 (caller's convention
+            // for "tag-only marker"), but if non-zero it must point
+            // inside `input` and the (offset + size) must fit too.
+            if tag_offset != 0 {
+                let to = tag_offset as usize;
+                let ts = tag_size as usize;
+                if to.saturating_add(ts) > input.len() {
+                    return None;
+                }
+            }
+            tags.push(TgaDeveloperTag {
+                tag_id,
+                offset: tag_offset,
+                size: tag_size,
+            });
+        }
+        Some(Self { tags })
+    }
+
+    /// Borrow the payload bytes for `tag` from the original `input`
+    /// buffer. Returns `None` if the tag's offset is `0` (marker tag
+    /// with no payload) or if `input` is shorter than the tag claims.
+    pub fn payload<'a>(&self, input: &'a [u8], tag: &TgaDeveloperTag) -> Option<&'a [u8]> {
+        if tag.offset == 0 {
+            return None;
+        }
+        let off = tag.offset as usize;
+        let sz = tag.size as usize;
+        if off.saturating_add(sz) > input.len() {
+            return None;
+        }
+        Some(&input[off..off + sz])
+    }
 }
 
 #[inline]

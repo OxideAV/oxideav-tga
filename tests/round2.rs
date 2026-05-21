@@ -353,6 +353,9 @@ fn roundtrip_extension_area_write_then_parse() {
         gamma: (22, 10),
         attributes_type: 3,
         postage_stamp: None,
+        colour_correction_table: None,
+        scan_line_table: None,
+        developer_tags: Vec::new(),
     };
     let full = encode_tga_with_extension(&base, &ext_in).unwrap();
 

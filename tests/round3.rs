@@ -111,6 +111,9 @@ fn populated_extension() -> ExtensionAreaInput {
         gamma: (22, 10),
         attributes_type: 3,
         postage_stamp: None,
+        colour_correction_table: None,
+        scan_line_table: None,
+        developer_tags: Vec::new(),
     }
 }
 
@@ -322,6 +325,9 @@ fn extension_area_fixed_point() {
         gamma: parsed_once.gamma,
         attributes_type: parsed_once.attributes_type,
         postage_stamp: None,
+        colour_correction_table: None,
+        scan_line_table: None,
+        developer_tags: Vec::new(),
     };
     let full_again = encode_tga_with_extension(&base, &ext_rebuilt).unwrap();
     let parsed_twice = parse_tga_extension_area(&full_again).unwrap();

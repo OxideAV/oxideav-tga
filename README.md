@@ -34,6 +34,23 @@ consulted.
   pixel-aspect / gamma / colour-correction + postage-stamp +
   scan-line offsets / attributes-type), and `parse_tga_postage_stamp`
   to pull out the embedded thumbnail.
+* The §C.6.13 attributes byte is exposed as both the raw
+  `attributes_type: u8` and a typed `AttributesType` enum reachable
+  via `TgaExtensionArea::attributes()` (`NoAlpha` / `UndefinedIgnore`
+  / `UndefinedRetain` / `UsefulAlpha` / `PremultipliedAlpha` plus a
+  `Reserved(u8)` catch-all so non-standard files round-trip
+  bit-exactly).
+* The §C.6.8 colour-correction table is exposed as
+  `TgaColourCorrectionTable` (four 256-entry u16 curves in ARGB order),
+  parsed by `parse_tga_colour_correction_table`.
+* The §C.6.9 scan-line table is exposed as `TgaScanLineTable` (a Vec
+  of per-row u32 byte offsets, sized from the parent header's height),
+  parsed by `parse_tga_scan_line_table`.
+* The §C.7 developer-area tag directory is exposed as
+  `TgaDeveloperArea` (a `Vec<TgaDeveloperTag>` with `tag_id` / `offset`
+  / `size`), parsed by `parse_tga_developer_area`; each tag's
+  application-defined payload bytes are borrowable via
+  `dev.payload(input, tag)`.
 
 ## Encode
 
@@ -61,8 +78,19 @@ consulted.
 
 `encode_tga_with_extension(base, &ExtensionAreaInput { … })` wraps
 any of the writers above and appends a TGA 2.0 footer + extension
-area body (and optional postage-stamp thumbnail in the parent's
-pixel format) to the output.
+area body to the output. Optional companions on `ExtensionAreaInput`:
+
+* `postage_stamp: Option<TgaImage>` — embedded thumbnail in the
+  parent's pixel format (§C.6.10).
+* `colour_correction_table: Option<TgaColourCorrectionTable>` —
+  4 × 256 × u16 ARGB curves (§C.6.8), 2048 bytes on disk.
+* `scan_line_table: Option<TgaScanLineTable>` — `height × u32` per-row
+  byte offsets for partial-image readers (§C.6.9).
+* `developer_tags: Vec<DeveloperTagInput>` — application-defined
+  tagged payloads (§C.7); the writer lays the payloads down, builds
+  the directory, and back-patches the footer's
+  `developer_directory_offset`. Empty payloads emit spec-legal marker
+  tags (offset / size = 0).
 
 ```rust
 use oxideav_tga::{encode_tga_rle, parse_tga};
@@ -99,11 +127,11 @@ oxideav_tga::register(&mut codecs, &mut containers);
 
 ## Lacks
 
-* Developer area / developer directory parsing — the footer offset
-  is surfaced via `parse_tga_footer` but the variable-length tag
-  table at that offset isn't decoded.
-* Colour-correction table read/write (4 × 256 × u16 entries pointed
-  at by the extension area). Decoders that consult it are rare in
-  the wild.
-* Scan-line table parsing (per-row byte offsets in the extension
-  area; only useful for partial-image readers).
+* Image type 32 / 33 (compressed colour-mapped, Huffman + delta /
+  4-pass) — Truevision never shipped them; no fixtures exist in the
+  wild and the spec describes the format only at a high level.
+* Image-descriptor bit 4 (right-to-left columns) — rejected as
+  `Unsupported` at decode rather than silently mirrored.
+* Application-level semantics for developer-area tag IDs — the spec
+  declines to enumerate well-known IDs, so the parser surfaces tags
+  + payload byte ranges and leaves interpretation to the caller.

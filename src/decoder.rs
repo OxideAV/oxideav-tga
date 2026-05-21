@@ -29,8 +29,8 @@
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
-    parse_extension_area, parse_footer, parse_header, ImageType, TgaExtensionArea, TgaFooter,
-    TgaHeader, TGA_HEADER_SIZE,
+    parse_extension_area, parse_footer, parse_header, ImageType, TgaColourCorrectionTable,
+    TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -221,6 +221,51 @@ pub fn parse_tga_footer(input: &[u8]) -> Option<TgaFooter> {
 pub fn parse_tga_extension_area(input: &[u8]) -> Option<TgaExtensionArea> {
     let footer = parse_footer(input)?;
     parse_extension_area(input, footer.extension_area_offset)
+}
+
+/// Parse the colour-correction table referenced by the extension area
+/// (spec §C.6.8) if the file has one.
+///
+/// Returns `None` when:
+/// * the file has no TGA 2.0 footer,
+/// * the extension area is absent or truncated,
+/// * the extension area's `colour_correction_offset` is `0`, or
+/// * the colour-correction table itself is truncated before the full
+///   `4 × 256 × 2 = 2048` bytes.
+pub fn parse_tga_colour_correction_table(input: &[u8]) -> Option<TgaColourCorrectionTable> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    TgaColourCorrectionTable::parse(input, ext.colour_correction_offset)
+}
+
+/// Parse the scan-line table referenced by the extension area (spec
+/// §C.6.9) if the file has one.
+///
+/// The number of entries equals the main image's height — this routine
+/// reads the header to determine the height, then walks `height` u32
+/// row-offset entries. Returns `None` when the file has no footer, no
+/// extension area, no scan-line table (offset `0`), or the table is
+/// truncated.
+pub fn parse_tga_scan_line_table(input: &[u8]) -> Option<TgaScanLineTable> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    let header = parse_header(input)?;
+    TgaScanLineTable::parse(input, ext.scan_line_offset, header.height)
+}
+
+/// Parse the TGA 2.0 developer-area tag directory if the file has one
+/// (spec §C.7).
+///
+/// Returns `None` when the file has no footer, when the footer's
+/// `developer_directory_offset` is `0`, or when the tag directory or
+/// any of its referenced tag payloads is truncated.
+///
+/// Use [`TgaDeveloperArea::payload`] to borrow each tag's body bytes
+/// from the same input buffer; tag-payload format is application-
+/// defined and not interpreted by this parser.
+pub fn parse_tga_developer_area(input: &[u8]) -> Option<TgaDeveloperArea> {
+    let footer = parse_footer(input)?;
+    TgaDeveloperArea::parse(input, footer.developer_directory_offset)
 }
 
 /// Decode the TGA 2.0 postage-stamp (thumbnail) image from a file with
