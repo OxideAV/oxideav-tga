@@ -24,8 +24,11 @@
 //! / software ID + version / aspect-ratio / gamma / attributes-type /
 //! pointers to colour-correction table + postage-stamp + scan-line
 //! tables), [`parse_tga_postage_stamp`] for the embedded thumbnail,
-//! [`parse_tga_colour_correction_table`] for the §C.6.8 4×256×u16
-//! ARGB curves, [`parse_tga_scan_line_table`] for the §C.6.9 per-row
+//! [`parse_tga_colour_correction_table`] for the §C.6.8 256×4×u16
+//! interleaved-ARGB curves (which can then be *applied* to a decoded
+//! image via [`TgaColourCorrectionTable::apply_to_image`] /
+//! `correct_rgba8` / `correct_rgba16` / `correct_gray8`),
+//! [`parse_tga_scan_line_table`] for the §C.6.9 per-row
 //! byte offsets, and [`parse_tga_developer_area`] for the §C.7
 //! application-extensible tag directory.
 //!

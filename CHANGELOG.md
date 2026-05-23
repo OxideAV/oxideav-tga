@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 5: colour-correction table *application* (spec §C.6.8). The
+  table is now usable as a LUT, not just carried as metadata:
+  `TgaColourCorrectionTable::correct_rgba16` maps an 8-bit `[R,G,B,A]`
+  pixel to a full-precision 16-bit corrected pixel through its
+  per-channel curves; `correct_rgba8` narrows that to 8 bits (high
+  byte) so the default (identity) table is a bit-exact no-op;
+  `correct_gray8` runs a luma sample through the green curve; and
+  `apply_to_image(&mut TgaImage)` rewrites a decoded image in place for
+  Rgba / Rgb24 / Gray8 pixel formats.
+- Round 5: 14 new tests in `tests/round5.rs` (suite 92 → 106) covering
+  identity no-op, per-channel curve addressing, 8-bit high-byte
+  narrowing, inversion/brighten/darken curves, grayscale luma path,
+  Rgb24 alpha-skip, and two end-to-end encode→decode→recover→apply
+  round-trips (true-colour + grayscale).
+
+### Fixed
+
+- Round 5: colour-correction table on-disk layout. Spec §C.6.8 stores
+  the 2048-byte block *interleaved* ("each set of four contiguous
+  values are the desired A:R:G:B correction for that entry"), but the
+  round-4 `parse`/`to_bytes` wrote it planar (four contiguous 256-entry
+  curves). Both sides now interleave/de-interleave per spec; the
+  in-memory struct stays planar for convenience. Round-trips were
+  already symmetric so no released file was affected (round 4 is
+  unreleased), but files written for/by spec-conformant third parties
+  now interoperate correctly. New `tests/round5.rs` locks the byte
+  layout down.
+
 - Round 4: TGA 2.0 developer area (spec §C.7) parse + write. New
   `parse_tga_developer_area` returns a `TgaDeveloperArea` holding the
   tag directory (`Vec<TgaDeveloperTag>`), with a `payload(input, tag)`

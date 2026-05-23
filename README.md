@@ -42,7 +42,17 @@ consulted.
   bit-exactly).
 * The §C.6.8 colour-correction table is exposed as
   `TgaColourCorrectionTable` (four 256-entry u16 curves in ARGB order),
-  parsed by `parse_tga_colour_correction_table`.
+  parsed by `parse_tga_colour_correction_table`. The on-disk block is
+  the spec's *interleaved* 256 × 4 `u16` layout — each entry is four
+  contiguous `(A, R, G, B)` shorts — de-interleaved into the struct's
+  planar curves on parse and re-interleaved on `to_bytes`.
+* The table is also *applied*, not just carried: `correct_rgba16`
+  maps an 8-bit `[R,G,B,A]` pixel to a full-precision 16-bit corrected
+  pixel through its per-channel curves; `correct_rgba8` narrows that to
+  8 bits (high byte), so the identity table is a bit-exact no-op;
+  `correct_gray8` runs a single luma sample through the green curve; and
+  `apply_to_image(&mut TgaImage)` rewrites a decoded image in place
+  (Rgba / Rgb24 / Gray8). BLACK maps to 0, WHITE to 65535 per the spec.
 * The §C.6.9 scan-line table is exposed as `TgaScanLineTable` (a Vec
   of per-row u32 byte offsets, sized from the parent header's height),
   parsed by `parse_tga_scan_line_table`.

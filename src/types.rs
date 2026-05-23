@@ -457,21 +457,28 @@ pub fn parse_footer(input: &[u8]) -> Option<TgaFooter> {
 
 /// Number of entries per colour-correction table channel (spec §C.6.8).
 ///
-/// The table is `4 × 256 × u16` little-endian — one 256-entry curve per
-/// channel in (A, R, G, B) order. Each entry is in the 0..=65535 range,
+/// The table holds 256 entries, one per possible 8-bit input value.
+/// Each entry carries four `u16` correction values (one per channel) in
+/// (A, R, G, B) order. Each value is in the 0..=65535 range,
 /// representing a 16-bit corrected sample value for the 8-bit input
-/// index.
+/// index — BLACK maps to 0, WHITE to 65535.
 pub const TGA_COLOUR_CORRECTION_TABLE_ENTRIES: usize = 256;
 
 /// Total size of the colour-correction table in bytes
-/// (`4 × 256 × 2 = 2048`).
+/// (`256 × 4 × 2 = 2048`).
 pub const TGA_COLOUR_CORRECTION_TABLE_SIZE: usize = 4 * TGA_COLOUR_CORRECTION_TABLE_ENTRIES * 2;
 
-/// 4 × 256 × u16 colour-correction table (spec §C.6.8).
+/// 256 × 4 × u16 colour-correction table (spec §C.6.8).
 ///
-/// On disk the table is a flat `2048-byte` block of little-endian
-/// u16s laid out as 4 contiguous 256-entry curves in (A, R, G, B)
-/// channel order. The table is referenced by
+/// In memory the four channel curves are stored as separate planar
+/// arrays (`alpha` / `red` / `green` / `blue`), each indexed by the
+/// 8-bit input sample. On disk, however, spec §C.6.8 stores the table
+/// **interleaved**: a flat 2048-byte block of `256 × 4` little-endian
+/// `u16`s where each set of four contiguous values is the
+/// `(A, R, G, B)` correction for one entry. [`Self::parse`] /
+/// [`Self::to_bytes`] perform the interleave/de-interleave so the
+/// planar in-memory shape stays convenient while the on-disk bytes
+/// match the spec layout exactly. The table is referenced by
 /// [`TgaExtensionArea::colour_correction_offset`]; when that field is
 /// zero, no table is present.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -507,7 +514,10 @@ impl TgaColourCorrectionTable {
     /// Parse a colour-correction table from `input` starting at byte
     /// offset `offset`. Returns `None` if `offset == 0` (the convention
     /// for "no table"), or if the input is truncated before the full
-    /// `4 × 256 × 2 = 2048` bytes.
+    /// `256 × 4 × 2 = 2048` bytes.
+    ///
+    /// The on-disk layout is interleaved per spec §C.6.8: each entry is
+    /// four contiguous little-endian `u16`s in `(A, R, G, B)` order.
     pub fn parse(input: &[u8], offset: u32) -> Option<Self> {
         if offset == 0 {
             return None;
@@ -520,22 +530,12 @@ impl TgaColourCorrectionTable {
         let mut red = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
         let mut green = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
         let mut blue = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
-        let mut cursor = off;
-        for slot in &mut alpha {
-            *slot = read_u16_le(input, cursor);
-            cursor += 2;
-        }
-        for slot in &mut red {
-            *slot = read_u16_le(input, cursor);
-            cursor += 2;
-        }
-        for slot in &mut green {
-            *slot = read_u16_le(input, cursor);
-            cursor += 2;
-        }
-        for slot in &mut blue {
-            *slot = read_u16_le(input, cursor);
-            cursor += 2;
+        for i in 0..TGA_COLOUR_CORRECTION_TABLE_ENTRIES {
+            let base = off + i * 8;
+            alpha[i] = read_u16_le(input, base);
+            red[i] = read_u16_le(input, base + 2);
+            green[i] = read_u16_le(input, base + 4);
+            blue[i] = read_u16_le(input, base + 6);
         }
         Some(Self {
             alpha,
@@ -545,19 +545,101 @@ impl TgaColourCorrectionTable {
         })
     }
 
-    /// Serialise the table into its on-disk 2048-byte representation
-    /// (4 contiguous 256-entry curves of little-endian u16s in ARGB
-    /// channel order).
+    /// Serialise the table into its on-disk 2048-byte representation:
+    /// 256 entries of four interleaved little-endian `u16`s in
+    /// `(A, R, G, B)` order, per spec §C.6.8.
     pub fn to_bytes(&self) -> [u8; TGA_COLOUR_CORRECTION_TABLE_SIZE] {
         let mut out = [0u8; TGA_COLOUR_CORRECTION_TABLE_SIZE];
-        let mut off = 0usize;
-        for channel in [&self.alpha, &self.red, &self.green, &self.blue] {
-            for &v in channel {
-                out[off..off + 2].copy_from_slice(&v.to_le_bytes());
-                off += 2;
-            }
+        for i in 0..TGA_COLOUR_CORRECTION_TABLE_ENTRIES {
+            let base = i * 8;
+            out[base..base + 2].copy_from_slice(&self.alpha[i].to_le_bytes());
+            out[base + 2..base + 4].copy_from_slice(&self.red[i].to_le_bytes());
+            out[base + 4..base + 6].copy_from_slice(&self.green[i].to_le_bytes());
+            out[base + 6..base + 8].copy_from_slice(&self.blue[i].to_le_bytes());
         }
         out
+    }
+
+    /// Apply the correction curves to a single 8-bit RGBA pixel,
+    /// producing a full-precision 16-bit `[R, G, B, A]` corrected pixel
+    /// (spec §C.6.8 — the table maps each 8-bit input sample to the
+    /// stored 16-bit correction).
+    ///
+    /// The input is `[R, G, B, A]` (the in-memory order of
+    /// [`crate::TgaImage`] data); the output keeps that channel order
+    /// while each component is looked up through its own curve.
+    pub fn correct_rgba16(&self, rgba: [u8; 4]) -> [u16; 4] {
+        [
+            self.red[rgba[0] as usize],
+            self.green[rgba[1] as usize],
+            self.blue[rgba[2] as usize],
+            self.alpha[rgba[3] as usize],
+        ]
+    }
+
+    /// Apply the correction curves to a single 8-bit RGBA pixel,
+    /// returning an 8-bit `[R, G, B, A]` corrected pixel.
+    ///
+    /// Each 16-bit corrected value from [`Self::correct_rgba16`] is
+    /// narrowed to 8 bits by taking the high byte (`>> 8`). This is the
+    /// inverse of the identity curve's `out = (in << 8) | in` mapping:
+    /// a default (identity) table is a perfect no-op at 8-bit precision.
+    pub fn correct_rgba8(&self, rgba: [u8; 4]) -> [u8; 4] {
+        let c = self.correct_rgba16(rgba);
+        [
+            (c[0] >> 8) as u8,
+            (c[1] >> 8) as u8,
+            (c[2] >> 8) as u8,
+            (c[3] >> 8) as u8,
+        ]
+    }
+
+    /// Apply the correction curves to a single 8-bit grayscale sample,
+    /// returning the 8-bit corrected luma.
+    ///
+    /// Grayscale TGAs (image types 3 / 11) carry no per-channel data, so
+    /// the green curve is used as the luminance curve. (The choice is
+    /// arbitrary among the three colour curves for a neutral grey; green
+    /// is conventional for luma weighting and matches what a writer that
+    /// built a single neutral ramp would store across R/G/B.)
+    pub fn correct_gray8(&self, luma: u8) -> u8 {
+        (self.green[luma as usize] >> 8) as u8
+    }
+
+    /// Apply the correction table in place to a decoded
+    /// [`crate::TgaImage`].
+    ///
+    /// * [`crate::TgaPixelFormat::Rgba`] images have every pixel mapped
+    ///   through [`Self::correct_rgba8`].
+    /// * [`crate::TgaPixelFormat::Gray8`] images have every sample mapped
+    ///   through [`Self::correct_gray8`].
+    /// * [`crate::TgaPixelFormat::Rgb24`] images map R/G/B through their
+    ///   curves (no alpha channel present).
+    ///
+    /// The image's dimensions and pixel format are unchanged; only the
+    /// sample values are rewritten. A default (identity) table leaves an
+    /// 8-bit image bit-for-bit unchanged.
+    pub fn apply_to_image(&self, image: &mut crate::image::TgaImage) {
+        match image.pixel_format {
+            crate::image::TgaPixelFormat::Rgba => {
+                for px in image.data.chunks_exact_mut(4) {
+                    let out = self.correct_rgba8([px[0], px[1], px[2], px[3]]);
+                    px.copy_from_slice(&out);
+                }
+            }
+            crate::image::TgaPixelFormat::Rgb24 => {
+                for px in image.data.chunks_exact_mut(3) {
+                    px[0] = (self.red[px[0] as usize] >> 8) as u8;
+                    px[1] = (self.green[px[1] as usize] >> 8) as u8;
+                    px[2] = (self.blue[px[2] as usize] >> 8) as u8;
+                }
+            }
+            crate::image::TgaPixelFormat::Gray8 => {
+                for b in image.data.iter_mut() {
+                    *b = self.correct_gray8(*b);
+                }
+            }
+        }
     }
 }
 
