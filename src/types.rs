@@ -301,6 +301,89 @@ impl AttributesType {
     pub fn is_premultiplied(self) -> bool {
         matches!(self, Self::PremultipliedAlpha)
     }
+
+    /// Normalise a single decoded 8-bit `[R, G, B, A]` pixel to
+    /// **straight** (non-premultiplied) alpha according to this
+    /// attributes type (spec §C.6.13).
+    ///
+    /// The decoder produces verbatim on-disk samples; the attributes
+    /// byte tells a consumer how those samples should be interpreted.
+    /// This method maps any defined attributes type onto the common
+    /// "straight RGBA" convention so a single compositing path works for
+    /// every file:
+    ///
+    /// * [`Self::NoAlpha`] / [`Self::UndefinedIgnore`] — the alpha bytes
+    ///   carry no meaningful data (spec: value 0 means "bits 3-0 of the
+    ///   image descriptor should also be zero"; value 1 means "undefined
+    ///   data … can be ignored"). The pixel is forced opaque (`A = 255`),
+    ///   leaving the colour channels untouched.
+    /// * [`Self::UndefinedRetain`] — the alpha is undefined but should be
+    ///   preserved (spec: "should be retained"); the pixel is returned
+    ///   verbatim.
+    /// * [`Self::UsefulAlpha`] — the alpha is already straight; the pixel
+    ///   is returned verbatim.
+    /// * [`Self::PremultipliedAlpha`] — the colour channels were scaled
+    ///   by the alpha at save time (spec example: straight
+    ///   `(a,r,g,b) = (0.5, 1, 0, 0)` is stored as `(0.5, 0.5, 0, 0)`).
+    ///   Each colour channel is un-premultiplied by dividing by the
+    ///   normalised alpha — `straight = round(stored × 255 / A)` —
+    ///   clamped to `0..=255`. A fully transparent pixel (`A == 0`) has
+    ///   no recoverable colour and is returned as transparent black.
+    /// * [`Self::Reserved`] — an unknown attributes byte carries no
+    ///   defined semantics; the pixel is returned verbatim so nothing is
+    ///   silently corrupted.
+    pub fn normalize_rgba8(self, rgba: [u8; 4]) -> [u8; 4] {
+        match self {
+            Self::NoAlpha | Self::UndefinedIgnore => [rgba[0], rgba[1], rgba[2], 0xFF],
+            Self::UndefinedRetain | Self::UsefulAlpha | Self::Reserved(_) => rgba,
+            Self::PremultipliedAlpha => {
+                let a = rgba[3];
+                if a == 0 {
+                    return [0, 0, 0, 0];
+                }
+                let unmul = |c: u8| -> u8 {
+                    // straight = stored × 255 / A, rounded to nearest,
+                    // clamped to the 8-bit range (a colour channel may
+                    // legitimately exceed its alpha in a malformed file).
+                    let num = c as u32 * 255 + (a as u32) / 2;
+                    (num / a as u32).min(255) as u8
+                };
+                [unmul(rgba[0]), unmul(rgba[1]), unmul(rgba[2]), a]
+            }
+        }
+    }
+
+    /// Apply [`Self::normalize_rgba8`] in place across a decoded
+    /// [`crate::image::TgaImage`], normalising it to straight alpha per
+    /// this attributes type (spec §C.6.13).
+    ///
+    /// Only [`crate::image::TgaPixelFormat::Rgba`] images carry an alpha
+    /// channel, so that is the only format affected:
+    ///
+    /// * [`crate::image::TgaPixelFormat::Rgb24`] and
+    ///   [`crate::image::TgaPixelFormat::Gray8`] have no alpha to
+    ///   interpret and are left untouched.
+    ///
+    /// [`Self::UndefinedRetain`], [`Self::UsefulAlpha`], and
+    /// [`Self::Reserved`] leave an RGBA image bit-for-bit unchanged;
+    /// [`Self::NoAlpha`] / [`Self::UndefinedIgnore`] force every pixel
+    /// opaque; [`Self::PremultipliedAlpha`] un-premultiplies every pixel.
+    pub fn apply_to_image(self, image: &mut crate::image::TgaImage) {
+        if image.pixel_format != crate::image::TgaPixelFormat::Rgba {
+            return;
+        }
+        // Fast path: the no-op variants don't need to walk the buffer.
+        if matches!(
+            self,
+            Self::UndefinedRetain | Self::UsefulAlpha | Self::Reserved(_)
+        ) {
+            return;
+        }
+        for px in image.data.chunks_exact_mut(4) {
+            let out = self.normalize_rgba8([px[0], px[1], px[2], px[3]]);
+            px.copy_from_slice(&out);
+        }
+    }
 }
 
 /// Date/time stamp embedded in the extension area's "save date" field

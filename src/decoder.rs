@@ -29,8 +29,9 @@
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
-    parse_extension_area, parse_footer, parse_header, ImageType, TgaColourCorrectionTable,
-    TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TGA_HEADER_SIZE,
+    parse_extension_area, parse_footer, parse_header, AttributesType, ImageType,
+    TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader,
+    TgaScanLineTable, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -266,6 +267,25 @@ pub fn parse_tga_scan_line_table(input: &[u8]) -> Option<TgaScanLineTable> {
 pub fn parse_tga_developer_area(input: &[u8]) -> Option<TgaDeveloperArea> {
     let footer = parse_footer(input)?;
     TgaDeveloperArea::parse(input, footer.developer_directory_offset)
+}
+
+/// Read the typed alpha-channel attributes (spec §C.6.13) declared by a
+/// file's extension area.
+///
+/// Returns the [`AttributesType`] decoded from the extension area's
+/// `attributes_type` byte. A file with no TGA 2.0 footer or no extension
+/// area carries no declared attributes type, so this returns `None`
+/// (the caller should fall back to its own alpha convention — typically
+/// treating the channel as straight/useful).
+///
+/// Pair this with [`AttributesType::apply_to_image`] to normalise a
+/// decoded RGBA image to straight alpha: a `PremultipliedAlpha` file is
+/// un-premultiplied, a `NoAlpha` / `UndefinedIgnore` file is forced
+/// opaque, and the remaining types pass through unchanged.
+pub fn parse_tga_attributes_type(input: &[u8]) -> Option<AttributesType> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.attributes())
 }
 
 /// Decode the TGA 2.0 postage-stamp (thumbnail) image from a file with

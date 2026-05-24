@@ -39,7 +39,17 @@ consulted.
   via `TgaExtensionArea::attributes()` (`NoAlpha` / `UndefinedIgnore`
   / `UndefinedRetain` / `UsefulAlpha` / `PremultipliedAlpha` plus a
   `Reserved(u8)` catch-all so non-standard files round-trip
-  bit-exactly).
+  bit-exactly). `parse_tga_attributes_type` reads the typed attribute
+  straight from a file's footer/extension area.
+* The attributes type is also *applied*, not just carried:
+  `AttributesType::normalize_rgba8` maps a decoded `[R,G,B,A]` pixel to
+  straight (non-premultiplied) alpha — `NoAlpha`/`UndefinedIgnore` force
+  opaque, `UndefinedRetain`/`UsefulAlpha`/`Reserved` pass through, and
+  `PremultipliedAlpha` un-premultiplies each colour channel
+  (`straight = round(stored × 255 / A)`, clamped; fully-transparent
+  pixels become transparent black) per the spec's Porter-Duff example.
+  `apply_to_image(&mut TgaImage)` rewrites a decoded image in place
+  (RGBA only; Rgb24/Gray8 have no alpha and are left untouched).
 * The §C.6.8 colour-correction table is exposed as
   `TgaColourCorrectionTable` (four 256-entry u16 curves in ARGB order),
   parsed by `parse_tga_colour_correction_table`. The on-disk block is

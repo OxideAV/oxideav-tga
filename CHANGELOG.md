@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 6: attributes-type *interpretation* (spec §C.6.13). Round 4
+  carried the typed `AttributesType` view + `has_meaningful_alpha` /
+  `is_premultiplied` predicates; this round makes the byte actionable.
+  `AttributesType::normalize_rgba8` maps a single decoded `[R,G,B,A]`
+  pixel to straight (non-premultiplied) alpha: `NoAlpha` (0) /
+  `UndefinedIgnore` (1) force the pixel opaque, `UndefinedRetain` (2) /
+  `UsefulAlpha` (3) / `Reserved` pass through, and `PremultipliedAlpha`
+  (4) un-premultiplies each colour channel
+  (`straight = round(stored × 255 / A)`, clamped; `A == 0` → transparent
+  black) per the spec's Porter-Duff example. `apply_to_image` rewrites a
+  decoded `TgaImage` in place (RGBA only; Rgb24 / Gray8 carry no alpha
+  and are left untouched). The new `parse_tga_attributes_type` decoder
+  helper surfaces the typed attribute straight from a file's footer +
+  extension area, returning `None` for files with no extension area.
+- Round 6: 21 new tests in `tests/round6.rs` (suite 106 → 127) covering
+  per-variant `normalize_rgba8` semantics (opaque-forcing, pass-through,
+  spec-example un-premultiply, round-to-nearest, overshoot clamp,
+  transparent-black), `apply_to_image` across RGBA / Rgb24 / Gray8,
+  `parse_tga_attributes_type` recovery (premultiplied / reserved /
+  absent), and two end-to-end encode→decode→read-attribute→normalise
+  round-trips (premultiplied + no-alpha).
+
 - Round 5: colour-correction table *application* (spec §C.6.8). The
   table is now usable as a LUT, not just carried as metadata:
   `TgaColourCorrectionTable::correct_rgba16` maps an 8-bit `[R,G,B,A]`
