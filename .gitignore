@@ -2,4 +2,6 @@
 
 # Rust build lockfile — this crate is a library, so we do
 # not commit Cargo.lock. See https://doc.rust-lang.org/cargo/faq.html#why-do-binaries-have-cargolock-in-version-control-but-not-libraries
-Cargo.lock
+# Anchor with leading slash so the binary crate under fuzz/ may keep
+# its own lockfile (cargo-fuzz produces a reproducible binary).
+/Cargo.lock

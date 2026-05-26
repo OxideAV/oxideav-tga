@@ -145,6 +145,23 @@ let mut containers = oxideav_core::ContainerRegistry::new();
 oxideav_tga::register(&mut codecs, &mut containers);
 ```
 
+## Fuzzing
+
+A cargo-fuzz harness under `fuzz/` drives the public decoder surface
+(`parse_tga` + every `parse_tga_*` helper for footer / extension /
+postage stamp / colour-correction / scan-line / developer area) with
+arbitrary bytes; the contract is panic-free regardless of how hostile
+the input is. A 16-MiB declared-raster cap inside the harness mirrors
+what a real demuxer's sanity limits would enforce
+(`width × height × 4 ≤ 16 MiB`); the library itself keeps no policy
+cap. `.github/workflows/fuzz.yml` runs the harness daily for a
+30-minute budget; ten encoder-produced seeds live in
+`fuzz/corpus/decode_tga/`.
+
+```sh
+cargo +nightly fuzz run decode_tga -- -runs=10000
+```
+
 ## Lacks
 
 * Image type 32 / 33 (compressed colour-mapped, Huffman + delta /

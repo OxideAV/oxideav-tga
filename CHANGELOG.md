@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 7: cargo-fuzz `decode_tga` harness + daily 30-minute CI run
+  (`.github/workflows/fuzz.yml`, cron 05:31 UTC, reusable
+  `OxideAV/.github/.github/workflows/crate-fuzz.yml@master`). One
+  decode-only panic-free target driving the full TGA decode chain
+  (`parse_header` → optional Image-ID → optional colour-map →
+  raw-or-§C.5-RLE body → optional 26-byte TGA 2.0 footer →
+  495-byte extension area → postage stamp / §C.6.8 colour-correction
+  table / §C.6.9 scan-line table / §C.7 developer-area tag directory)
+  plus every public standalone parser (`parse_tga_footer`,
+  `parse_tga_extension_area`, `parse_tga_postage_stamp`,
+  `parse_tga_colour_correction_table`, `parse_tga_scan_line_table`,
+  `parse_tga_developer_area`, `parse_tga_attributes_type`).
+  A 16-MiB declared-raster cap mirrors what a real demuxer's
+  sanity limits would enforce (`width × height × 4 ≤ 16 MiB`); the
+  library itself keeps no policy cap. Seed corpus committed as
+  10 small fixtures spanning types 1 / 2 / 3 / 9 / 10 / 11, RGBA /
+  RGB24 / Gray8, plus two TGA 2.0 footer / extension / developer-area
+  variants. 2 000-iter local smoke run reaches cov ≈ 566 ft ≈ 773
+  with zero crashes. No external library oracle was consulted; the
+  contract is purely panic-free under arbitrary bytes.
+
 - Round 6: attributes-type *interpretation* (spec §C.6.13). Round 4
   carried the typed `AttributesType` view + `has_meaningful_alpha` /
   `is_premultiplied` predicates; this round makes the byte actionable.

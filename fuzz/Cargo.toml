@@ -1,0 +1,50 @@
+[package]
+name = "oxideav-tga-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# TGA's decoder is the part worth fuzzing: an 18-byte header (id_length
+# / cmap_type / image_type / cmap_origin/length/entry_size / x_origin /
+# y_origin / width / height / pixel_depth / image_descriptor) followed
+# by an optional Image ID, optional colour-map block, and a body that
+# is either raw scanlines or §C.5 RLE packets (run / raw, 1-128 pixels
+# per packet), in 8 / 15 / 16 / 24 / 32 bpp. The 26-byte TGA 2.0
+# footer at the file tail optionally points at a 495-byte extension
+# area (which itself points at a postage-stamp thumbnail, a 2048-byte
+# §C.6.8 colour-correction table, a height-sized §C.6.9 scan-line
+# table) and at a §C.7 developer-area tag directory.
+#
+# Every one of those length / offset fields lands in the attacker's
+# bytes, so the decoder's bounds checks, the palette-lookup index
+# clamp, the 15/16-bit A1R5G5B5 unpacker, the BGR→RGB swap, the RLE
+# packet decoder's "doesn't cross scanline boundary" rule, the
+# bottom-up vertical-flip, and all of the parse_tga_* helpers
+# (footer / extension / postage-stamp / CCT / scan-line / developer)
+# are all on the harness path. No external library oracle exists in
+# this codebase (the clean-room wall bars libtga / image-rs's tga
+# submodule / ffmpeg's targa.c), so the contract is purely panic-free:
+# every call returns `Ok(_)` or `Err(TgaError::…)`, never aborts,
+# integer-overflows in debug/ASAN, indexes out of bounds, or OOMs.
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.oxideav-tga]
+path = ".."
+default-features = false
+
+# Prevent this from interfering with the umbrella workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "decode_tga"
+path = "fuzz_targets/decode_tga.rs"
+test = false
+doc = false
