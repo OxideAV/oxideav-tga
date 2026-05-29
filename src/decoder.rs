@@ -387,6 +387,20 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
     let stamp_image_type =
         ImageType::from_u8(stamp_header.image_type_raw).expect("converted from validated parent");
 
+    // Validate the parent's pixel depth against the (now-derived)
+    // postage-stamp image type. The parent's depth field is u8 straight
+    // off the wire (the §C.2 header allows any value), and an extension
+    // area can be authored with a `postage_stamp_offset` even when the
+    // parent depth is nonsensical (e.g. `8` for type 2 / 10, `0` for type
+    // 3 / 11). Without this guard a hostile file reaches `emit_pixel`'s
+    // depth `match` with an unsupported value and trips the internal
+    // `unreachable!()` — a panic, not a returned `Err`. The main-image
+    // path (`parse_tga`) already calls `validate_depth` for the same
+    // reason; mirror that here so every public decoder surface returns
+    // `Err(TgaError::Unsupported)` for a malformed depth rather than
+    // aborting the process.
+    validate_depth(stamp_image_type, stamp_header.depth)?;
+
     let pixels_in = &input[pp_off + 2..];
     let pixels = decode_raw_pixels(
         &stamp_header,
@@ -595,13 +609,27 @@ fn emit_pixel(
                 // BGRA on disk → RGBA in memory.
                 out.extend_from_slice(&[src[2], src[1], src[0], src[3]]);
             }
-            _ => unreachable!("validate_depth gates this"),
+            // Defensive: every caller now runs `validate_depth` before
+            // driving this routine, but a returned `Err` is the
+            // documented contract for an unsupported depth — never a
+            // panic — so a future caller that forgets the validation
+            // still fails closed.
+            other => {
+                return Err(Error::unsupported(format!(
+                    "TGA: true-colour pixel depth {other} not supported"
+                )))
+            }
         },
         ImageType::UncompressedGrayscale | ImageType::RleGrayscale => {
             // 8 bpp luma, single byte.
             out.push(src[0]);
         }
-        ImageType::None => unreachable!("rejected at parse_tga()"),
+        // Defensive: `parse_tga` already rejects `image_type == 0`,
+        // but as with the depth `match` above the contract is
+        // returned-error, not panic.
+        ImageType::None => {
+            return Err(Error::invalid("TGA: image_type == 0 reached pixel decoder"))
+        }
     }
     Ok(())
 }

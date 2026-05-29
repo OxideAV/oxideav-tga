@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Round 7 (panic-free hardening): `parse_tga_postage_stamp` previously
+  drove `decode_raw_pixels` against the parent header's pixel depth
+  without first running `validate_depth`. A footer + extension area
+  authored with `postage_stamp_offset` set, against a header whose
+  `image_type` (true-colour / grayscale) was inconsistent with the
+  `pixel_depth` field (e.g. type 2 + depth 4, type 3 + depth 0),
+  reached `emit_pixel`'s `unreachable!()` arm and panicked the process —
+  a contract violation, since every public parser is documented as
+  "returns `Result`, never panics" regardless of how malformed the
+  input is. `parse_tga` already validated depth pre-decode; the
+  postage-stamp helper now mirrors that. Both `unreachable!()` arms in
+  `emit_pixel` (unsupported depth on true-colour, and `ImageType::None`)
+  are also rewritten as returned `Err`s so a future caller that forgets
+  the validation still fails closed rather than aborting. Caught by
+  the round-6 cargo-fuzz harness as `crash-aa6c89f0c369…`; the
+  reproducer is now committed to the seed corpus as
+  `r175-postage-stamp-invalid-depth.bin` and pinned in
+  `tests/round7.rs` (9 new tests: corpus replay across every public
+  parser + `parse_tga_postage_stamp` (type=2 depth=4, type=2 depth=0,
+  type=3 depth=4, type=10 depth=4) returning `Unsupported` instead of
+  panicking, plus the success-path regression tests at depth 24 / 8).
+  Suite 127 → 136 tests, green standalone and with the `registry`
+  feature on. 2 000-iter local fuzz run on the patched build reaches
+  cov 561 / ft 751 / corp 79 with zero crashes.
+
 ### Added
 
 - Round 7: cargo-fuzz `decode_tga` harness + daily 30-minute CI run

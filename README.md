@@ -155,8 +155,21 @@ the input is. A 16-MiB declared-raster cap inside the harness mirrors
 what a real demuxer's sanity limits would enforce
 (`width × height × 4 ≤ 16 MiB`); the library itself keeps no policy
 cap. `.github/workflows/fuzz.yml` runs the harness daily for a
-30-minute budget; ten encoder-produced seeds live in
-`fuzz/corpus/decode_tga/`.
+30-minute budget; eleven encoder-produced seeds live in
+`fuzz/corpus/decode_tga/` (the eleventh is the reproducer for the
+round-7 postage-stamp `validate_depth` regression below, kept as a
+sentinel against future re-introduction).
+
+A round-7 catch from this harness: `parse_tga_postage_stamp` was
+driving `decode_raw_pixels` against the parent header's pixel depth
+without first running `validate_depth`. Files crafted with a
+`postage_stamp_offset` set against an `image_type` / `pixel_depth`
+combination the spec rejects (e.g. type 2 + depth 4, type 3 + depth 0)
+reached `emit_pixel`'s `unreachable!()` arm and panicked. The main
+decoder (`parse_tga`) already validated depth pre-decode; the
+postage-stamp path now mirrors that, and both `unreachable!()` arms in
+`emit_pixel` have been replaced with returned `Err`s so future callers
+fail closed.
 
 ```sh
 cargo +nightly fuzz run decode_tga -- -runs=10000
