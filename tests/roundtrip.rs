@@ -461,14 +461,71 @@ fn rejects_zero_dimension() {
 }
 
 #[test]
-fn rejects_right_to_left_columns() {
-    // Build a header with descriptor bit 4 set.
-    let rgba = opaque_checker_rgba(2, 2);
-    let mut bytes = encode_tga_uncompressed(2, 2, &rgba).unwrap();
-    bytes[17] |= 0x10; // bit 4: right-to-left
-    let err = parse_tga(&bytes).unwrap_err();
-    let msg = format!("{err}");
-    assert!(msg.contains("right-to-left"), "got {msg:?}");
+fn decodes_right_to_left_columns_by_mirroring() {
+    // The encoder writes a top-down, left-to-right file. Flipping
+    // image-descriptor bit 4 to 1 relabels the on-disk columns as
+    // right-to-left, so the decoder must mirror each row horizontally.
+    // The decoded output therefore equals the source pixels with every
+    // row reversed left-to-right.
+    let (w, h) = (4u16, 3u16);
+    let rgba = opaque_checker_rgba(w, h);
+    let mut bytes = encode_tga_uncompressed(w, h, &rgba).unwrap();
+    assert_eq!(bytes[17] & 0x20, 0x20, "encoder emits top-down (bit 5)");
+    bytes[17] |= 0x10; // set bit 4: right-to-left columns
+
+    let img = parse_tga(&bytes).unwrap();
+    assert_eq!(img.width, w as u32);
+    assert_eq!(img.height, h as u32);
+
+    // Build the expected output: source rows mirrored, alpha forced to
+    // 0xFF (24-bpp source has no alpha channel on disk).
+    let bpp = 4usize;
+    let stride = w as usize * bpp;
+    let mut expected = vec![0u8; rgba.len()];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let src = &rgba[y * stride + x * bpp..][..bpp];
+            let dst = &mut expected[y * stride + (w as usize - 1 - x) * bpp..][..bpp];
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = 0xFF;
+        }
+    }
+    assert_eq!(
+        img.data, expected,
+        "right-to-left file must decode mirrored"
+    );
+}
+
+#[test]
+fn right_to_left_plus_bottom_up_normalises_both_axes() {
+    // bit 4 (right-to-left) and bit 5 clear (bottom-up) combined: the
+    // decoder must flip rows AND mirror columns to reach a top-left,
+    // left-to-right origin. Result == source rotated 180°.
+    let (w, h) = (5u16, 4u16);
+    let rgba = opaque_checker_rgba(w, h);
+    let mut bytes = encode_tga_uncompressed(w, h, &rgba).unwrap();
+    bytes[17] &= !0x20; // clear bit 5: bottom-up rows
+    bytes[17] |= 0x10; // set bit 4: right-to-left columns
+
+    let img = parse_tga(&bytes).unwrap();
+    let bpp = 4usize;
+    let stride = w as usize * bpp;
+    let mut expected = vec![0u8; rgba.len()];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let src = &rgba[y * stride + x * bpp..][..bpp];
+            let dy = h as usize - 1 - y;
+            let dx = w as usize - 1 - x;
+            let dst = &mut expected[dy * stride + dx * bpp..][..bpp];
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = 0xFF;
+        }
+    }
+    assert_eq!(img.data, expected, "180° rotation expected");
 }
 
 // ---------------------------------------------------------------------------

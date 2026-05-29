@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Round 8 (right-to-left columns): the decoder now honours
+  image-descriptor **bit 4** (column ordering) instead of rejecting it
+  as `Unsupported`. Per the TGA 2.0 FFS image-descriptor field
+  (page 9, "Bits 5 & 4 … Bit 4 is for left-to-right ordering and bit 5
+  is for top-to-bottom ordering", Table 2 - Image Origin), bit 4 set
+  means the on-disk columns are right-to-left, so each decoded row is
+  mirrored horizontally to reach the crate's normalised top-down,
+  left-to-right output. The existing bit-5 row flip and the new bit-4
+  column mirror compose: a file with bit 4 set and bit 5 clear
+  (bottom-up + right-to-left) decodes as a 180° rotation. The single
+  normalisation pass in `parse_tga` now applies both transforms in one
+  copy. `TgaHeader::is_right_to_left` is retained as the descriptor
+  accessor; its doc and the module-level descriptor table are corrected
+  (an earlier comment had described bit 4 as "reserved / never set" —
+  the authoritative TGA 2.0 FFS defines it as the horizontal-ordering
+  bit). Two new tests in `tests/roundtrip.rs`
+  (`decodes_right_to_left_columns_by_mirroring`,
+  `right_to_left_plus_bottom_up_normalises_both_axes`) assert the
+  mirrored and 180°-rotated outputs against hand-built expected buffers.
+  Replaces the former `rejects_right_to_left_columns` test, whose
+  premise (rejection) no longer holds.
+
 ### Fixed
 
 - Round 7 (panic-free hardening): `parse_tga_postage_stamp` previously

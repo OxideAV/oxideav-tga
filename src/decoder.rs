@@ -19,9 +19,12 @@
 //! type, …) is parsed by [`parse_tga_extension_area`]; the embedded
 //! thumbnail is decoded by [`parse_tga_postage_stamp`].
 //!
-//! Image-descriptor bit 5 (bottom-up vs top-down) is honoured. Bit 4
-//! (right-to-left columns) is rejected as `Unsupported` rather than
-//! producing silently mirrored output — no real-world encoder sets it.
+//! Both image-descriptor ordering bits are honoured per the TGA 2.0 FFS
+//! image-descriptor field (Table 2 - Image Origin): bit 5 selects
+//! top-to-bottom vs bottom-to-top row order and bit 4 selects
+//! left-to-right vs right-to-left column order. The decoder normalises
+//! every combination to a top-down, left-to-right output, flipping rows
+//! and/or mirroring columns as the descriptor dictates.
 //!
 //! With the default `registry` feature on, the gated `TgaDecoder` trait
 //! impl wraps [`parse_tga`] for the `oxideav_core::Decoder` surface.
@@ -108,11 +111,6 @@ fn image_to_video_frame(image: TgaImage) -> VideoFrame {
 /// 1/2/9/10 and `Gray8` for types 3/11.
 pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
     let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
-    if header.is_right_to_left() {
-        return Err(Error::unsupported(
-            "TGA: image-descriptor bit 4 (right-to-left columns) not supported",
-        ));
-    }
     let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
         Error::unsupported(format!(
             "TGA: image type {} not supported",
@@ -179,23 +177,41 @@ pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
         TgaPixelFormat::Rgba
     };
 
-    // Normalise to top-down. On-disk rows are top-down iff the
-    // descriptor bit-5 is set; otherwise we flip.
+    // Normalise to a top-left origin. Per the TGA 2.0 FFS image-descriptor
+    // field (Table 2 - Image Origin), bit 5 carries the top-to-bottom row
+    // ordering and bit 4 the left-to-right column ordering. We always emit
+    // top-down, left-to-right, flipping rows when bit 5 is clear (the common
+    // bottom-up case) and mirroring columns when bit 4 is set (rare, but
+    // spec-legal — some Truevision tooling wrote right-to-left files).
     let bpp = match pixel_format {
         TgaPixelFormat::Rgba => 4,
         TgaPixelFormat::Gray8 => 1,
         TgaPixelFormat::Rgb24 => 3,
     };
-    let stride = header.width as usize * bpp;
-    let data = if header.is_top_down() {
+    let width = header.width as usize;
+    let height = header.height as usize;
+    let stride = width * bpp;
+    let flip_rows = !header.is_top_down();
+    let mirror_cols = header.is_right_to_left();
+    let data = if !flip_rows && !mirror_cols {
         pixels
     } else {
-        let mut flipped = vec![0u8; pixels.len()];
-        for y in 0..header.height as usize {
-            let src = &pixels[(header.height as usize - 1 - y) * stride..][..stride];
-            flipped[y * stride..y * stride + stride].copy_from_slice(src);
+        let mut out = vec![0u8; pixels.len()];
+        for y in 0..height {
+            let src_y = if flip_rows { height - 1 - y } else { y };
+            let src_row = &pixels[src_y * stride..][..stride];
+            let dst_row = &mut out[y * stride..][..stride];
+            if mirror_cols {
+                for x in 0..width {
+                    let src_px = &src_row[x * bpp..][..bpp];
+                    let dst_px = &mut dst_row[(width - 1 - x) * bpp..][..bpp];
+                    dst_px.copy_from_slice(src_px);
+                }
+            } else {
+                dst_row.copy_from_slice(src_row);
+            }
         }
-        flipped
+        out
     };
 
     Ok(TgaImage {

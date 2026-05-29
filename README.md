@@ -23,10 +23,13 @@ consulted.
   alpha to `0xFF`.
 * 24-bit pixels are BGR on disk, 32-bit are BGRA — both swapped to
   RGBA at decode time.
-* Image-descriptor bit 5 honoured: bottom-up files are flipped to
-  top-down on the output. Bit 4 (right-to-left columns) is rejected
-  rather than producing silently-mirrored pixels — no real-world TGA
-  encoder sets it.
+* Both image-descriptor ordering bits are honoured per the TGA 2.0 FFS
+  image-descriptor field (Table 2 - Image Origin): bit 5 selects
+  bottom-up vs top-down rows and bit 4 selects right-to-left vs
+  left-to-right columns. Output is always normalised to a top-down,
+  left-to-right origin — rows are flipped when bit 5 is clear and
+  columns are mirrored when bit 4 is set (both axes for a file that sets
+  bit 4 with bit 5 clear, i.e. a 180° rotation).
 * The optional 26-byte TGA 2.0 footer is recognised. Use
   `parse_tga_footer` for the extension/developer-area offsets,
   `parse_tga_extension_area` for the 495-byte extension-area body
@@ -180,8 +183,6 @@ cargo +nightly fuzz run decode_tga -- -runs=10000
 * Image type 32 / 33 (compressed colour-mapped, Huffman + delta /
   4-pass) — Truevision never shipped them; no fixtures exist in the
   wild and the spec describes the format only at a high level.
-* Image-descriptor bit 4 (right-to-left columns) — rejected as
-  `Unsupported` at decode rather than silently mirrored.
 * Application-level semantics for developer-area tag IDs — the spec
   declines to enumerate well-known IDs, so the parser surfaces tags
   + payload byte ranges and leaves interpretation to the caller.

@@ -30,10 +30,10 @@
 //! * Bits 0-3: alpha-channel bit count (0 or 8 in practice; 1 is legal
 //!   for the 16-bit A1R5G5B5 format but is implicit in the on-disk
 //!   layout, not the descriptor).
-//! * Bit 4: reserved (must be 0).
-//! * Bit 5: pixel ordering — 0 = bottom-to-top, 1 = top-to-bottom. (The
-//!   spec also describes bit 4 as "right-to-left" but no real-world
-//!   encoder ever sets it; we honour bit 5 only.)
+//! * Bit 4: column ordering — 0 = left-to-right, 1 = right-to-left
+//!   (TGA 2.0 FFS, Table 2 - Image Origin). The decoder mirrors columns
+//!   so output is always left-to-right.
+//! * Bit 5: row ordering — 0 = bottom-to-top, 1 = top-to-bottom.
 //! * Bits 6-7: reserved (must be 0 in TGA 2.0).
 
 /// Header size in bytes (always 18).
@@ -133,9 +133,10 @@ impl TgaHeader {
     }
 
     /// `true` when bit 4 of the descriptor is set, i.e. the on-disk
-    /// pixel columns are in right-to-left order. Real-world TGA files
-    /// never set this; the decoder rejects it as `Unsupported` rather
-    /// than silently producing mirrored output.
+    /// pixel columns are in right-to-left order (per the TGA 2.0 FFS
+    /// image-descriptor field, Table 2 - Image Origin). The decoder
+    /// mirrors columns so the returned [`crate::TgaImage`] is always
+    /// left-to-right.
     pub fn is_right_to_left(&self) -> bool {
         (self.descriptor & 0x10) != 0
     }

@@ -16,9 +16,11 @@
 //! | 10   | RLE          | 15 / 16 / 24 / 32 bpp                     | `Rgba` |
 //! | 11   | RLE          | 8 bpp grayscale                           | `Gray8` |
 //!
-//! Bottom-up and top-down row orders are auto-detected from
-//! image-descriptor bit 5; output is always normalised to top-left
-//! origin. The optional 26-byte TGA 2.0 footer is recognised — use
+//! Both row order (image-descriptor bit 5) and column order (bit 4) are
+//! auto-detected; bottom-up rows are flipped and right-to-left columns
+//! are mirrored so output is always normalised to a top-down,
+//! left-to-right origin. The optional 26-byte TGA 2.0 footer is
+//! recognised — use
 //! [`parse_tga_footer`] for the offsets, [`parse_tga_extension_area`]
 //! for the 495-byte extension-area body (author / comments / timestamp
 //! / software ID + version / aspect-ratio / gamma / attributes-type /
