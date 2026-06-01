@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/OxideAV/oxideav-tga/compare/v0.0.1...v0.0.2) - 2026-06-01
+
+### Other
+
+- Round 207: encode_roundtrip cargo-fuzz target
+- round 8 part 2: Image Identification Field round-trip (spec §3.3 / §C.3)
+- honour image-descriptor bit 4 (right-to-left columns)
+- Round 7 fix: postage-stamp validate_depth gate
+- Round 7: cargo-fuzz decode_tga harness + daily 30-min CI run
+- apply attributes-type alpha interpretation (spec §C.6.13)
+- Round 5: colour-correction table application + interleaved on-disk layout fix
+- round 4: developer area + CCT + scan-line table + typed AttributesType
+- round 3: RGB24-input standalone entry points + hardening tests
+- fix rustdoc broken intra-doc link to TgaError
+- clean round-2 [Unreleased] above 0.0.1 release notes
+- Round 2: type 1/3/9/11 writers + TGA 2.0 extension area + thumbnail
+- release v0.0.1
+
 ### Added
 
 - Round 207 (encode→decode roundtrip fuzz target): a second
