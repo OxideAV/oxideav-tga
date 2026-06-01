@@ -38,12 +38,12 @@
 //! footer / extension path is still exercised at sizes up to the cap.
 
 use libfuzzer_sys::fuzz_target;
+use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 use oxideav_tga::{
     parse_tga, parse_tga_attributes_type, parse_tga_colour_correction_table,
     parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_image_id,
     parse_tga_postage_stamp, parse_tga_scan_line_table,
 };
-use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 
 /// Upper bound on the declared output raster (16 MiB). Anything
 /// larger is a resource request, not a logic path, so the harness

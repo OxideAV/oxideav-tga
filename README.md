@@ -164,18 +164,39 @@ oxideav_tga::register(&mut codecs, &mut containers);
 
 ## Fuzzing
 
-A cargo-fuzz harness under `fuzz/` drives the public decoder surface
-(`parse_tga` + every `parse_tga_*` helper for footer / extension /
-postage stamp / colour-correction / scan-line / developer area) with
-arbitrary bytes; the contract is panic-free regardless of how hostile
-the input is. A 16-MiB declared-raster cap inside the harness mirrors
-what a real demuxer's sanity limits would enforce
-(`width × height × 4 ≤ 16 MiB`); the library itself keeps no policy
-cap. `.github/workflows/fuzz.yml` runs the harness daily for a
-30-minute budget; eleven encoder-produced seeds live in
-`fuzz/corpus/decode_tga/` (the eleventh is the reproducer for the
-round-7 postage-stamp `validate_depth` regression below, kept as a
-sentinel against future re-introduction).
+Two cargo-fuzz harnesses live under `fuzz/`:
+
+* `decode_tga` drives the public decoder surface (`parse_tga` + every
+  `parse_tga_*` helper for footer / extension / postage stamp /
+  colour-correction / scan-line / developer area) with arbitrary
+  bytes; the contract is panic-free regardless of how hostile the
+  input is. A 16-MiB declared-raster cap inside the harness mirrors
+  what a real demuxer's sanity limits would enforce
+  (`width × height × 4 ≤ 16 MiB`); the library itself keeps no policy
+  cap. Eleven encoder-produced seeds live in `fuzz/corpus/decode_tga/`
+  (the eleventh is the reproducer for the round-7 postage-stamp
+  `validate_depth` regression below, kept as a sentinel against future
+  re-introduction).
+* `encode_roundtrip` (new in r207) is the encode→decode bit-exact
+  oracle for every public writer. A `#[derive(Arbitrary)]` input picks
+  one of the eight writers (`encode_tga_uncompressed`, `encode_tga_rle`,
+  `encode_tga_uncompressed_rgb24`, `encode_tga_rle_rgb24`,
+  `encode_tga_palette`, `encode_tga_palette_rle`, `encode_tga_grayscale`,
+  `encode_tga_grayscale_rle`), a small raster (width × height clamped
+  to 1..=64 each, ≤ 4096 pixels total), an optional Image-ID splice,
+  and an optional TGA 2.0 footer / extension-area wrap. The harness
+  asserts byte-exact `parse_tga` output against the encoder's input
+  (with the documented 24-bpp / α=0xFF restoration for the RGB24 +
+  all-opaque-RGBA writers) so any logic bug a decode-only harness
+  cannot oracle — e.g. a future RLE encoder regression that miscounts
+  a packet length — surfaces immediately. The oracle is the encoder's
+  *input*, not an external library; the clean-room wall is intact.
+  10 000-iter local smoke run reaches cov ≈ 1049 / ft ≈ 2676 / corp
+  ≈ 237 with zero crashes; 16 seed inputs are committed to
+  `fuzz/corpus/encode_roundtrip/`.
+
+`.github/workflows/fuzz.yml` runs the harnesses daily for a 30-minute
+budget.
 
 A round-7 catch from this harness: `parse_tga_postage_stamp` was
 driving `decode_raw_pixels` against the parent header's pixel depth
@@ -190,6 +211,7 @@ fail closed.
 
 ```sh
 cargo +nightly fuzz run decode_tga -- -runs=10000
+cargo +nightly fuzz run encode_roundtrip -- -runs=10000
 ```
 
 ## Lacks

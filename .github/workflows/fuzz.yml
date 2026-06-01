@@ -1,14 +1,23 @@
 name: Fuzz
 
-# Daily fuzz run for the cargo-fuzz harness under fuzz/. The TGA
-# decoder (18-byte header -> Image-ID -> optional colour-map -> raw
-# or §C.5 RLE body -> optional 26-byte TGA 2.0 footer -> 495-byte
-# extension area -> postage-stamp / §C.6.8 CCT / §C.6.9 scan-line
-# table / §C.7 developer-area tag directory) is the surface worth
-# fuzzing; there is no external library oracle worth pulling in (and
-# the clean-room wall bars libtga / image-rs's tga submodule /
-# ffmpeg's targa.c anyway), so this is a decode-only panic-free
-# harness: one target gets the whole 30-minute budget.
+# Daily fuzz run for the cargo-fuzz harnesses under fuzz/. Two targets:
+#
+# * `decode_tga` — drives arbitrary bytes through the full decode chain
+#   (18-byte header -> Image-ID -> optional colour-map -> raw or §C.5
+#   RLE body -> optional 26-byte TGA 2.0 footer -> 495-byte extension
+#   area -> postage-stamp / §C.6.8 CCT / §C.6.9 scan-line table / §C.7
+#   developer-area tag directory). Contract: panic-free under any
+#   input; no external oracle is consulted (clean-room from the TGA
+#   2.0 spec only).
+# * `encode_roundtrip` — uses `#[derive(Arbitrary)]` to pick one of the
+#   eight public writers (`encode_tga_uncompressed`, `encode_tga_rle`,
+#   `encode_tga_uncompressed_rgb24`, `encode_tga_rle_rgb24`,
+#   `encode_tga_palette`, `encode_tga_palette_rle`,
+#   `encode_tga_grayscale`, `encode_tga_grayscale_rle`) + a small
+#   raster (≤ 4096 pixels) and asserts byte-exact `encode → parse_tga`
+#   roundtrip on the input. Optional §3.3 / §C.3 Image-ID splice and
+#   TGA 2.0 footer / extension-area wrap are also exercised. The
+#   oracle is the encoder's *input*, not an external library.
 
 on:
   schedule:

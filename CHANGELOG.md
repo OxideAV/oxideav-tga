@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 207 (encode→decode roundtrip fuzz target): a second
+  cargo-fuzz harness `encode_roundtrip` joins the existing decode-only
+  `decode_tga` target. The new harness uses
+  `#[derive(Arbitrary)]` (via `libfuzzer-sys`'s `arbitrary-derive`
+  feature) to pick one of the eight public writer surfaces —
+  `encode_tga_uncompressed`, `encode_tga_rle`,
+  `encode_tga_uncompressed_rgb24`, `encode_tga_rle_rgb24`,
+  `encode_tga_palette`, `encode_tga_palette_rle`,
+  `encode_tga_grayscale`, `encode_tga_grayscale_rle` — together with a
+  small fuzzer-supplied raster (width × height clamped to 1..=64 each,
+  ≤ 4096 pixels total), an optional `splice_image_id` invocation,
+  and an optional `encode_tga_with_extension` wrap. The harness then
+  decodes the freshly-encoded bytes through `parse_tga` and asserts:
+  pixel-format / width / height / data-length match the input
+  contract; bit-exact pixel data per writer (RGBA writers: input ==
+  output; RGB24 writers: input matches the first three channels,
+  output α = 0xFF; palette writers: input == output through the
+  dedup'd palette; grayscale writers: input == output); and, when an
+  Image-ID was spliced, that `parse_tga_image_id` returns the spliced
+  bytes verbatim. The oracle is the encoder's input — no external
+  library is consulted or required, so the clean-room wall is intact.
+  A 10 000-iter local smoke run on the patched build reaches cov ≈
+  1049 / ft ≈ 2676 / corp ≈ 237 with zero crashes; 16 seed inputs from
+  that run are committed to `fuzz/corpus/encode_roundtrip/`. The
+  `.github/workflows/fuzz.yml` description is updated so both targets
+  are listed; `fuzz/Cargo.toml` gains a second `[[bin]]` entry and the
+  `arbitrary-derive` feature on `libfuzzer-sys`. This complements the
+  round-7 decode-only harness: that harness catches panic / OOB / OOM
+  bugs the encoder can never see (because the decoder takes arbitrary
+  bytes), while this harness catches encoder logic bugs the
+  decode-only target can never oracle (because it has no trusted
+  source for the "right" output).
+
 - Round 8 part 2 (Image Identification Field — spec §3.3 / §C.3): the
   free-form, up-to-255-byte identification block written immediately
   after the 18-byte header is now a first-class round-trippable

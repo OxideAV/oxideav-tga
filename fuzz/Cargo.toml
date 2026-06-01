@@ -30,7 +30,12 @@ cargo-fuzz = true
 # every call returns `Ok(_)` or `Err(TgaError::…)`, never aborts,
 # integer-overflows in debug/ASAN, indexes out of bounds, or OOMs.
 [dependencies]
-libfuzzer-sys = "0.4"
+# `arbitrary-derive` pulls in `arbitrary`'s `derive` feature so the
+# `encode_roundtrip` target can use `#[derive(Arbitrary)]` on its
+# fuzz input struct (which picks one of the eight public writer
+# surfaces + a small clamped raster + optional Image-ID splice +
+# optional extension-area wrap).
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 
 [dependencies.oxideav-tga]
 path = ".."
@@ -46,5 +51,11 @@ debug = 1
 [[bin]]
 name = "decode_tga"
 path = "fuzz_targets/decode_tga.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "encode_roundtrip"
+path = "fuzz_targets/encode_roundtrip.rs"
 test = false
 doc = false
