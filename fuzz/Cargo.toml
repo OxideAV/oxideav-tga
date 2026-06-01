@@ -48,3 +48,20 @@ name = "decode_tga"
 path = "fuzz_targets/decode_tga.rs"
 test = false
 doc = false
+
+# Encode-then-decode round-trip target. Drives each of the eight
+# standalone writers (`encode_tga_uncompressed`,
+# `encode_tga_uncompressed_rgb24`, `encode_tga_rle`,
+# `encode_tga_rle_rgb24`, `encode_tga_grayscale`,
+# `encode_tga_grayscale_rle`, `encode_tga_palette`,
+# `encode_tga_palette_rle`) with pixel buffers derived from arbitrary
+# fuzz bytes, then runs the freshly-encoded file back through
+# `parse_tga` and asserts the round-tripped frame's width / height /
+# pixel_format / payload length match the requested dimensions.
+# Complements `decode_tga` (decoder-only panic-free contract) by
+# covering the encoder side and the encode↔decode boundary.
+[[bin]]
+name = "encode_roundtrip"
+path = "fuzz_targets/encode_roundtrip.rs"
+test = false
+doc = false

@@ -1,14 +1,31 @@
 name: Fuzz
 
-# Daily fuzz run for the cargo-fuzz harness under fuzz/. The TGA
-# decoder (18-byte header -> Image-ID -> optional colour-map -> raw
-# or §C.5 RLE body -> optional 26-byte TGA 2.0 footer -> 495-byte
-# extension area -> postage-stamp / §C.6.8 CCT / §C.6.9 scan-line
-# table / §C.7 developer-area tag directory) is the surface worth
-# fuzzing; there is no external library oracle worth pulling in (and
-# the clean-room wall bars libtga / image-rs's tga submodule /
-# ffmpeg's targa.c anyway), so this is a decode-only panic-free
-# harness: one target gets the whole 30-minute budget.
+# Daily fuzz run for the cargo-fuzz harnesses under fuzz/. Two
+# targets, each getting half of the time budget (the reusable
+# workflow auto-discovers fuzz/fuzz_targets/*.rs and splits the
+# budget evenly):
+#
+#   * decode_tga — drives attacker-supplied bytes through
+#     `parse_tga` and every public `parse_tga_*` helper (footer /
+#     extension area / postage-stamp / §C.6.8 CCT / §C.6.9 scan-line
+#     table / §C.7 developer-area tag directory / Image ID /
+#     attributes type). Decoder-only panic-free contract.
+#   * encode_roundtrip — picks one of the eight standalone writers
+#     (`encode_tga_uncompressed`, `encode_tga_uncompressed_rgb24`,
+#     `encode_tga_rle`, `encode_tga_rle_rgb24`,
+#     `encode_tga_grayscale`, `encode_tga_grayscale_rle`,
+#     `encode_tga_palette`, `encode_tga_palette_rle`) from fuzz
+#     bytes, encodes a width × height raster, decodes the result
+#     through `parse_tga`, and asserts the round-tripped frame's
+#     width / height / pixel_format / payload length match the
+#     requested dimensions. Covers the encoder side and the
+#     encode↔decode boundary.
+#
+# No external library oracle is reachable (the clean-room wall bars
+# libtga / image-rs's tga submodule / ffmpeg's targa.c), so neither
+# target asserts pixel-content equality against a third-party
+# decode; decode_tga is purely panic-free and encode_roundtrip is
+# shape-only.
 
 on:
   schedule:

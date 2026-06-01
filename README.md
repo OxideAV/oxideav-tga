@@ -164,17 +164,21 @@ oxideav_tga::register(&mut codecs, &mut containers);
 
 ## Fuzzing
 
-A cargo-fuzz harness under `fuzz/` drives the public decoder surface
-(`parse_tga` + every `parse_tga_*` helper for footer / extension /
-postage stamp / colour-correction / scan-line / developer area) with
-arbitrary bytes; the contract is panic-free regardless of how hostile
-the input is. A 16-MiB declared-raster cap inside the harness mirrors
-what a real demuxer's sanity limits would enforce
-(`width × height × 4 ≤ 16 MiB`); the library itself keeps no policy
-cap. `.github/workflows/fuzz.yml` runs the harness daily for a
-30-minute budget; eleven encoder-produced seeds live in
-`fuzz/corpus/decode_tga/` (the eleventh is the reproducer for the
-round-7 postage-stamp `validate_depth` regression below, kept as a
+Two cargo-fuzz harnesses live under `fuzz/`. `.github/workflows/fuzz.yml`
+runs both daily, sharing a 30-minute budget (the reusable workflow
+auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly).
+
+### `decode_tga`
+
+Drives the public decoder surface (`parse_tga` + every `parse_tga_*`
+helper for footer / extension area / postage stamp / colour-correction /
+scan-line / developer area / Image ID / attributes type) with arbitrary
+bytes. The contract is panic-free regardless of how hostile the input
+is. A 16-MiB declared-raster cap inside the harness mirrors what a real
+demuxer's sanity limits would enforce (`width × height × 4 ≤ 16 MiB`);
+the library itself keeps no policy cap. Eleven encoder-produced seeds
+live in `fuzz/corpus/decode_tga/` (the eleventh is the reproducer for
+the round-7 postage-stamp `validate_depth` regression below, kept as a
 sentinel against future re-introduction).
 
 A round-7 catch from this harness: `parse_tga_postage_stamp` was
@@ -188,8 +192,29 @@ postage-stamp path now mirrors that, and both `unreachable!()` arms in
 `emit_pixel` have been replaced with returned `Err`s so future callers
 fail closed.
 
+### `encode_roundtrip`
+
+Generates a pixel buffer from arbitrary fuzz bytes (selector byte +
+two `u16` dimensions + a tiled payload tail), feeds it through one of
+the eight standalone writers
+(`encode_tga_uncompressed`, `encode_tga_uncompressed_rgb24`,
+`encode_tga_rle`, `encode_tga_rle_rgb24`,
+`encode_tga_grayscale`, `encode_tga_grayscale_rle`,
+`encode_tga_palette`, `encode_tga_palette_rle`),
+decodes the result through `parse_tga`, and asserts the round-tripped
+frame's `width` / `height` / `pixel_format` / payload length match the
+requested dimensions. Pixel-content equality is not asserted (the
+RGBA→24/32 depth auto-selection drops alpha when every input pixel is
+opaque, palette encoders re-index and so re-order colours, and the
+RGB24-input writers always emit 24 bpp regardless of alpha — frame
+shape is the strongest assertion that's valid across every writer).
+The same 16 MiB raster cap applies; the harness tiles (rather than
+zero-pads) the fuzz tail so the RLE writers exercise their raw-packet
+code path instead of collapsing every row to one giant run.
+
 ```sh
 cargo +nightly fuzz run decode_tga -- -runs=10000
+cargo +nightly fuzz run encode_roundtrip -- -runs=10000
 ```
 
 ## Lacks

@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 207 (encode-side fuzz harness): a second cargo-fuzz target,
+  `encode_roundtrip`, lands alongside the existing decode-only
+  `decode_tga` target. The new target generates a width × height
+  pixel buffer from arbitrary fuzz bytes (selector byte selecting one
+  of the eight standalone writers + two `u16` dimensions + a tiled
+  pixel-data tail), drives it through that writer
+  (`encode_tga_uncompressed`, `encode_tga_uncompressed_rgb24`,
+  `encode_tga_rle`, `encode_tga_rle_rgb24`, `encode_tga_grayscale`,
+  `encode_tga_grayscale_rle`, `encode_tga_palette`,
+  `encode_tga_palette_rle`), decodes the freshly-encoded file back
+  through `parse_tga`, and asserts the round-tripped frame's `width`
+  / `height` / `pixel_format` / payload length match the requested
+  dimensions. Pixel-content equality isn't asserted — the RGBA→24/32
+  depth auto-selection drops alpha when every input pixel is opaque,
+  palette encoders re-index and so re-order colours, and RGB24-input
+  writers always emit 24 bpp regardless of alpha — so frame-shape
+  integrity is the strongest assertion that's valid across every
+  writer. The harness shares the decoder target's 16-MiB raster cap;
+  the tail is *tiled* (rather than zero-padded) so the RLE writers
+  exercise their raw-packet path instead of collapsing every row to
+  one giant run. `fuzz/Cargo.toml` gains the new `[[bin]]` entry and
+  the daily fuzz workflow (`.github/workflows/fuzz.yml`) splits its
+  30-minute budget evenly across both targets (the reusable workflow
+  auto-discovers `fuzz/fuzz_targets/*.rs`). No source-of-truth crate
+  changes; the new target consumes only the already-public encoder /
+  decoder API surface.
+
 - Round 8 part 2 (Image Identification Field — spec §3.3 / §C.3): the
   free-form, up-to-255-byte identification block written immediately
   after the 18-byte header is now a first-class round-trippable
