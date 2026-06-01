@@ -74,6 +74,12 @@ consulted.
   / `size`), parsed by `parse_tga_developer_area`; each tag's
   application-defined payload bytes are borrowable via
   `dev.payload(input, tag)`.
+* The §3.3 / §C.3 Image Identification Field (the free-form,
+  up-to-255-byte block at offset 18) is exposed verbatim by
+  `parse_tga_image_id`; the helper returns the borrowed byte slice, an
+  empty slice for the common `id_length == 0` case, or `None` when the
+  buffer is truncated. Content is left untouched (no NUL trimming, no
+  UTF-8 decode) because the spec leaves the format unconstrained.
 
 ## Encode
 
@@ -98,6 +104,14 @@ consulted.
 * Palette writers cap at 256 unique RGBA colours and emit a 32-bit
   BGRA colour map (with a clear `Unsupported` error past that).
 * Top-down origin (descriptor bit 5 set) is used unconditionally.
+
+`splice_image_id(&mut base, image_id_bytes)?` rewrites a freshly-encoded
+base TGA to carry an Image Identification Field (spec §3.3 / §C.3): the
+helper sets byte 0 to the supplied length and inserts the bytes at offset
+18, shifting the colour-map + pixel + any trailing extension area / footer
+by the same number of bytes. The cap is the spec maximum of 255 bytes
+(`TGA_IMAGE_ID_MAX`); an empty input is a no-op; calling the helper twice
+on the same file is rejected so an existing ID is never overwritten.
 
 `encode_tga_with_extension(base, &ExtensionAreaInput { … })` wraps
 any of the writers above and appends a TGA 2.0 footer + extension

@@ -40,7 +40,7 @@
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
     parse_tga, parse_tga_attributes_type, parse_tga_colour_correction_table,
-    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer,
+    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_image_id,
     parse_tga_postage_stamp, parse_tga_scan_line_table,
 };
 use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
@@ -62,6 +62,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_tga_scan_line_table(data);
     let _ = parse_tga_developer_area(data);
     let _ = parse_tga_attributes_type(data);
+    let _ = parse_tga_image_id(data);
 
     // Pre-screen the header (no pixel allocation) so we can bound the
     // decoder's per-frame allocation before it runs. A header that

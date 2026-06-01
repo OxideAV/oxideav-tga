@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 8 part 2 (Image Identification Field — spec §3.3 / §C.3): the
+  free-form, up-to-255-byte identification block written immediately
+  after the 18-byte header is now a first-class round-trippable
+  surface. Decoder side: `parse_tga_image_id(input) -> Option<&[u8]>`
+  borrows the slice straight out of the input buffer (empty slice for
+  the common `id_length == 0` case, `None` for inputs truncated before
+  the declared length). No NUL trimming, no UTF-8 decode — the spec
+  describes the field as "free-form identification" and declines to
+  constrain the content, so the bytes are surfaced verbatim and the
+  caller picks the convention. Encoder side:
+  `splice_image_id(&mut Vec<u8>, &[u8])` rewrites a freshly-encoded
+  base TGA to carry an ID — sets byte 0 to the new length, inserts the
+  bytes at offset 18, and shifts the colour-map + pixel + any trailing
+  payload by the same number of bytes (`Vec::splice` over an empty
+  range, one shift, in place). The new cap constant `TGA_IMAGE_ID_MAX`
+  matches the spec maximum of 255 bytes (the on-disk length field is a
+  single byte). The splice composes cleanly with
+  `encode_tga_with_extension`: call the splice *before* extension
+  wrapping and the footer / extension area / postage-stamp / CCT /
+  scan-line / developer-area offsets that the extension writer back-
+  patches all land on post-splice byte positions. The new `tests/round8.rs`
+  suite pins the round-trip across every base writer (true-colour 24 /
+  32 / RLE, RGB24 uncompressed + RLE, palette uncompressed + RLE,
+  grayscale uncompressed + RLE), the splice + extension area
+  composition, and the edge cases (empty ID is a no-op, 255-byte ID is
+  accepted, > 255 returns `InvalidData`, double-splice rejected, splice
+  into a sub-header buffer rejected, decoder is panic-free on
+  truncated / arbitrary input). Suite 136 → 153 tests, green standalone
+  and with the `registry` feature on. The fuzz harness now drives
+  `parse_tga_image_id` alongside every other public parser so the
+  panic-free contract extends to the new surface.
+
 - Round 8 (right-to-left columns): the decoder now honours
   image-descriptor **bit 4** (column ordering) instead of rejecting it
   as `Unsupported`. Per the TGA 2.0 FFS image-descriptor field

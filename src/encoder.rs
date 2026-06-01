@@ -998,3 +998,70 @@ fn write_postage_stamp(out: &mut Vec<u8>, stamp: &TgaImage, parent_depth: u8) ->
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Image ID field (spec §3.3 / §C.3): the free-form, up-to-255-byte
+// identification block written immediately after the 18-byte header.
+// ---------------------------------------------------------------------------
+
+/// Maximum size of the optional Image Identification Field (spec §3.3 /
+/// §C.3). The on-disk length is stored as a `u8` at header byte 0, so the
+/// field can hold at most 255 bytes.
+pub const TGA_IMAGE_ID_MAX: usize = 255;
+
+/// Splice an Image Identification Field (spec §3.3 / §C.3) into a freshly
+/// encoded TGA byte stream.
+///
+/// The Image ID is a free-form, up-to-255-byte block written immediately
+/// after the 18-byte header. The base encoders ([`encode_tga_uncompressed`],
+/// [`encode_tga_rle`], [`encode_tga_palette`], [`encode_tga_palette_rle`],
+/// [`encode_tga_grayscale`], [`encode_tga_grayscale_rle`]) all emit
+/// `id_length == 0` (no Image ID). This helper rewrites byte 0 of the
+/// header to the new length and inserts the supplied bytes at offset 18,
+/// shifting the colour map + pixel payload + any trailing footer /
+/// extension area / postage stamp accordingly.
+///
+/// The Image ID is content-opaque per spec — typically a printable string
+/// naming the source camera / scene / artist — and is preserved verbatim
+/// (no NUL padding or truncation is applied; the caller controls every
+/// byte). To splice an Image ID into a file that already carries a
+/// TGA 2.0 footer / extension area, call this **before**
+/// [`encode_tga_with_extension`]; the footer is appended at the tail and
+/// remains tail-aligned after the splice, so the order
+/// "base encoder → `splice_image_id` → `encode_tga_with_extension`"
+/// produces a single well-formed file.
+///
+/// Returns [`crate::TgaError::Invalid`] if the base file is shorter than
+/// the 18-byte header, if byte 0 isn't already `0` (i.e. the file already
+/// carries an Image ID — the helper refuses to overwrite an existing one),
+/// or if `image_id.len() > 255` (the on-disk length field is a single
+/// byte).
+pub fn splice_image_id(base_tga: &mut Vec<u8>, image_id: &[u8]) -> Result<()> {
+    if base_tga.len() < TGA_HEADER_SIZE {
+        return Err(Error::invalid(
+            "TGA encoder: base_tga too short to contain a header",
+        ));
+    }
+    if base_tga[0] != 0 {
+        return Err(Error::invalid(
+            "TGA encoder: base_tga already carries an Image ID (id_length != 0)",
+        ));
+    }
+    if image_id.len() > TGA_IMAGE_ID_MAX {
+        return Err(Error::invalid(format!(
+            "TGA encoder: image_id length {} exceeds spec maximum {}",
+            image_id.len(),
+            TGA_IMAGE_ID_MAX,
+        )));
+    }
+    if image_id.is_empty() {
+        // No-op — the header already declares id_length == 0.
+        return Ok(());
+    }
+    base_tga[0] = image_id.len() as u8;
+    // Splice in the bytes after the header. `Vec::splice` over an empty
+    // range is the right primitive here: it shifts the existing tail
+    // rightwards by image_id.len() bytes in one go.
+    base_tga.splice(TGA_HEADER_SIZE..TGA_HEADER_SIZE, image_id.iter().copied());
+    Ok(())
+}

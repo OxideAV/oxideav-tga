@@ -229,6 +229,35 @@ pub fn parse_tga_footer(input: &[u8]) -> Option<TgaFooter> {
     parse_footer(input)
 }
 
+/// Borrow the Image Identification Field bytes (spec §3.3 / §C.3) from a
+/// TGA file.
+///
+/// The Image ID is a free-form, up-to-255-byte block written immediately
+/// after the 18-byte header. Its length is the `id_length` byte at
+/// header offset 0; the spec describes it as a free-form identification
+/// field (typically a printable ASCII string naming the source camera /
+/// scene / artist) and declines to constrain the content further, so this
+/// helper returns the raw bytes verbatim — no trimming, no decoding to
+/// `String`, no NUL-stripping. Callers that want a string can run
+/// `String::from_utf8_lossy` over the returned slice.
+///
+/// Returns:
+///
+/// * `Some(&[])` when the header declares `id_length == 0` (the common
+///   case — most encoders, including this crate's, write no Image ID).
+/// * `Some(bytes)` with the borrowed slice when an Image ID is present.
+/// * `None` when the input is shorter than the 18-byte header, or
+///   truncated before the Image ID's full length.
+pub fn parse_tga_image_id(input: &[u8]) -> Option<&[u8]> {
+    let header = parse_header(input)?;
+    let n = header.id_length as usize;
+    let end = TGA_HEADER_SIZE + n;
+    if input.len() < end {
+        return None;
+    }
+    Some(&input[TGA_HEADER_SIZE..end])
+}
+
 /// Parse the TGA 2.0 extension-area body if the file has one.
 ///
 /// Locates the footer + follows the `extension_area_offset` it carries,
