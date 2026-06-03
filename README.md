@@ -4,9 +4,8 @@ Pure-Rust Truevision TGA (TARGA) reader/writer for the
 [`oxideav`](https://github.com/OxideAV/oxideav) framework.
 
 Clean-room implementation of the public **Truevision TGA File Format
-Specification v2.0** (1989). No `image` crate's TGA submodule,
-FreeImage, DevIL, GIMP TGA plugin, or NetPBM `targatoppm` source
-consulted.
+Specification v2.0** (1989). The spec PDF and the Gamers.org plain-
+text mirror of the same document are the only sources consulted.
 
 ## Decode
 
@@ -215,6 +214,39 @@ code path instead of collapsing every row to one giant run.
 ```sh
 cargo +nightly fuzz run decode_tga -- -runs=10000
 cargo +nightly fuzz run encode_roundtrip -- -runs=10000
+```
+
+## Benchmarks
+
+A `criterion` harness in `benches/codec.rs` characterises the decode +
+encode hot paths on procedurally-generated 256×256 frames. Ten
+scenarios isolate the cost of one decode or one encode call across the
+crate's standalone API surface:
+
+| Group   | Scenario              | What it isolates                                     |
+| ------- | --------------------- | ---------------------------------------------------- |
+| decode  | `uncompressed_24bpp`  | Type 2 / 24 bpp, every-pixel-unique gradient         |
+| decode  | `uncompressed_32bpp`  | Type 2 / 32 bpp, alternating-alpha gradient          |
+| decode  | `rle_24bpp_runs`      | Type 10 / 24 bpp, banded input → §C.5 run packets    |
+| decode  | `rle_24bpp_noise`     | Type 10 / 24 bpp, gradient → §C.5 raw packets        |
+| decode  | `grayscale_8bpp`      | Type 3 / 8 bpp luma                                  |
+| decode  | `palette_8bpp`        | Type 1 / 8 bpp + 256-colour palette                  |
+| encode  | `uncompressed_rgba`   | `encode_tga_uncompressed` (auto-24/32 depth)         |
+| encode  | `uncompressed_rgb24`  | `encode_tga_uncompressed_rgb24` (fixed 24 bpp)       |
+| encode  | `rle_rgba_runs`       | `encode_tga_rle`, run-heavy input                    |
+| encode  | `rle_rgba_noise`      | `encode_tga_rle`, high-entropy input                 |
+
+The benchmarks generate every input procedurally — no fixtures are
+committed, the harness is self-contained, and a default `cargo bench`
+run completes in roughly a minute on a laptop. Numbers move with
+host hardware; the value of the harness is the *relative* cost
+across scenarios (RLE vs uncompressed, run vs raw, 24 bpp vs 32 bpp,
+true-colour vs palette vs grayscale).
+
+```sh
+cargo bench
+# or to target a single scenario:
+cargo bench --bench codec -- decode/rle_24bpp_runs
 ```
 
 ## Lacks

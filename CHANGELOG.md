@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 213 (criterion benchmark harness): a new `benches/codec.rs`
+  driven by `criterion` (added as a dev-dep with `default-features =
+  false` and the `cargo_bench_support` feature only — no impact on
+  runtime consumers) characterises the decode + encode hot paths.
+  Ten scenarios isolate one decode-or-encode call apiece on
+  procedurally-generated 256×256 inputs: decode `uncompressed_24bpp`
+  (type 2 / 24 bpp gradient), `uncompressed_32bpp` (type 2 / 32 bpp
+  alternating-alpha), `rle_24bpp_runs` (type 10 / banded so each row
+  packs into ~8 §C.5 run packets), `rle_24bpp_noise` (type 10 /
+  gradient so §C.5 falls back to raw packets), `grayscale_8bpp`
+  (type 3), `palette_8bpp` (type 1 + 256-colour palette); encode
+  `uncompressed_rgba` (`encode_tga_uncompressed` auto-24/32-bpp),
+  `uncompressed_rgb24` (`encode_tga_uncompressed_rgb24` fixed 24 bpp,
+  no alpha scan), `rle_rgba_runs` (exercises §C.5 run packets),
+  `rle_rgba_noise` (exercises §C.5 raw packets). No fixtures are
+  committed; every input is generated inside the bench file. The
+  harness uses only the crate's published standalone API
+  (`parse_tga`, `encode_tga_uncompressed`,
+  `encode_tga_uncompressed_rgb24`, `encode_tga_rle`,
+  `encode_tga_grayscale`, `encode_tga_palette`). `Cargo.toml` gains
+  a `[[bench]]` entry with `harness = false`; README §"Benchmarks"
+  documents the scenario matrix and the run command. No source-of-
+  truth crate changes; numeric headline figures are deliberately
+  omitted from this commit (they drift with CI hardware). Default
+  `cargo bench` run completes in roughly a minute on a laptop.
+
 - Round 207 (encode-side fuzz harness): a second cargo-fuzz target,
   `encode_roundtrip`, lands alongside the existing decode-only
   `decode_tga` target. The new target generates a width × height

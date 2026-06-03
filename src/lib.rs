@@ -1,9 +1,9 @@
 //! Pure-Rust Truevision TGA (TARGA) reader/writer.
 //!
 //! Clean-room implementation of the public **Truevision TGA File
-//! Format Specification v2.0** (1989, 39-page PDF). No `image` crate
-//! TGA submodule, FreeImage, DevIL, GIMP TGA plugin, or NetPBM
-//! `targatoppm` source consulted.
+//! Format Specification v2.0** (1989, 39-page PDF). Spec PDF + the
+//! Gamers.org plain-text mirror of the same document are the only
+//! sources consulted.
 //!
 //! ## Read coverage
 //!
