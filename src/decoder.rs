@@ -32,9 +32,9 @@
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
-    parse_extension_area, parse_footer, parse_header, AttributesType, ImageType,
-    TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader,
-    TgaScanLineTable, TGA_HEADER_SIZE,
+    parse_extension_area, parse_footer, parse_header, AttributesType, GammaValue, ImageType,
+    KeyColor, PixelAspectRatio, SoftwareVersion, TgaColourCorrectionTable, TgaDeveloperArea,
+    TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -331,6 +331,43 @@ pub fn parse_tga_attributes_type(input: &[u8]) -> Option<AttributesType> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
     Some(ext.attributes())
+}
+
+/// Convenience helper: read the §C.6.4 [`KeyColor`] straight from the
+/// extension area without separately parsing the footer + extension
+/// area body. Returns `None` when the file has no TGA 2.0 footer or no
+/// extension area.
+pub fn parse_tga_key_color(input: &[u8]) -> Option<KeyColor> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.key_color_typed())
+}
+
+/// Convenience helper: read the §C.6.5 [`PixelAspectRatio`] straight
+/// from the extension area. Returns `None` when the file has no TGA 2.0
+/// footer or no extension area.
+pub fn parse_tga_pixel_aspect_ratio(input: &[u8]) -> Option<PixelAspectRatio> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.pixel_aspect_ratio_typed())
+}
+
+/// Convenience helper: read the §C.6.6 [`GammaValue`] straight from the
+/// extension area. Returns `None` when the file has no TGA 2.0 footer
+/// or no extension area.
+pub fn parse_tga_gamma(input: &[u8]) -> Option<GammaValue> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.gamma_typed())
+}
+
+/// Convenience helper: read the §C.6.7 [`SoftwareVersion`] straight
+/// from the extension area. Returns `None` when the file has no TGA 2.0
+/// footer or no extension area.
+pub fn parse_tga_software_version(input: &[u8]) -> Option<SoftwareVersion> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.software_version_typed())
 }
 
 /// Resolve a decoded RGBA image's alpha channel to *straight* alpha, applying

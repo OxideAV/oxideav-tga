@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 227 (typed §C.6.4 / §C.6.5 / §C.6.6 / §C.6.7 accessors + gamma
+  application): the four small numeric extension-area fields that the
+  decoder has long parsed and the encoder has long re-written
+  byte-exactly now carry typed views in the same shape as the
+  pre-existing `AttributesType` (§C.6.13) and `TgaColourCorrectionTable`
+  (§C.6.8) surfaces. `KeyColor` wraps the §C.6.4 `[A, R, G, B]` quadruple
+  (`from_argb` / `to_argb` / `as_rgba8` for framework-order chroma-key
+  comparison / `is_unset` / `has_alpha`). `PixelAspectRatio` wraps the
+  §C.6.5 SHORT pair (`new` / `as_tuple` / `is_unset` for `(0, 0)` or
+  zero-denominator / `is_square` / `as_f32` / `corrected_display_height`
+  / `corrected_display_width` — the last two helpers rationalise the
+  square-display-pixel resampling dimensions documented inline in the
+  spec). `GammaValue` wraps the §C.6.6 SHORT pair with the same sentinel
+  / identity / apply semantics as `AttributesType`: `is_unset` covers any
+  zero-denominator pair (the spec's "totally ignore" signal), `is_identity`
+  covers any equal non-zero pair (the spec's "uncorrected image" signal),
+  `as_f32` is `None` on unset, and `apply_to_channel8` / `apply_to_rgba8`
+  / `apply_to_image` raise each colour channel through the `y = (x/255)
+  ^ gamma × 255` power curve (rounded to nearest, clamped to 0..=255).
+  Alpha bytes are never touched; RGBA / Rgb24 / Gray8 all walk through
+  consistently; unset / identity / malformed gammas (non-finite, ≤ 0)
+  are bit-exact no-ops so an arbitrary file never blows up downstream
+  compositing. `SoftwareVersion` wraps the §C.6.7 `(SHORT, BYTE-as-char)`
+  pair (`is_unset` for the `(0, ' ')` spec sentinel; `as_f32` is
+  `number_times_100 / 100.0`, e.g. `Some(1.17)` for the spec's `(117,
+  'b')` example). `TgaExtensionArea` gains
+  `{key_color_typed, pixel_aspect_ratio_typed, gamma_typed,
+  software_version_typed}` accessors that consume the existing raw
+  fields. Four new convenience parser helpers — `parse_tga_key_color` /
+  `parse_tga_pixel_aspect_ratio` / `parse_tga_gamma` /
+  `parse_tga_software_version` — read the typed view straight from a
+  full TGA file (footer + extension-area walk in one call) and return
+  `None` when the file has no TGA 2.0 footer or no extension area.
+  Tests added in `tests/round227.rs`: 33 cases pinning the spec
+  sentinels, the round-trip through `TgaExtensionArea`, every
+  `GammaValue::apply_*` branch (identity preserves bytes; gamma=2.0
+  maps mid-gray 128 → 64 within ½-LSB; alpha preserved; pathological
+  values are no-ops), the corrected-display dimension arithmetic for
+  4:3 / unset / square cases, and all four parser convenience helpers
+  on both extension-bearing and TGA-v1 files. Suite 172 → 205 tests,
+  green standalone and with the default `registry` feature on. No
+  changes to the on-disk wire format, the encoder, or any pre-existing
+  decoder return type.
+
 - Round 221 (TARGA-32 vs ARGB-32 fallback): the long-standing real-world
   ambiguity around 32-bpp TGA files written by legacy paint applications
   that left `attributes_type` unset and the alpha channel uninitialised

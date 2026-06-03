@@ -399,11 +399,399 @@ pub struct TgaTimestamp {
     pub second: u16,
 }
 
+/// Typed view of the extension area's §C.6.4 **Key Color** quadruple.
+///
+/// The on-disk layout is four bytes ordered `A : R : G : B` (most
+/// significant byte first; alpha if present, otherwise `0`). The spec
+/// describes this field as "the background or transparent colour … the
+/// colour of the non-image area of the screen". When no key colour is
+/// recorded the field is set to all zeros. Note: an all-zero quadruple
+/// is explicitly documented to also mean "key colour = black", so a
+/// reader cannot distinguish "unset" from "intentional black" from the
+/// four bytes alone — callers that need that distinction must consult
+/// the surrounding context (typically presence of a non-default
+/// `attributes_type`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KeyColor {
+    /// Alpha-channel byte of the key colour (most significant byte of
+    /// the on-disk `A:R:G:B` quadruple).
+    pub a: u8,
+    /// Red byte.
+    pub r: u8,
+    /// Green byte.
+    pub g: u8,
+    /// Blue byte.
+    pub b: u8,
+}
+
+impl KeyColor {
+    /// Read the four-byte spec layout (`[A, R, G, B]`).
+    pub fn from_argb(bytes: [u8; 4]) -> Self {
+        Self {
+            a: bytes[0],
+            r: bytes[1],
+            g: bytes[2],
+            b: bytes[3],
+        }
+    }
+
+    /// Re-emit the on-disk spec layout (`[A, R, G, B]`).
+    pub fn to_argb(self) -> [u8; 4] {
+        [self.a, self.r, self.g, self.b]
+    }
+
+    /// View the colour in the framework-canonical `[R, G, B, A]` order.
+    /// This is the order returned by [`crate::image::TgaPixelFormat::Rgba`]
+    /// pixels — useful for chroma-keying a decoded RGBA image.
+    pub fn as_rgba8(self) -> [u8; 4] {
+        [self.r, self.g, self.b, self.a]
+    }
+
+    /// `true` for the all-zero "field not set" sentinel. Per spec
+    /// §C.6.4, this is the same byte pattern a deliberate key-colour
+    /// of opaque black would use; callers wanting to distinguish the
+    /// two must look elsewhere in the file.
+    pub fn is_unset(self) -> bool {
+        self.a == 0 && self.r == 0 && self.g == 0 && self.b == 0
+    }
+
+    /// `true` when the §C.6.4 alpha byte is non-zero. The spec
+    /// recommends `a == 0` "if you don't have an alpha channel in
+    /// your application".
+    pub fn has_alpha(self) -> bool {
+        self.a != 0
+    }
+}
+
+/// Typed view of the extension area's §C.6.5 **Pixel Aspect Ratio**
+/// (`numerator / denominator`, expressed as the on-disk
+/// `pixel_aspect_ratio` SHORT pair).
+///
+/// Per spec §C.6.5:
+/// * `(0, 0)` means "no pixel aspect ratio specified" (square pixels
+///   assumed by the consumer).
+/// * Equal non-zero values mean "square pixels".
+/// * Otherwise the value is the displayed pixel's width divided by its
+///   height.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PixelAspectRatio {
+    /// Pixel-width SHORT (numerator).
+    pub numerator: u16,
+    /// Pixel-height SHORT (denominator).
+    pub denominator: u16,
+}
+
+impl PixelAspectRatio {
+    /// Spec sentinel for "field not specified".
+    pub const UNSET: Self = Self {
+        numerator: 0,
+        denominator: 0,
+    };
+
+    /// Wrap a `(numerator, denominator)` SHORT pair.
+    pub fn new(numerator: u16, denominator: u16) -> Self {
+        Self {
+            numerator,
+            denominator,
+        }
+    }
+
+    /// Re-emit the on-disk `(numerator, denominator)` tuple.
+    pub fn as_tuple(self) -> (u16, u16) {
+        (self.numerator, self.denominator)
+    }
+
+    /// `true` when the field carries the §C.6.5 "no pixel aspect ratio
+    /// specified" sentinel (`(0, 0)`).
+    pub fn is_unset(self) -> bool {
+        self.numerator == 0 && self.denominator == 0
+    }
+
+    /// `true` when the field encodes square pixels — either the spec's
+    /// `(0, 0)` sentinel (square pixels assumed) or any equal non-zero
+    /// pair.
+    pub fn is_square(self) -> bool {
+        self.numerator == self.denominator
+    }
+
+    /// Numerical aspect ratio (`numerator / denominator`) as `f32`.
+    /// Returns `None` for the spec's `(0, 0)` sentinel and for any
+    /// pair with a zero denominator (the spec calls a zero denominator
+    /// out as "no pixel aspect ratio is specified" per §C.6.5).
+    pub fn as_f32(self) -> Option<f32> {
+        if self.denominator == 0 {
+            return None;
+        }
+        Some(self.numerator as f32 / self.denominator as f32)
+    }
+
+    /// Compute the corrected display height that preserves the source
+    /// width's pixel-aspect-corrected appearance.
+    ///
+    /// Given a stored frame of `width × height` pixels written with
+    /// this aspect ratio, the resampled display dimensions
+    /// `(width, height × denominator / numerator)` yield square
+    /// display pixels.
+    ///
+    /// Returns `None` if [`Self::as_f32`] does (unset / square-only).
+    /// Rounding is to-nearest, ties to even via `f32::round`. Output
+    /// height is clamped to `>= 1` so a degenerate ratio doesn't
+    /// produce a zero-row frame.
+    pub fn corrected_display_height(self, height: u32) -> Option<u32> {
+        let r = self.as_f32()?;
+        if !r.is_finite() || r <= 0.0 {
+            return None;
+        }
+        let h = (height as f32 / r).round();
+        Some((h as u32).max(1))
+    }
+
+    /// Companion to [`Self::corrected_display_height`]: corrected
+    /// display width that preserves square display pixels for a
+    /// `width × height` stored frame.
+    pub fn corrected_display_width(self, width: u32) -> Option<u32> {
+        let r = self.as_f32()?;
+        if !r.is_finite() || r <= 0.0 {
+            return None;
+        }
+        let w = (width as f32 * r).round();
+        Some((w as u32).max(1))
+    }
+}
+
+/// Typed view of the extension area's §C.6.6 **Gamma Value**
+/// (`numerator / denominator`, SHORT pair).
+///
+/// Per spec §C.6.6:
+/// * `(0, 0)` and any pair with `denominator == 0` mean "field not
+///   being used".
+/// * The resulting value should land in `0.0..=10.0` with one decimal
+///   place of useful precision; an uncorrected image carries `(1, 1)`
+///   (gamma 1.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GammaValue {
+    /// Gamma SHORT numerator.
+    pub numerator: u16,
+    /// Gamma SHORT denominator.
+    pub denominator: u16,
+}
+
+impl GammaValue {
+    /// Spec sentinel for "gamma value field not being used".
+    pub const UNSET: Self = Self {
+        numerator: 0,
+        denominator: 0,
+    };
+    /// Convenience constant for an uncorrected (`1.0`) image per spec
+    /// §C.6.6.
+    pub const ONE: Self = Self {
+        numerator: 1,
+        denominator: 1,
+    };
+
+    /// Wrap a `(numerator, denominator)` SHORT pair.
+    pub fn new(numerator: u16, denominator: u16) -> Self {
+        Self {
+            numerator,
+            denominator,
+        }
+    }
+
+    /// Re-emit the on-disk `(numerator, denominator)` tuple.
+    pub fn as_tuple(self) -> (u16, u16) {
+        (self.numerator, self.denominator)
+    }
+
+    /// `true` when the field carries the §C.6.6 "not being used"
+    /// signal — either the all-zero pair or any pair with a zero
+    /// denominator (the spec explicitly calls "set the denominator to
+    /// zero" as the way to mark the field unused).
+    pub fn is_unset(self) -> bool {
+        self.denominator == 0
+    }
+
+    /// `true` when the field encodes an uncorrected (gamma == 1.0)
+    /// image (i.e. `numerator == denominator` and the field is set).
+    pub fn is_identity(self) -> bool {
+        !self.is_unset() && self.numerator == self.denominator
+    }
+
+    /// Numerical gamma value (`numerator / denominator`) as `f32`.
+    /// Returns `None` for the spec's "field not being used" signal.
+    pub fn as_f32(self) -> Option<f32> {
+        if self.is_unset() {
+            return None;
+        }
+        Some(self.numerator as f32 / self.denominator as f32)
+    }
+
+    /// Apply the inverse-gamma transform `straight = stored^gamma` to a
+    /// single 8-bit channel sample. The §C.6.6 gamma value is the
+    /// power-curve exponent the stored samples were already encoded
+    /// with; raising to that exponent recovers the linear-light value
+    /// the consumer expects. Bounded to `0..=255` after `round` to
+    /// nearest.
+    ///
+    /// Behaviour:
+    /// * `is_unset()` → input is returned unchanged (no gamma → no-op).
+    /// * `is_identity()` → input is returned unchanged (`x^1 == x`).
+    /// * out-of-range gamma (≤ 0 or non-finite) → input is returned
+    ///   unchanged so a malformed file never blows up downstream
+    ///   compositing.
+    pub fn apply_to_channel8(self, sample: u8) -> u8 {
+        let g = match self.as_f32() {
+            Some(g) if g.is_finite() && g > 0.0 => g,
+            _ => return sample,
+        };
+        if (g - 1.0).abs() < f32::EPSILON {
+            return sample;
+        }
+        let x = sample as f32 / 255.0;
+        let y = x.powf(g) * 255.0;
+        y.round().clamp(0.0, 255.0) as u8
+    }
+
+    /// Apply [`Self::apply_to_channel8`] to the R/G/B channels of an
+    /// `[R, G, B, A]` pixel, leaving the alpha byte untouched.
+    pub fn apply_to_rgba8(self, rgba: [u8; 4]) -> [u8; 4] {
+        if self.is_unset() || self.is_identity() {
+            return rgba;
+        }
+        [
+            self.apply_to_channel8(rgba[0]),
+            self.apply_to_channel8(rgba[1]),
+            self.apply_to_channel8(rgba[2]),
+            rgba[3],
+        ]
+    }
+
+    /// Apply [`Self::apply_to_rgba8`] to every pixel of a decoded
+    /// [`crate::image::TgaImage`] in place.
+    ///
+    /// * RGBA images: every pixel's R/G/B channels are re-mapped;
+    ///   alpha is left alone.
+    /// * Rgb24 images: every byte in row-major order is treated as a
+    ///   colour channel and re-mapped.
+    /// * Gray8 images: every byte (luma) is re-mapped.
+    ///
+    /// Fast-path: no-op when the field is unset / identity / malformed,
+    /// matching [`AttributesType::apply_to_image`] semantics.
+    pub fn apply_to_image(self, image: &mut crate::image::TgaImage) {
+        if self.is_unset() || self.is_identity() {
+            return;
+        }
+        // Validate finiteness once up front; an unrecoverable gamma is
+        // a no-op so an arbitrary file never panics downstream.
+        match self.as_f32() {
+            Some(g) if g.is_finite() && g > 0.0 => {}
+            _ => return,
+        }
+        match image.pixel_format {
+            crate::image::TgaPixelFormat::Rgba => {
+                for px in image.data.chunks_exact_mut(4) {
+                    let out = self.apply_to_rgba8([px[0], px[1], px[2], px[3]]);
+                    px.copy_from_slice(&out);
+                }
+            }
+            crate::image::TgaPixelFormat::Rgb24 => {
+                for c in image.data.iter_mut() {
+                    *c = self.apply_to_channel8(*c);
+                }
+            }
+            crate::image::TgaPixelFormat::Gray8 => {
+                for c in image.data.iter_mut() {
+                    *c = self.apply_to_channel8(*c);
+                }
+            }
+        }
+    }
+}
+
+/// Typed view of the extension area's §C.6.7 **Software Version**
+/// triple. The on-disk layout is a SHORT (`version × 100`) followed by
+/// a single ASCII BYTE (release-letter; space `' '` when unused).
+///
+/// Per spec §C.6.7 example: version `1.17b` is stored as
+/// `(117, 'b')`. An unused field is `(0, ' ')`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SoftwareVersion {
+    /// `version × 100` (e.g. `417` for version `4.17`).
+    pub number_times_100: u16,
+    /// ASCII release-letter suffix; `' '` (0x20) when no letter.
+    pub letter: char,
+}
+
+impl Default for SoftwareVersion {
+    fn default() -> Self {
+        Self::UNSET
+    }
+}
+
+impl SoftwareVersion {
+    /// Spec sentinel: `(0, ' ')` per §C.6.7's "if you do not use this
+    /// field".
+    pub const UNSET: Self = Self {
+        number_times_100: 0,
+        letter: ' ',
+    };
+
+    /// Wrap a `(version × 100, release-letter)` pair.
+    pub fn new(number_times_100: u16, letter: char) -> Self {
+        Self {
+            number_times_100,
+            letter,
+        }
+    }
+
+    /// Re-emit the on-disk `(SHORT, BYTE-as-char)` tuple.
+    pub fn as_tuple(self) -> (u16, char) {
+        (self.number_times_100, self.letter)
+    }
+
+    /// `true` when the field carries the §C.6.7 "not being used"
+    /// signal (`(0, ' ')`).
+    pub fn is_unset(self) -> bool {
+        self.number_times_100 == 0 && self.letter == ' '
+    }
+
+    /// Numerical version (`number_times_100 / 100.0`).
+    ///
+    /// Returns `None` when [`Self::is_unset`] is `true`. The spec uses
+    /// `× 100` to give two decimals of precision; an `8.42` version is
+    /// stored as `842`.
+    pub fn as_f32(self) -> Option<f32> {
+        if self.is_unset() {
+            return None;
+        }
+        Some(self.number_times_100 as f32 / 100.0)
+    }
+}
+
 impl TgaExtensionArea {
     /// Typed view of [`Self::attributes_type`] per spec §C.6.13.
     /// Equivalent to `AttributesType::from_u8(self.attributes_type)`.
     pub fn attributes(&self) -> AttributesType {
         AttributesType::from_u8(self.attributes_type)
+    }
+
+    /// Typed view of [`Self::key_color`] per spec §C.6.4.
+    pub fn key_color_typed(&self) -> KeyColor {
+        KeyColor::from_argb(self.key_color)
+    }
+
+    /// Typed view of [`Self::pixel_aspect_ratio`] per spec §C.6.5.
+    pub fn pixel_aspect_ratio_typed(&self) -> PixelAspectRatio {
+        PixelAspectRatio::new(self.pixel_aspect_ratio.0, self.pixel_aspect_ratio.1)
+    }
+
+    /// Typed view of [`Self::gamma`] per spec §C.6.6.
+    pub fn gamma_typed(&self) -> GammaValue {
+        GammaValue::new(self.gamma.0, self.gamma.1)
+    }
+
+    /// Typed view of [`Self::software_version`] per spec §C.6.7.
+    pub fn software_version_typed(&self) -> SoftwareVersion {
+        SoftwareVersion::new(self.software_version.0, self.software_version.1)
     }
 }
 

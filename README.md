@@ -79,6 +79,27 @@ text mirror of the same document are the only sources consulted.
   empty slice for the common `id_length == 0` case, or `None` when the
   buffer is truncated. Content is left untouched (no NUL trimming, no
   UTF-8 decode) because the spec leaves the format unconstrained.
+* The §C.6.4 / §C.6.5 / §C.6.6 / §C.6.7 numeric extension-area fields are
+  surfaced as typed views in addition to the raw on-disk tuples:
+  `KeyColor` (§C.6.4) wraps the `[A,R,G,B]` quadruple with `from_argb` /
+  `to_argb` / `as_rgba8` / `is_unset` / `has_alpha`; `PixelAspectRatio`
+  (§C.6.5) wraps `(numerator, denominator)` with `is_unset` / `is_square`
+  / `as_f32` / `corrected_display_height(h)` / `corrected_display_width(w)`
+  for square-display-pixel resampling; `GammaValue` (§C.6.6) wraps the
+  same SHORT pair with `is_unset` / `is_identity` / `as_f32` plus
+  `apply_to_channel8` / `apply_to_rgba8` / `apply_to_image` (RGBA / Rgb24
+  / Gray8) that raises each channel to the gamma exponent
+  (`y = (x/255)^gamma × 255`, rounded, clamped, alpha untouched) — unset
+  / identity / malformed gammas are bit-exact no-ops; `SoftwareVersion`
+  (§C.6.7) wraps `(SHORT, BYTE-as-char)` with `is_unset` / `as_f32`
+  (`number_times_100 / 100.0`). The typed views are reachable via
+  `TgaExtensionArea::{key_color_typed, pixel_aspect_ratio_typed,
+  gamma_typed, software_version_typed}` and as one-call parser helpers
+  `parse_tga_key_color` / `parse_tga_pixel_aspect_ratio` /
+  `parse_tga_gamma` / `parse_tga_software_version` straight from a TGA
+  file's bytes — each returns `None` for a TGA 1.0 file or any file
+  without an extension area.
+
 * The well-known **TARGA-32 vs ARGB-32 ambiguity** (32-bpp files written
   by legacy paint tools that left `attributes_type` unset and the alpha
   channel uninitialised) has an opt-in resolver:
