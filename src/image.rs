@@ -64,4 +64,51 @@ impl TgaImage {
     pub fn stride(&self) -> usize {
         self.width as usize * self.bytes_per_pixel()
     }
+
+    /// `true` when the image is RGBA, non-empty, and every alpha byte is
+    /// exactly `0`.
+    ///
+    /// This is the diagnostic for the well-known "TARGA-32 vs ARGB-32"
+    /// real-world ambiguity documented in `docs/image/tga/README.md`:
+    /// some legacy paint applications wrote 32-bpp TGA files leaving the
+    /// alpha channel at all-zero without setting an extension-area
+    /// `attributes_type`. A naïve decoder would render every pixel as
+    /// fully transparent black, even though the original intent was
+    /// "opaque, alpha ignored". The convention documented for these
+    /// files is "if alpha values are all 0, treat the file as opaque,
+    /// not as fully-transparent black".
+    ///
+    /// Returns `false` for [`TgaPixelFormat::Rgb24`] / [`TgaPixelFormat::Gray8`]
+    /// (no alpha channel to inspect) and for zero-sized images.
+    ///
+    /// Pair with [`Self::force_opaque`] to apply the fallback.
+    pub fn all_alpha_zero(&self) -> bool {
+        if self.pixel_format != TgaPixelFormat::Rgba {
+            return false;
+        }
+        if self.data.is_empty() {
+            return false;
+        }
+        self.data.chunks_exact(4).all(|p| p[3] == 0)
+    }
+
+    /// Force every alpha byte of an RGBA image to `0xFF` (fully opaque).
+    ///
+    /// No-op for [`TgaPixelFormat::Rgb24`] / [`TgaPixelFormat::Gray8`]
+    /// (those formats have no alpha channel). Colour channels are left
+    /// untouched.
+    ///
+    /// This is the apply-side of the TARGA-32 vs ARGB-32 fallback noted
+    /// on [`Self::all_alpha_zero`]: a caller that detects all-zero alpha
+    /// on a TGA file lacking a meaningful `attributes_type` byte can
+    /// recover the practical "opaque" interpretation by calling this
+    /// helper.
+    pub fn force_opaque(&mut self) {
+        if self.pixel_format != TgaPixelFormat::Rgba {
+            return;
+        }
+        for px in self.data.chunks_exact_mut(4) {
+            px[3] = 0xFF;
+        }
+    }
 }

@@ -79,6 +79,19 @@ text mirror of the same document are the only sources consulted.
   empty slice for the common `id_length == 0` case, or `None` when the
   buffer is truncated. Content is left untouched (no NUL trimming, no
   UTF-8 decode) because the spec leaves the format unconstrained.
+* The well-known **TARGA-32 vs ARGB-32 ambiguity** (32-bpp files written
+  by legacy paint tools that left `attributes_type` unset and the alpha
+  channel uninitialised) has an opt-in resolver:
+  `resolve_alpha_with_targa32_fallback(input, &mut image)`. If the file
+  declares an `AttributesType` (TGA 2.0 footer + extension area), the
+  resolver applies it (`AttributesType::apply_to_image` semantics) and
+  returns `Some(attrs)`. Otherwise it checks `image.all_alpha_zero()` and
+  — when every alpha byte is `0` — calls `image.force_opaque()` so the
+  decoded picture displays as opaque rather than fully-transparent
+  black, returning `None`. The default decode path is unchanged; callers
+  who want this convention call the helper explicitly. `TgaImage` also
+  exposes `all_alpha_zero(&self) -> bool` and `force_opaque(&mut self)`
+  as standalone primitives.
 
 ## Encode
 

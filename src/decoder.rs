@@ -333,6 +333,49 @@ pub fn parse_tga_attributes_type(input: &[u8]) -> Option<AttributesType> {
     Some(ext.attributes())
 }
 
+/// Resolve a decoded RGBA image's alpha channel to *straight* alpha, applying
+/// the documented TARGA-32 vs ARGB-32 fallback when the file carries no
+/// authoritative [`AttributesType`].
+///
+/// Resolution rules:
+///
+/// 1. If the file declares an attributes type (TGA 2.0 footer + extension
+///    area present, [`parse_tga_attributes_type`] returns `Some`), apply
+///    [`AttributesType::apply_to_image`] in place: `PremultipliedAlpha` is
+///    un-premultiplied, `NoAlpha` / `UndefinedIgnore` is forced opaque, and
+///    the remaining types pass through.
+/// 2. Otherwise (TGA 1.0 file, or a TGA 2.0 file with no extension area)
+///    apply the convention documented in `docs/image/tga/README.md`: if every
+///    alpha byte is `0`, treat the file as opaque (force every alpha byte to
+///    `0xFF`); leave the image untouched otherwise. The convention reflects
+///    real-world files written by paint applications that left
+///    `attributes_type` unset and the alpha channel uninitialised — a naïve
+///    decoder would render them as fully-transparent black even though the
+///    intended interpretation is opaque.
+///
+/// `image.pixel_format != Rgba` is a no-op: neither
+/// [`TgaPixelFormat::Rgb24`] nor [`TgaPixelFormat::Gray8`] carries an alpha
+/// channel to interpret.
+///
+/// Returns the [`AttributesType`] applied in case (1), or `None` in
+/// case (2), so the caller can tell which branch ran.
+pub fn resolve_alpha_with_targa32_fallback(
+    input: &[u8],
+    image: &mut TgaImage,
+) -> Option<AttributesType> {
+    if image.pixel_format != TgaPixelFormat::Rgba {
+        return parse_tga_attributes_type(input);
+    }
+    if let Some(attrs) = parse_tga_attributes_type(input) {
+        attrs.apply_to_image(image);
+        return Some(attrs);
+    }
+    if image.all_alpha_zero() {
+        image.force_opaque();
+    }
+    None
+}
+
 /// Decode the TGA 2.0 postage-stamp (thumbnail) image from a file with
 /// an extension area.
 ///

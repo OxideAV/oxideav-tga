@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 221 (TARGA-32 vs ARGB-32 fallback): the long-standing real-world
+  ambiguity around 32-bpp TGA files written by legacy paint applications
+  that left `attributes_type` unset and the alpha channel uninitialised
+  now has an opt-in resolver. The default decode path is unchanged — a
+  caller that decodes such a file via `parse_tga` still gets verbatim
+  on-disk bytes, alpha included. The new
+  `resolve_alpha_with_targa32_fallback(input: &[u8], &mut TgaImage)`
+  entry point composes the two existing pieces of state — the file's
+  declared `AttributesType` (if any) and the decoded buffer — and:
+  (1) if the file declares an `AttributesType` (TGA 2.0 footer +
+  extension area), apply it (`AttributesType::apply_to_image` semantics:
+  `PremultipliedAlpha` un-premultiplied, `NoAlpha` / `UndefinedIgnore`
+  forced opaque, the rest pass through) and return `Some(attrs)`;
+  (2) otherwise check `image.all_alpha_zero()` and, when every alpha
+  byte is `0`, call `image.force_opaque()` so the picture displays as
+  opaque rather than fully-transparent black — returning `None` to
+  disambiguate which branch ran. The convention is the one documented
+  in `docs/image/tga/README.md` ("if alpha values are all 0, treat the
+  file as opaque, not as fully-transparent black"). `TgaImage` gains
+  two standalone primitives: `all_alpha_zero(&self) -> bool` (RGBA,
+  non-empty, every `A == 0`) and `force_opaque(&mut self)` (writes
+  `A = 0xFF` to every pixel; no-op on `Rgb24` / `Gray8`). Non-RGBA
+  images are a pixel-buffer no-op for the resolver but still surface
+  the file's declared `AttributesType` so callers can inspect it without
+  a second `parse_tga_attributes_type` call. New `tests/round221.rs`
+  pins 18 cases: `all_alpha_zero` true/false across pixel formats and
+  the empty-image edge case, `force_opaque` write semantics + no-op on
+  non-RGBA + idempotency-after-zero, resolver precedence (declared type
+  beats fallback for `NoAlpha` / `UsefulAlpha` / `PremultipliedAlpha`),
+  resolver fallback (no extension area + all-zero alpha → force opaque
+  + return `None`; no extension area + some non-zero alpha → unchanged
+  + return `None`), resolver no-op on `Rgb24` / `Gray8`, and the
+  fallback on an RLE-encoded file. Suite 153 → 171 tests, green
+  standalone and with the `registry` feature on. No changes to the
+  on-disk wire format or the encoder.
+
 - Round 213 (criterion benchmark harness): a new `benches/codec.rs`
   driven by `criterion` (added as a dev-dep with `default-features =
   false` and the `cargo_bench_support` feature only — no impact on
