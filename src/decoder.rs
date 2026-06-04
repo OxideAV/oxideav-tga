@@ -33,8 +33,9 @@ use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
     parse_extension_area, parse_footer, parse_header, AttributesType, GammaValue, ImageType,
-    KeyColor, PixelAspectRatio, SoftwareVersion, TgaColourCorrectionTable, TgaDeveloperArea,
-    TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TGA_HEADER_SIZE,
+    JobTime, KeyColor, PixelAspectRatio, SoftwareVersion, TgaColourCorrectionTable,
+    TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp,
+    TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -368,6 +369,34 @@ pub fn parse_tga_software_version(input: &[u8]) -> Option<SoftwareVersion> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
     Some(ext.software_version_typed())
+}
+
+/// Convenience helper: read the Field 13 [`TgaTimestamp`] (Date/Time
+/// Stamp) straight from the extension area. Returns `None` when the
+/// file has no TGA 2.0 footer or no extension area.
+///
+/// The returned struct still needs [`TgaTimestamp::is_unset`] /
+/// [`TgaTimestamp::is_valid`] to distinguish "no timestamp recorded"
+/// from "valid datetime" — `parse_tga_timestamp` itself does no
+/// validity filtering so a caller can preserve every byte the writer
+/// laid down.
+pub fn parse_tga_timestamp(input: &[u8]) -> Option<TgaTimestamp> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.timestamp_typed())
+}
+
+/// Convenience helper: read the Field 15 [`JobTime`] (elapsed-time
+/// triple) straight from the extension area. Returns `None` when the
+/// file has no TGA 2.0 footer or no extension area.
+///
+/// The returned struct still needs [`JobTime::is_unset`] /
+/// [`JobTime::is_valid`] to distinguish the spec sentinel from a
+/// recorded zero-elapsed job; the parser does no validity filtering.
+pub fn parse_tga_job_time(input: &[u8]) -> Option<JobTime> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.job_time_typed())
 }
 
 /// Resolve a decoded RGBA image's alpha channel to *straight* alpha, applying

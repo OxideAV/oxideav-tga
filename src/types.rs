@@ -387,8 +387,24 @@ impl AttributesType {
     }
 }
 
-/// Date/time stamp embedded in the extension area's "save date" field
-/// (spec §C.6.4). All zeros means "not set".
+/// Date/time stamp embedded in the extension area's **Field 13
+/// (Date/Time Stamp)** at bytes 367-378 (12 bytes / 6 SHORTs). All
+/// zeros means "not set" per the spec convention "If the fields are
+/// not used, you should fill them with binary zeros (0)".
+///
+/// Per the spec PDF the six SHORTs are:
+///
+/// * SHORT 0 — Month (`1..=12`)
+/// * SHORT 1 — Day (`1..=31`)
+/// * SHORT 2 — Year (4-digit, e.g. `1989`)
+/// * SHORT 3 — Hour (`0..=23`)
+/// * SHORT 4 — Minute (`0..=59`)
+/// * SHORT 5 — Second (`0..=59`)
+///
+/// Typed accessors live in the `impl` block further below
+/// ([`TgaTimestamp::is_unset`], [`TgaTimestamp::is_valid`],
+/// [`TgaTimestamp::as_tuple`], [`TgaTimestamp::from_tuple`],
+/// [`TgaTimestamp::iso8601`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TgaTimestamp {
     pub month: u16,
@@ -397,6 +413,108 @@ pub struct TgaTimestamp {
     pub hour: u16,
     pub minute: u16,
     pub second: u16,
+}
+
+/// Typed view of the extension area's **Field 15 (Job Time)** at bytes
+/// 420-425 (6 bytes / 3 SHORTs).
+///
+/// Per the spec PDF the three SHORTs are:
+///
+/// * SHORT 0 — Hours elapsed (`0..=65535`, full SHORT range)
+/// * SHORT 1 — Minutes elapsed (`0..=59`)
+/// * SHORT 2 — Seconds elapsed (`0..=59`)
+///
+/// "If the fields are not used, you should fill them with binary
+/// zeros (0)", so `(0, 0, 0)` is the spec sentinel for "field not
+/// being used".
+///
+/// The field's purpose per spec is to "keep a running total of the
+/// amount of time invested in a particular image" for billing,
+/// costing, and time estimating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct JobTime {
+    /// Elapsed hours (full SHORT range, `0..=65535`).
+    pub hours: u16,
+    /// Elapsed minutes (`0..=59`).
+    pub minutes: u16,
+    /// Elapsed seconds (`0..=59`).
+    pub seconds: u16,
+}
+
+impl JobTime {
+    /// Spec sentinel: `(0, 0, 0)` per the §C.6 "fill with binary
+    /// zeros" convention for an unused field.
+    pub const UNSET: Self = Self {
+        hours: 0,
+        minutes: 0,
+        seconds: 0,
+    };
+
+    /// Wrap a `(hours, minutes, seconds)` SHORT triple.
+    pub fn new(hours: u16, minutes: u16, seconds: u16) -> Self {
+        Self {
+            hours,
+            minutes,
+            seconds,
+        }
+    }
+
+    /// Wrap a `(hours, minutes, seconds)` tuple — mirror of
+    /// [`Self::as_tuple`] for round-trip ergonomics.
+    pub fn from_tuple(triple: (u16, u16, u16)) -> Self {
+        Self {
+            hours: triple.0,
+            minutes: triple.1,
+            seconds: triple.2,
+        }
+    }
+
+    /// Re-emit the on-disk `(hours, minutes, seconds)` SHORT triple
+    /// (the encoder's `ExtensionAreaInput::job_time` shape).
+    pub fn as_tuple(self) -> (u16, u16, u16) {
+        (self.hours, self.minutes, self.seconds)
+    }
+
+    /// `true` when every field is zero (the spec sentinel for an
+    /// unused job-time field).
+    pub fn is_unset(self) -> bool {
+        self.hours == 0 && self.minutes == 0 && self.seconds == 0
+    }
+
+    /// `true` when minutes and seconds land in their spec ranges
+    /// (`0..=59`). Hours is the full SHORT range (`0..=65535`) per the
+    /// spec, so it is always in range. An unset job-time is also
+    /// considered valid (every zero is in range).
+    pub fn is_valid(self) -> bool {
+        self.minutes <= 59 && self.seconds <= 59
+    }
+
+    /// Total elapsed seconds (`hours × 3600 + minutes × 60 + seconds`)
+    /// as `u32` — the SHORT-range hours cap at 65 535, so the maximum
+    /// total is `65 535 × 3600 + 59 × 60 + 59 = 235 929 599`, well
+    /// inside `u32`.
+    pub fn total_seconds(self) -> u32 {
+        self.hours as u32 * 3600 + self.minutes as u32 * 60 + self.seconds as u32
+    }
+
+    /// Total elapsed hours as `f64` — convenient for "X hours of work"
+    /// reports without losing the minute/second resolution.
+    pub fn as_f64_hours(self) -> f64 {
+        self.total_seconds() as f64 / 3600.0
+    }
+
+    /// Format the elapsed time as `"H:MM:SS"` with `H` zero-padded to
+    /// at least 2 digits when the hours value is below 100, and
+    /// `MM` / `SS` always zero-padded to 2 digits.
+    ///
+    /// Examples:
+    ///
+    /// * `(0, 0, 0)` → `"00:00:00"`
+    /// * `(1, 23, 45)` → `"01:23:45"`
+    /// * `(100, 0, 0)` → `"100:00:00"` (hours can exceed the 2-digit pad)
+    pub fn hms_string(self) -> String {
+        format!("{:02}:{:02}:{:02}", self.hours, self.minutes, self.seconds)
+    }
 }
 
 /// Typed view of the extension area's §C.6.4 **Key Color** quadruple.
@@ -793,9 +911,38 @@ impl TgaExtensionArea {
     pub fn software_version_typed(&self) -> SoftwareVersion {
         SoftwareVersion::new(self.software_version.0, self.software_version.1)
     }
+
+    /// Typed view of [`Self::timestamp`] (Field 13 / "Date/Time
+    /// Stamp"). This is the same struct already at
+    /// [`Self::timestamp`]; the helper exists for naming symmetry
+    /// with [`Self::job_time_typed`] / [`Self::key_color_typed`] /
+    /// the rest of the `_typed` family.
+    pub fn timestamp_typed(&self) -> TgaTimestamp {
+        self.timestamp
+    }
+
+    /// Typed view of [`Self::job_time`] (Field 15 / "Job Time"). The
+    /// on-disk tuple is wrapped in a [`JobTime`] with [`JobTime::is_unset`]
+    /// / [`JobTime::is_valid`] / [`JobTime::total_seconds`] /
+    /// [`JobTime::as_f64_hours`] / [`JobTime::hms_string`].
+    pub fn job_time_typed(&self) -> JobTime {
+        JobTime::from_tuple(self.job_time)
+    }
 }
 
 impl TgaTimestamp {
+    /// Spec sentinel: every field zero, per the §C.6 Date/Time field
+    /// convention "If the fields are not used, you should fill them
+    /// with binary zeros (0)".
+    pub const UNSET: Self = Self {
+        month: 0,
+        day: 0,
+        year: 0,
+        hour: 0,
+        minute: 0,
+        second: 0,
+    };
+
     /// `true` when every field is zero (the spec convention for "no
     /// timestamp set").
     pub fn is_unset(&self) -> bool {
@@ -805,6 +952,77 @@ impl TgaTimestamp {
             && self.hour == 0
             && self.minute == 0
             && self.second == 0
+    }
+
+    /// `true` when every field lands in the spec range:
+    ///
+    /// * Month ∈ `1..=12`
+    /// * Day ∈ `1..=31` (no per-month calendar check — the spec only
+    ///   defines the field width, not a calendar validator)
+    /// * Year ≥ `1`     (the spec writes "4 digit, ie. 1989" so any
+    ///   non-zero year is in range)
+    /// * Hour ∈ `0..=23`
+    /// * Minute ∈ `0..=59`
+    /// * Second ∈ `0..=59`
+    ///
+    /// An unset timestamp is **not** valid by this check (the all-zero
+    /// month + day + year fall outside the named ranges). Callers that
+    /// want "unset OR valid" should chain
+    /// `t.is_unset() || t.is_valid()`.
+    pub fn is_valid(&self) -> bool {
+        (1..=12).contains(&self.month)
+            && (1..=31).contains(&self.day)
+            && self.year >= 1
+            && self.hour <= 23
+            && self.minute <= 59
+            && self.second <= 59
+    }
+
+    /// Re-emit the timestamp as a `(month, day, year, hour, minute,
+    /// second)` SHORT sextuple matching the on-disk SHORT order.
+    pub fn as_tuple(&self) -> (u16, u16, u16, u16, u16, u16) {
+        (
+            self.month,
+            self.day,
+            self.year,
+            self.hour,
+            self.minute,
+            self.second,
+        )
+    }
+
+    /// Wrap a `(month, day, year, hour, minute, second)` sextuple in
+    /// on-disk SHORT order — the mirror of [`Self::as_tuple`].
+    pub fn from_tuple(t: (u16, u16, u16, u16, u16, u16)) -> Self {
+        Self {
+            month: t.0,
+            day: t.1,
+            year: t.2,
+            hour: t.3,
+            minute: t.4,
+            second: t.5,
+        }
+    }
+
+    /// Format the timestamp as a sortable ISO-8601 calendar-and-time
+    /// string `"YYYY-MM-DDTHH:MM:SS"`:
+    ///
+    /// * `year` is zero-padded to at least 4 digits.
+    /// * Every other field is zero-padded to 2 digits.
+    /// * No timezone suffix — the spec leaves the timestamp's zone
+    ///   unspecified, so the output is a naive local datetime.
+    ///
+    /// Returns `None` when [`Self::is_unset`] is `true` so callers can
+    /// treat the sentinel as "no timestamp" rather than rendering
+    /// `"0000-00-00T00:00:00"`.
+    pub fn iso8601(&self) -> Option<String> {
+        if self.is_unset() {
+            return None;
+        }
+        Some(format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            self.year, self.month, self.day, self.hour, self.minute, self.second
+        ))
     }
 }
 

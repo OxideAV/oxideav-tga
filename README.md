@@ -100,6 +100,24 @@ text mirror of the same document are the only sources consulted.
   file's bytes — each returns `None` for a TGA 1.0 file or any file
   without an extension area.
 
+* The extension area's Field 13 (Date/Time Stamp) and Field 15 (Job
+  Time) sub-fields carry typed views matching the same pattern. The
+  existing `TgaTimestamp` struct gains `UNSET` (all-zero sentinel),
+  `is_valid` (month ∈ 1..=12, day ∈ 1..=31, year ≥ 1, hour ∈ 0..=23,
+  minute ∈ 0..=59, second ∈ 0..=59), `as_tuple` / `from_tuple` (six-SHORT
+  round-trip in on-disk order), and `iso8601` returning a sortable
+  `"YYYY-MM-DDTHH:MM:SS"` string on a set timestamp / `None` on the
+  unset sentinel. `JobTime` is new: `UNSET` / `new` / `from_tuple` /
+  `as_tuple` / `is_unset` / `is_valid` (minutes and seconds ∈ 0..=59;
+  hours covers the full SHORT range per the spec) / `total_seconds`
+  (`u32`) / `as_f64_hours` (total seconds divided by 3600) /
+  `hms_string` (zero-padded `"HH:MM:SS"`, hours widens past two digits
+  at the SHORT cap). Reachable via `TgaExtensionArea::timestamp_typed`
+  / `job_time_typed`, and as one-call parser helpers
+  `parse_tga_timestamp` / `parse_tga_job_time` straight from a TGA
+  file's bytes — each returns `None` for a TGA 1.0 file or any file
+  without an extension area.
+
 * The well-known **TARGA-32 vs ARGB-32 ambiguity** (32-bpp files written
   by legacy paint tools that left `attributes_type` unset and the alpha
   channel uninitialised) has an opt-in resolver:

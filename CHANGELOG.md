@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 234 (typed Field 13 + Field 15 extension-area accessors):
+  the Date/Time Stamp (Field 13) and Job Time (Field 15) sub-fields
+  the decoder has long parsed and the encoder has long re-written
+  byte-exactly now carry typed surfaces matching the r227 pattern
+  already in place for §C.6.4 / §C.6.5 / §C.6.6 / §C.6.7. `TgaTimestamp`
+  gains a `UNSET` constant (all-zero sentinel), `is_valid` (month
+  ∈ 1..=12, day ∈ 1..=31, year ≥ 1, hour ∈ 0..=23, minute ∈ 0..=59,
+  second ∈ 0..=59 per the spec's named ranges; the unset sentinel
+  is not in-range so callers can split "unset vs valid"), `as_tuple`
+  / `from_tuple` (six-SHORT round-trip in on-disk order), and
+  `iso8601` returning `Some("YYYY-MM-DDTHH:MM:SS")` on a set
+  timestamp, `None` on the all-zero sentinel. `JobTime` is a new
+  typed wrap of the on-disk `(hours, minutes, seconds)` SHORT
+  triple (the encoder's existing `ExtensionAreaInput::job_time`
+  shape): `UNSET` / `new` / `from_tuple` / `as_tuple` / `is_unset`
+  / `is_valid` (minutes and seconds ∈ 0..=59; hours covers the full
+  SHORT range per the spec's "0 - 65535") / `total_seconds` (`u32`,
+  the SHORT-cap maximum 65 535 × 3600 + 59 × 60 + 59 = 235 929 599
+  fits with room) / `as_f64_hours` (total seconds divided by 3600,
+  useful for billing reports) / `hms_string` (zero-padded
+  `"HH:MM:SS"` with hours widening past two digits at the SHORT
+  cap). `TgaExtensionArea::timestamp_typed` and `job_time_typed`
+  return the typed views from existing raw fields. Convenience
+  parsers `parse_tga_timestamp` / `parse_tga_job_time` walk the
+  footer + extension area in one call and return `None` on TGA 1.0
+  files. Suite 205 → 228 tests; standalone (no `registry` feature)
+  + default-feature builds both green. No changes to the on-disk
+  wire format, the encoder, or any pre-existing decoder return
+  type — strictly additive.
+
 - Round 227 (typed §C.6.4 / §C.6.5 / §C.6.6 / §C.6.7 accessors + gamma
   application): the four small numeric extension-area fields that the
   decoder has long parsed and the encoder has long re-written
