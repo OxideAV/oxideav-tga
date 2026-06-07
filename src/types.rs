@@ -517,6 +517,211 @@ impl JobTime {
     }
 }
 
+/// Maximum payload character count for a 41-byte ASCII extension-area
+/// field (Author Name / Job Name / Software ID).
+///
+/// The 41st byte is reserved for the trailing NUL terminator per spec —
+/// the writable payload is therefore at most 40 ASCII characters.
+pub const TGA_ASCII_FIELD_MAX_CHARS: usize = 40;
+
+/// Width in bytes (including the trailing NUL) of one Author Comment
+/// line on disk.
+pub const TGA_AUTHOR_COMMENT_LINE_BYTES: usize = 81;
+
+/// Maximum payload character count for one Author Comment line.
+pub const TGA_AUTHOR_COMMENT_LINE_MAX_CHARS: usize = 80;
+
+/// Number of Author Comment lines stored in the extension area.
+pub const TGA_AUTHOR_COMMENT_LINES: usize = 4;
+
+/// Typed view of one of the extension area's 41-byte ASCII fields —
+/// **Author Name** (Field 11), **Job Name/ID** (Field 14), or
+/// **Software ID** (Field 16).
+///
+/// All three fields share the same on-disk shape per the TGA 2.0 spec:
+/// a fixed 41-byte slot whose payload is at most
+/// [`TGA_ASCII_FIELD_MAX_CHARS`] ASCII characters, with the 41st byte
+/// reserved as a binary-zero (NUL) terminator. An unused field is
+/// recommended to be filled with NULs (or NUL-terminated blanks).
+///
+/// This typed view wraps the parsed payload as a `String` — the parser
+/// already strips trailing NULs and decodes UTF-8 lossily, so the same
+/// `String` instance round-trips through the encoder bit-exactly when
+/// re-emitted. Helper methods classify the field per the spec
+/// conventions:
+///
+/// * [`Self::is_unset`] — the field is empty, or every byte is a NUL
+///   or ASCII space (the spec's "blanks terminated by a null" idiom).
+/// * [`Self::is_valid_ascii`] — every byte is a printable ASCII
+///   character (`0x20..=0x7E`) per the spec's recommendation that
+///   "ASCII fields contain only printable ASCII characters".
+/// * [`Self::trimmed`] — the payload with leading + trailing ASCII
+///   whitespace removed (a borrowed sub-slice).
+/// * [`Self::char_len`] — the byte length, which is also the character
+///   count for valid ASCII payloads.
+/// * [`Self::fits_capacity`] — the payload fits in the 40-character
+///   on-disk slot; otherwise the encoder will silently truncate.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TgaAsciiField {
+    /// Parsed UTF-8 string (NUL-stripped on read; encoder silently
+    /// truncates to [`TGA_ASCII_FIELD_MAX_CHARS`] when re-emitting).
+    pub value: String,
+}
+
+impl TgaAsciiField {
+    /// Wrap a `String` payload. Pass [`String::new()`] for an unset
+    /// field.
+    pub fn new(value: String) -> Self {
+        Self { value }
+    }
+
+    /// Wrap a borrowed `&str` payload — convenience for tests and
+    /// callers that hold their own owned string. Named `from_borrowed`
+    /// (rather than `from_str`) to avoid colliding with
+    /// `std::str::FromStr::from_str`.
+    pub fn from_borrowed(s: &str) -> Self {
+        Self {
+            value: s.to_string(),
+        }
+    }
+
+    /// Unwrap the payload string.
+    pub fn into_inner(self) -> String {
+        self.value
+    }
+
+    /// Borrow the payload string.
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+
+    /// `true` when the field carries the spec's "not being used"
+    /// signal — empty payload, or every byte a NUL or ASCII space
+    /// (the spec says: "you may fill it with nulls or a series of
+    /// blanks (spaces) terminated by a null"). A non-ASCII byte that
+    /// happens to be neither NUL nor space (i.e. high-bit set) is
+    /// *not* treated as a sentinel.
+    pub fn is_unset(&self) -> bool {
+        self.value.is_empty() || self.value.bytes().all(|b| b == 0 || b == b' ')
+    }
+
+    /// `true` when every byte is a printable ASCII character
+    /// (`0x20..=0x7E`). The spec recommends the field carry only
+    /// printable ASCII; this check surfaces deviations without forcing
+    /// rejection at parse time. An empty string is trivially valid.
+    pub fn is_valid_ascii(&self) -> bool {
+        self.value.bytes().all(|b| (0x20..=0x7E).contains(&b))
+    }
+
+    /// Number of bytes in the payload — also the character count when
+    /// [`Self::is_valid_ascii`] is true.
+    pub fn char_len(&self) -> usize {
+        self.value.len()
+    }
+
+    /// `true` when the payload fits in the on-disk 40-character slot.
+    /// The encoder silently truncates oversized payloads at write time
+    /// (it can never exceed the 41-byte fixed field), so a caller that
+    /// wants exact round-trip should ensure this is true before
+    /// encoding.
+    pub fn fits_capacity(&self) -> bool {
+        self.value.len() <= TGA_ASCII_FIELD_MAX_CHARS
+    }
+
+    /// Payload with leading + trailing ASCII whitespace stripped.
+    /// Useful when a writer filled the slot with `"NAME        \0"`
+    /// and the reader wants just `"NAME"`.
+    pub fn trimmed(&self) -> &str {
+        self.value.trim_matches(|c: char| c.is_ascii_whitespace())
+    }
+}
+
+/// Typed view of the extension area's **Author Comments** (Field 12)
+/// 324-byte block — four 81-byte lines, each 80 ASCII characters plus
+/// a binary-zero (NUL) terminator.
+///
+/// The four lines on disk are independent: each one is NUL-terminated
+/// inside its 81-byte slot. The parser strips trailing NULs per line
+/// and the encoder re-pads them; an unused line is recommended to be
+/// filled with NULs or NUL-terminated blanks.
+///
+/// Helper methods mirror [`TgaAsciiField`] for the per-line and
+/// whole-block conveniences callers usually want.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TgaAuthorComments {
+    /// The four comment lines.
+    pub lines: [String; TGA_AUTHOR_COMMENT_LINES],
+}
+
+impl TgaAuthorComments {
+    /// Spec sentinel: four empty lines (every byte in the 324-byte
+    /// block a NUL) per the §C.6 "fill with binary zeros" convention.
+    pub const fn empty() -> Self {
+        Self {
+            lines: [String::new(), String::new(), String::new(), String::new()],
+        }
+    }
+
+    /// Wrap four owned `String`s.
+    pub fn new(lines: [String; TGA_AUTHOR_COMMENT_LINES]) -> Self {
+        Self { lines }
+    }
+
+    /// Wrap four borrowed `&str` payloads.
+    pub fn from_strs(lines: [&str; TGA_AUTHOR_COMMENT_LINES]) -> Self {
+        Self {
+            lines: [
+                lines[0].to_string(),
+                lines[1].to_string(),
+                lines[2].to_string(),
+                lines[3].to_string(),
+            ],
+        }
+    }
+
+    /// Borrow line `i` as `&str`. `i` is bounds-checked.
+    pub fn line(&self, i: usize) -> Option<&str> {
+        self.lines.get(i).map(String::as_str)
+    }
+
+    /// `true` when every line returns `true` from
+    /// [`TgaAsciiField::is_unset`] — empty / blanks / NULs throughout.
+    pub fn is_unset(&self) -> bool {
+        self.lines
+            .iter()
+            .all(|s| s.is_empty() || s.bytes().all(|b| b == 0 || b == b' '))
+    }
+
+    /// `true` when every line is printable ASCII (`0x20..=0x7E`).
+    pub fn is_valid_ascii(&self) -> bool {
+        self.lines
+            .iter()
+            .all(|s| s.bytes().all(|b| (0x20..=0x7E).contains(&b)))
+    }
+
+    /// `true` when every line fits the 80-character per-line cap. The
+    /// encoder silently truncates oversized lines.
+    pub fn fits_capacity(&self) -> bool {
+        self.lines
+            .iter()
+            .all(|s| s.len() <= TGA_AUTHOR_COMMENT_LINE_MAX_CHARS)
+    }
+
+    /// Join all four lines with `"\n"` separators, dropping trailing
+    /// blank lines. Convenience for display surfaces that want a
+    /// single human-readable paragraph rather than four fixed slots.
+    pub fn joined(&self) -> String {
+        let mut end = self.lines.len();
+        while end > 0
+            && (self.lines[end - 1].is_empty()
+                || self.lines[end - 1].bytes().all(|b| b == 0 || b == b' '))
+        {
+            end -= 1;
+        }
+        self.lines[..end].join("\n")
+    }
+}
+
 /// Typed view of the extension area's §C.6.4 **Key Color** quadruple.
 ///
 /// The on-disk layout is four bytes ordered `A : R : G : B` (most
@@ -927,6 +1132,36 @@ impl TgaExtensionArea {
     /// [`JobTime::as_f64_hours`] / [`JobTime::hms_string`].
     pub fn job_time_typed(&self) -> JobTime {
         JobTime::from_tuple(self.job_time)
+    }
+
+    /// Typed view of [`Self::author_name`] (Field 11 / "Author Name").
+    /// Wraps the parsed string in a [`TgaAsciiField`] surfacing
+    /// `is_unset` / `is_valid_ascii` / `fits_capacity` / `trimmed`
+    /// / `char_len` helpers.
+    pub fn author_name_typed(&self) -> TgaAsciiField {
+        TgaAsciiField::new(self.author_name.clone())
+    }
+
+    /// Typed view of [`Self::author_comment`] (Field 12 / "Author
+    /// Comments"). Wraps the four parsed comment lines in a
+    /// [`TgaAuthorComments`] surfacing `is_unset` / `is_valid_ascii` /
+    /// `fits_capacity` / per-line `line()` / `joined()` helpers.
+    pub fn author_comments_typed(&self) -> TgaAuthorComments {
+        TgaAuthorComments::new(self.author_comment.clone())
+    }
+
+    /// Typed view of [`Self::job_name`] (Field 14 / "Job Name/ID").
+    /// Wraps the parsed string in a [`TgaAsciiField`] surfacing the
+    /// same helpers as [`Self::author_name_typed`].
+    pub fn job_name_typed(&self) -> TgaAsciiField {
+        TgaAsciiField::new(self.job_name.clone())
+    }
+
+    /// Typed view of [`Self::software_id`] (Field 16 / "Software ID").
+    /// Wraps the parsed string in a [`TgaAsciiField`] surfacing the
+    /// same helpers as [`Self::author_name_typed`].
+    pub fn software_id_typed(&self) -> TgaAsciiField {
+        TgaAsciiField::new(self.software_id.clone())
     }
 }
 

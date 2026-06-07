@@ -33,9 +33,9 @@ use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
     parse_extension_area, parse_footer, parse_header, AttributesType, GammaValue, ImageType,
-    JobTime, KeyColor, PixelAspectRatio, SoftwareVersion, TgaColourCorrectionTable,
-    TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp,
-    TGA_HEADER_SIZE,
+    JobTime, KeyColor, PixelAspectRatio, SoftwareVersion, TgaAsciiField, TgaAuthorComments,
+    TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader,
+    TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -397,6 +397,48 @@ pub fn parse_tga_job_time(input: &[u8]) -> Option<JobTime> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
     Some(ext.job_time_typed())
+}
+
+/// Convenience helper: read the Field 11 [`TgaAsciiField`] (Author
+/// Name) straight from the extension area. Returns `None` when the
+/// file has no TGA 2.0 footer or no extension area.
+///
+/// The returned struct still needs [`TgaAsciiField::is_unset`] /
+/// [`TgaAsciiField::is_valid_ascii`] to distinguish the spec
+/// "blanks-terminated-by-null" sentinel from a meaningful payload —
+/// the parser does no validity filtering.
+pub fn parse_tga_author_name(input: &[u8]) -> Option<TgaAsciiField> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.author_name_typed())
+}
+
+/// Convenience helper: read the Field 12 [`TgaAuthorComments`]
+/// (four-line author-comment block) straight from the extension area.
+/// Returns `None` when the file has no TGA 2.0 footer or no extension
+/// area.
+pub fn parse_tga_author_comments(input: &[u8]) -> Option<TgaAuthorComments> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.author_comments_typed())
+}
+
+/// Convenience helper: read the Field 14 [`TgaAsciiField`] (Job
+/// Name/ID) straight from the extension area. Returns `None` when the
+/// file has no TGA 2.0 footer or no extension area.
+pub fn parse_tga_job_name(input: &[u8]) -> Option<TgaAsciiField> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.job_name_typed())
+}
+
+/// Convenience helper: read the Field 16 [`TgaAsciiField`] (Software
+/// ID) straight from the extension area. Returns `None` when the file
+/// has no TGA 2.0 footer or no extension area.
+pub fn parse_tga_software_id(input: &[u8]) -> Option<TgaAsciiField> {
+    let footer = parse_footer(input)?;
+    let ext = parse_extension_area(input, footer.extension_area_offset)?;
+    Some(ext.software_id_typed())
 }
 
 /// Resolve a decoded RGBA image's alpha channel to *straight* alpha, applying

@@ -100,6 +100,32 @@ text mirror of the same document are the only sources consulted.
   file's bytes — each returns `None` for a TGA 1.0 file or any file
   without an extension area.
 
+* The extension area's four ASCII fields — Author Name (Field 11),
+  Author Comments (Field 12), Job Name/ID (Field 14), Software ID
+  (Field 16) — carry typed views matching the same pattern.
+  `TgaAsciiField` wraps the parsed payload for the three 41-byte
+  fields (`new` / `from_borrowed` / `as_str` / `into_inner` /
+  `char_len` / `is_unset` (empty / NUL-only / blanks-and-NULs per
+  the spec's recommended "fill with nulls or a series of blanks
+  terminated by a null" sentinel) / `is_valid_ascii` (every byte
+  printable ASCII `0x20..=0x7E` per the spec recommendation) /
+  `fits_capacity` (40-character on-disk slot) / `trimmed` (leading
+  + trailing ASCII whitespace stripped)). `TgaAuthorComments` wraps
+  the four 81-byte lines of Field 12 (`new` / `from_strs` / `empty`
+  / `line(i)` / `is_unset` / `is_valid_ascii` / `fits_capacity`
+  (80-character per-line cap) / `joined` for a newline-separated
+  paragraph that drops trailing blank lines). Reachable via
+  `TgaExtensionArea::{author_name_typed, author_comments_typed,
+  job_name_typed, software_id_typed}`, and as one-call parser
+  helpers `parse_tga_author_name` / `parse_tga_author_comments` /
+  `parse_tga_job_name` / `parse_tga_software_id` straight from a
+  TGA file's bytes — each returns `None` for a TGA 1.0 file or any
+  file without an extension area. Per-field constants
+  `TGA_ASCII_FIELD_MAX_CHARS` (40), `TGA_AUTHOR_COMMENT_LINES` (4),
+  `TGA_AUTHOR_COMMENT_LINE_BYTES` (81),
+  `TGA_AUTHOR_COMMENT_LINE_MAX_CHARS` (80) expose the spec's
+  on-disk dimensions.
+
 * The extension area's Field 13 (Date/Time Stamp) and Field 15 (Job
   Time) sub-fields carry typed views matching the same pattern. The
   existing `TgaTimestamp` struct gains `UNSET` (all-zero sentinel),

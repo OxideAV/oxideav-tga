@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 252 (typed Field 11 / 12 / 14 / 16 extension-area accessors):
+  the four ASCII fields the decoder has long parsed and the encoder
+  has long re-written byte-exactly now carry typed surfaces matching
+  the r227 / r234 pattern already in place for the numeric
+  extension-area fields. `TgaAsciiField` is new — wraps the parsed
+  payload of Author Name (Field 11, 41 bytes), Job Name/ID
+  (Field 14, 41 bytes), and Software ID (Field 16, 41 bytes) with
+  `new` / `from_borrowed` / `as_str` / `into_inner` / `char_len` /
+  `is_unset` (empty / NUL-only / blanks-and-NULs sentinel per the
+  spec's "fill with NULs or a series of blanks terminated by a null"
+  recommendation) / `is_valid_ascii` (every byte printable ASCII
+  `0x20..=0x7E` per the spec's "printable ASCII only" guidance) /
+  `fits_capacity` (40-character on-disk slot) / `trimmed` (leading +
+  trailing ASCII whitespace stripped). `TgaAuthorComments` is new —
+  wraps the four 81-byte lines of Author Comments (Field 12,
+  324 bytes total) with `new` / `from_strs` / `empty` / `line(i)` /
+  `is_unset` / `is_valid_ascii` / `fits_capacity` (80-character
+  per-line cap) / `joined` (newline-separated, trailing blank lines
+  dropped). `TgaExtensionArea::author_name_typed` /
+  `author_comments_typed` / `job_name_typed` / `software_id_typed`
+  return the typed views from existing raw fields. Convenience
+  parsers `parse_tga_author_name` / `parse_tga_author_comments` /
+  `parse_tga_job_name` / `parse_tga_software_id` walk the footer +
+  extension area in one call and return `None` on TGA 1.0 files.
+  New per-field constants `TGA_ASCII_FIELD_MAX_CHARS` (40),
+  `TGA_AUTHOR_COMMENT_LINES` (4), `TGA_AUTHOR_COMMENT_LINE_BYTES`
+  (81), `TGA_AUTHOR_COMMENT_LINE_MAX_CHARS` (80). Suite 228 → 250
+  tests; standalone (no `registry` feature) + default-feature builds
+  both green. No changes to the on-disk wire format, the encoder, or
+  any pre-existing decoder return type — strictly additive.
+
 - Round 234 (typed Field 13 + Field 15 extension-area accessors):
   the Date/Time Stamp (Field 13) and Job Time (Field 15) sub-fields
   the decoder has long parsed and the encoder has long re-written
