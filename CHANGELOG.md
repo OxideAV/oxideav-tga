@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 261 (typed `TgaScanLineTable` accessors): the §C.6.9 scan-line
+  table the decoder has long parsed and the encoder has long re-written
+  byte-exactly now carries typed surfaces matching the r227 / r234 /
+  r252 / r257 pattern already in place for `TgaFooter`,
+  `TgaAsciiField` / `TgaAuthorComments`, `TgaTimestamp` / `JobTime`,
+  and the numeric extension-area fields. `TgaScanLineTable::EMPTY` is
+  the empty-table sentinel (`offsets.len() == 0`) and `Default` is
+  equivalent. Construction: `new(offsets)` /
+  `with_capacity(height: u16)` / `FromIterator<u32>`. Geometry +
+  sentinel predicates: `len` / `is_empty` / `is_unset` (matches the
+  spec's "no scan-line table present" shape — same byte-for-byte as
+  `is_empty`, named for symmetry with the other typed accessors) /
+  `byte_size` (`len() * 4`, matches `to_bytes().len()`). Bounds-checked
+  row-offset accessor `get(y) -> Option<u32>`. Buffer-bounds sanity
+  check `is_well_formed_within(input_len: usize) -> bool` — every
+  recorded offset addresses a byte strictly inside an `input_len`-byte
+  buffer; empty table trivially satisfies. Direction-of-save predicates
+  `is_strictly_increasing` (top-down save — row 0 appears first in the
+  file, offsets ascend) and `is_strictly_decreasing` (bottom-up save —
+  the spec §C.6.9 alternative). Range / byte borrow helpers
+  `row_range(y, terminal: u32) -> Option<(u32, u32)>` (derives `[start,
+  end)` where `end` is the next row's recorded offset or, for the last
+  row, the caller-supplied terminal) and `row_bytes(input, y, terminal)
+  -> Option<&[u8]>` (borrows the row's bytes straight out of the input).
+  New constant `TGA_SCAN_LINE_OFFSET_BYTES` (= 4) exposes the on-disk
+  per-entry size. New `tests/round261.rs` pins 33 cases (sentinel /
+  default / construction / geometry / `get` bounds / `byte_size`
+  ↔ `to_bytes` length / `is_well_formed_within` true and false /
+  monotonic predicates on empty / single-entry / top-down / bottom-up /
+  equal-consecutive / non-monotonic shapes / `row_range` on valid +
+  past-end + empty + below-terminal + zero-length-row inputs /
+  `row_bytes` slice borrow + past-buffer rejection + invalid-range
+  rejection / parse round-trip through `to_bytes` / parse rejects
+  zero-height / zero-offset / truncated). Suite 276 → 309 tests;
+  standalone (no `registry` feature) + default-feature builds both
+  green. No changes to the on-disk wire format, the encoder, the
+  registered decoder, or the existing `TgaScanLineTable::parse` /
+  `to_bytes` / `parse_tga_scan_line_table` surface — strictly additive.
+
 - Round 257 (typed `TgaFooter` accessors + canonical serialiser): the
   26-byte TGA 2.0 trailer (spec §C.4) gains the same typed-accessor
   pattern already in place for the extension-area numeric / ASCII

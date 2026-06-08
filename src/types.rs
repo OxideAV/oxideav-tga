@@ -1682,6 +1682,10 @@ impl TgaColourCorrectionTable {
     }
 }
 
+/// On-disk size of one entry in the §C.6.9 scan-line table — a single
+/// little-endian `u32` byte offset per pixel row.
+pub const TGA_SCAN_LINE_OFFSET_BYTES: usize = 4;
+
 /// Per-row byte offsets parsed out of the scan-line table (spec §C.6.9).
 ///
 /// On disk the table is a flat array of `height` little-endian u32
@@ -1700,7 +1704,132 @@ pub struct TgaScanLineTable {
     pub offsets: Vec<u32>,
 }
 
+impl Default for TgaScanLineTable {
+    /// Empty-table default (zero scan lines, no offsets recorded).
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
 impl TgaScanLineTable {
+    /// Empty-table sentinel (`offsets.len() == 0`).
+    ///
+    /// Matches [`Self::is_unset`] and is the spec's "no scan-line table
+    /// present" shape; the §C.6.9 scan-line *offset* in the extension
+    /// area being zero is the analogous file-level signal, and the
+    /// in-memory empty table is what one would build from such a file.
+    pub const EMPTY: Self = Self {
+        offsets: Vec::new(),
+    };
+
+    /// Construct a table from a pre-built offsets vector.
+    pub fn new(offsets: Vec<u32>) -> Self {
+        Self { offsets }
+    }
+
+    /// Allocate an empty table sized for a `height`-row image. The
+    /// returned table has `len() == 0` and capacity `height as usize`;
+    /// callers populate it via `offsets.push`.
+    pub fn with_capacity(height: u16) -> Self {
+        Self {
+            offsets: Vec::with_capacity(height as usize),
+        }
+    }
+
+    /// Number of offsets in the table (matches the parent header's
+    /// `height` for any well-formed file).
+    pub fn len(&self) -> usize {
+        self.offsets.len()
+    }
+
+    /// `true` when the table holds no offsets.
+    pub fn is_empty(&self) -> bool {
+        self.offsets.is_empty()
+    }
+
+    /// `true` when the table is the empty/marker shape — same as
+    /// [`Self::is_empty`], named to match the typed-accessor convention
+    /// used by the other extension-area surfaces.
+    pub fn is_unset(&self) -> bool {
+        self.offsets.is_empty()
+    }
+
+    /// Bounds-checked accessor: returns the byte offset of row `y`, or
+    /// `None` when `y >= len()`.
+    pub fn get(&self, y: usize) -> Option<u32> {
+        self.offsets.get(y).copied()
+    }
+
+    /// Total serialised size in bytes (`len() × 4`).
+    pub fn byte_size(&self) -> usize {
+        self.offsets.len() * TGA_SCAN_LINE_OFFSET_BYTES
+    }
+
+    /// Sanity check: every recorded offset must fit inside a buffer of
+    /// `input_len` bytes (strictly less than `input_len`, since the
+    /// offset points *to* a byte). Returns `true` for the empty table.
+    ///
+    /// This is a structural check only — it does not verify that the
+    /// offsets point to actual row boundaries inside the image-data
+    /// section, only that they are addressable.
+    pub fn is_well_formed_within(&self, input_len: usize) -> bool {
+        self.offsets.iter().all(|&o| (o as usize) < input_len)
+    }
+
+    /// `true` when consecutive offsets are strictly increasing — the
+    /// shape produced by a top-down save where row `y+1` always lies
+    /// after row `y` in the file. The empty table and any single-entry
+    /// table are trivially strictly increasing.
+    pub fn is_strictly_increasing(&self) -> bool {
+        self.offsets.windows(2).all(|w| w[0] < w[1])
+    }
+
+    /// `true` when consecutive offsets are strictly decreasing — the
+    /// shape produced by a bottom-up save where row `y+1` lies *before*
+    /// row `y` in the file. The empty table and any single-entry
+    /// table are trivially strictly decreasing.
+    pub fn is_strictly_decreasing(&self) -> bool {
+        self.offsets.windows(2).all(|w| w[0] > w[1])
+    }
+
+    /// Derive the `[start, end)` byte range covered by row `y` inside
+    /// the file, given the byte offset `terminal` at which the row
+    /// data ends (typically the start of the next section — extension
+    /// area, postage stamp, colour-correction table, scan-line table
+    /// itself, or the file footer). The range's `end` is the next row's
+    /// recorded offset when `y + 1 < len()`, otherwise `terminal`.
+    ///
+    /// Returns `None` when `y >= len()`, when the row's recorded offset
+    /// is greater than `terminal`, or when the next row's offset would
+    /// move backwards relative to the row's start (a row's end must lie
+    /// at or after its start so the range is well-defined).
+    pub fn row_range(&self, y: usize, terminal: u32) -> Option<(u32, u32)> {
+        let start = self.offsets.get(y).copied()?;
+        let end = if y + 1 < self.offsets.len() {
+            self.offsets[y + 1]
+        } else {
+            terminal
+        };
+        if end < start {
+            return None;
+        }
+        Some((start, end))
+    }
+
+    /// Borrow the bytes of row `y` from `input` using
+    /// [`Self::row_range`] for the bounds. Returns `None` if the row
+    /// range is undefined or if the resolved `[start, end)` is not
+    /// fully inside `input`.
+    pub fn row_bytes<'a>(&self, input: &'a [u8], y: usize, terminal: u32) -> Option<&'a [u8]> {
+        let (start, end) = self.row_range(y, terminal)?;
+        let s = start as usize;
+        let e = end as usize;
+        if e > input.len() {
+            return None;
+        }
+        Some(&input[s..e])
+    }
+
     /// Parse a scan-line table from `input` starting at byte offset
     /// `offset`. Returns `None` if `offset == 0`, if `height == 0`, or
     /// if the input is truncated before `height × 4` bytes.
@@ -1710,12 +1839,12 @@ impl TgaScanLineTable {
         }
         let off = offset as usize;
         let n = height as usize;
-        if input.len() < off + n * 4 {
+        if input.len() < off + n * TGA_SCAN_LINE_OFFSET_BYTES {
             return None;
         }
         let mut offsets = Vec::with_capacity(n);
         for i in 0..n {
-            offsets.push(read_u32_le(input, off + i * 4));
+            offsets.push(read_u32_le(input, off + i * TGA_SCAN_LINE_OFFSET_BYTES));
         }
         Some(Self { offsets })
     }
@@ -1723,11 +1852,19 @@ impl TgaScanLineTable {
     /// Serialise the table into its on-disk `4 × len()`-byte
     /// representation (little-endian u32s, one per row).
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.offsets.len() * 4);
+        let mut out = Vec::with_capacity(self.byte_size());
         for &o in &self.offsets {
             out.extend_from_slice(&o.to_le_bytes());
         }
         out
+    }
+}
+
+impl FromIterator<u32> for TgaScanLineTable {
+    fn from_iter<I: IntoIterator<Item = u32>>(iter: I) -> Self {
+        Self {
+            offsets: iter.into_iter().collect(),
+        }
     }
 }
 

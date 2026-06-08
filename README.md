@@ -75,7 +75,22 @@ text mirror of the same document are the only sources consulted.
   (Rgba / Rgb24 / Gray8). BLACK maps to 0, WHITE to 65535 per the spec.
 * The §C.6.9 scan-line table is exposed as `TgaScanLineTable` (a Vec
   of per-row u32 byte offsets, sized from the parent header's height),
-  parsed by `parse_tga_scan_line_table`.
+  parsed by `parse_tga_scan_line_table`. Typed accessors on the struct
+  (matching the pattern of `TgaFooter` / `KeyColor` / `TgaTimestamp` /
+  `TgaAsciiField`): `EMPTY` (empty-table sentinel) + `Default` (==
+  `EMPTY`); construction via `new` / `with_capacity(height)` /
+  `FromIterator<u32>`; geometry / sentinel via `len` / `is_empty` /
+  `is_unset` / `byte_size`; bounds-checked row-offset accessor `get(y)`;
+  buffer-bounds sanity check `is_well_formed_within(input_len)`;
+  direction-of-save predicates `is_strictly_increasing` (top-down)
+  and `is_strictly_decreasing` (bottom-up — the spec's §C.6.9 "in
+  the order that the image was saved (i.e., top down or bottom up)"
+  branches); and `row_range(y, terminal)` / `row_bytes(input, y,
+  terminal)` for deriving a `[start, end)` byte range for row `y`
+  using the next row's recorded offset (or a caller-supplied terminal
+  for the last row) and borrowing the row's bytes straight out of the
+  input. The `TGA_SCAN_LINE_OFFSET_BYTES` constant exposes the on-disk
+  4-byte size of one entry.
 * The §C.7 developer-area tag directory is exposed as
   `TgaDeveloperArea` (a `Vec<TgaDeveloperTag>` with `tag_id` / `offset`
   / `size`), parsed by `parse_tga_developer_area`; each tag's
