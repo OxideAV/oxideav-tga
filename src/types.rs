@@ -167,12 +167,126 @@ pub fn parse_header(input: &[u8]) -> Option<TgaHeader> {
 /// Pointers parsed out of the optional 26-byte TGA 2.0 footer. Use
 /// [`parse_extension_area`] to walk the extension-area body the
 /// `extension_area_offset` field points at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The footer is the TGA 2.0 marker: a fixed 26-byte trailer with two
+/// `u32` byte-offsets followed by the 18-byte ASCII signature
+/// `"TRUEVISION-XFILE.\0"`. A TGA 1.0 file has no footer at all;
+/// [`parse_footer`] / [`crate::parse_tga_footer`] return `None` on such
+/// a file. Either offset may be zero — the spec uses zero as the
+/// sentinel meaning "this section is not present in the file" — and a
+/// canonical TGA 2.0 file with no metadata still emits a footer (with
+/// both offsets set to zero) so a reader can distinguish v2-no-metadata
+/// from v1-no-footer.
+///
+/// Typed accessors live in the `impl` block below
+/// ([`TgaFooter::has_extension_area`], [`TgaFooter::has_developer_area`],
+/// [`TgaFooter::is_marker_only`], [`TgaFooter::offsets_within`],
+/// [`TgaFooter::to_bytes`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TgaFooter {
     /// Byte offset of the extension area (0 if absent).
     pub extension_area_offset: u32,
     /// Byte offset of the developer directory (0 if absent).
     pub developer_directory_offset: u32,
+}
+
+impl TgaFooter {
+    /// All-zero sentinel: a TGA 2.0 marker footer with neither an
+    /// extension area nor a developer directory. Same on-disk shape as
+    /// what [`Self::to_bytes`] emits for `TgaFooter::default()`.
+    pub const UNSET: Self = Self {
+        extension_area_offset: 0,
+        developer_directory_offset: 0,
+    };
+
+    /// Build a footer from the two byte offsets. Either may be zero
+    /// (the spec's "not present" sentinel).
+    pub fn new(extension_area_offset: u32, developer_directory_offset: u32) -> Self {
+        Self {
+            extension_area_offset,
+            developer_directory_offset,
+        }
+    }
+
+    /// Returns the `(extension_area_offset, developer_directory_offset)`
+    /// pair, useful for destructuring without reaching into the fields.
+    pub fn as_tuple(self) -> (u32, u32) {
+        (self.extension_area_offset, self.developer_directory_offset)
+    }
+
+    /// Rebuild a footer from the offset tuple in
+    /// `(extension_area_offset, developer_directory_offset)` order — the
+    /// inverse of [`Self::as_tuple`].
+    pub fn from_tuple(t: (u32, u32)) -> Self {
+        Self {
+            extension_area_offset: t.0,
+            developer_directory_offset: t.1,
+        }
+    }
+
+    /// `true` when the footer advertises a non-zero
+    /// `extension_area_offset`. Zero is the spec's "no extension area"
+    /// sentinel: a TGA 2.0 file may legitimately omit the extension area
+    /// even though it carries a footer.
+    pub fn has_extension_area(self) -> bool {
+        self.extension_area_offset != 0
+    }
+
+    /// `true` when the footer advertises a non-zero
+    /// `developer_directory_offset`. Same convention as
+    /// [`Self::has_extension_area`].
+    pub fn has_developer_area(self) -> bool {
+        self.developer_directory_offset != 0
+    }
+
+    /// `true` when both offsets are zero — a *marker-only* footer.
+    /// Equivalent to `self == TgaFooter::UNSET`. Indicates the writer
+    /// chose to flag the file as TGA 2.0 without attaching any
+    /// metadata. The file still ends in the canonical 26-byte trailer
+    /// and the magic still matches.
+    pub fn is_marker_only(self) -> bool {
+        !self.has_extension_area() && !self.has_developer_area()
+    }
+
+    /// `true` when both `extension_area_offset` (when set) and
+    /// `developer_directory_offset` (when set) fit inside a file of the
+    /// supplied length, leaving at least the trailing 26-byte footer
+    /// itself unconsumed. A zero offset is treated as "section absent"
+    /// and contributes no constraint.
+    ///
+    /// `input_len` is the full file length, including the footer. The
+    /// check is a quick sanity gate before walking the sections — it
+    /// does not verify that the section bodies *contents* are
+    /// well-formed; [`parse_extension_area`] / [`TgaDeveloperArea::parse`]
+    /// do that.
+    pub fn offsets_within(self, input_len: usize) -> bool {
+        let footer_start = match input_len.checked_sub(TGA_FOOTER_SIZE) {
+            Some(v) => v,
+            None => return false,
+        };
+        if self.has_extension_area() && (self.extension_area_offset as usize) > footer_start {
+            return false;
+        }
+        if self.has_developer_area() && (self.developer_directory_offset as usize) > footer_start {
+            return false;
+        }
+        true
+    }
+
+    /// Serialise the footer to its canonical 26-byte on-disk layout
+    /// (spec §C.4): two little-endian `u32` offsets followed by the
+    /// 18-byte ASCII signature `"TRUEVISION-XFILE.\0"`.
+    ///
+    /// Round-trips with [`parse_footer`]: feeding the returned 26-byte
+    /// slice into `parse_footer` reproduces the input `TgaFooter`
+    /// bit-exactly.
+    pub fn to_bytes(self) -> [u8; TGA_FOOTER_SIZE] {
+        let mut out = [0u8; TGA_FOOTER_SIZE];
+        out[0..4].copy_from_slice(&self.extension_area_offset.to_le_bytes());
+        out[4..8].copy_from_slice(&self.developer_directory_offset.to_le_bytes());
+        out[8..8 + TGA_FOOTER_MAGIC.len()].copy_from_slice(TGA_FOOTER_MAGIC.as_slice());
+        out
+    }
 }
 
 /// Fixed size of the TGA 2.0 extension area (spec §C.6) when written

@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 257 (typed `TgaFooter` accessors + canonical serialiser): the
+  26-byte TGA 2.0 trailer (spec §C.4) gains the same typed-accessor
+  pattern already in place for the extension-area numeric / ASCII
+  fields. `TgaFooter::UNSET` is the all-zero sentinel (marker-only
+  v2 footer with no metadata sections); `TgaFooter::new(ext, dev)` /
+  `as_tuple` / `from_tuple` provide tuple round-trip in
+  `(extension_area_offset, developer_directory_offset)` order;
+  `has_extension_area` / `has_developer_area` apply the spec's
+  zero-means-absent convention; `is_marker_only` recognises a v2 file
+  flagged with no metadata; `offsets_within(input_len)` is a
+  geometry-only sanity check that both non-zero offsets fit inside a
+  buffer of `input_len` bytes leaving at least the trailing 26-byte
+  footer unconsumed; `to_bytes` emits the canonical 26-byte trailer
+  (LE `u32` extension offset, LE `u32` developer offset, 18-byte
+  `"TRUEVISION-XFILE.\0"` signature) and is the bit-exact inverse of
+  `parse_tga_footer`. `TgaFooter` also gains `Default` (== `UNSET`).
+  Suite 250 → 276 tests; standalone (no `registry` feature) +
+  default-feature builds both green. No changes to the on-disk wire
+  format, the existing encoder, or the registered decoder; the typed
+  accessors are additive surface on the already-published struct, and
+  the serialiser is independent of the encoder's existing inline
+  footer emission in `encode_tga_with_extension`.
+
 - Round 252 (typed Field 11 / 12 / 14 / 16 extension-area accessors):
   the four ASCII fields the decoder has long parsed and the encoder
   has long re-written byte-exactly now carry typed surfaces matching

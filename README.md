@@ -30,7 +30,15 @@ text mirror of the same document are the only sources consulted.
   columns are mirrored when bit 4 is set (both axes for a file that sets
   bit 4 with bit 5 clear, i.e. a 180° rotation).
 * The optional 26-byte TGA 2.0 footer is recognised. Use
-  `parse_tga_footer` for the extension/developer-area offsets,
+  `parse_tga_footer` for the extension/developer-area offsets — the
+  returned `TgaFooter` carries typed accessors (`has_extension_area` /
+  `has_developer_area` / `is_marker_only` for the zero-means-absent
+  sentinel; `as_tuple` / `from_tuple` round-trip; `offsets_within(len)`
+  sanity-checks both offsets against a buffer length; `to_bytes()`
+  emits the canonical 26-byte trailer — LE `u32` extension offset, LE
+  `u32` developer offset, 18-byte `"TRUEVISION-XFILE.\0"` signature —
+  and round-trips through `parse_tga_footer` bit-exactly) and
+  `TgaFooter::UNSET` is the all-zero sentinel,
   `parse_tga_extension_area` for the 495-byte extension-area body
   (author / comments / timestamp / job / software ID + version /
   pixel-aspect / gamma / colour-correction + postage-stamp +
