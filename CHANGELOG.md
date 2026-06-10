@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 269 (typed `TgaDeveloperArea` / `TgaDeveloperTag` accessors):
+  the §C.7 developer-area tag directory the decoder has long parsed and
+  the encoder has long written now carries typed surfaces matching the
+  r227 / r234 / r252 / r257 / r261 pattern — the last parsed TGA 2.0
+  structure without one. `TgaDeveloperTag` gains `new` / `as_tuple` /
+  `from_tuple` (tuple round-trip in on-disk TAG, OFFSET, FIELD SIZE
+  order); the §C.7 tag-id range classifiers `is_developer_use`
+  (`0..=32767`) and `is_truevision_reserved` (`32768..=65535`);
+  `is_marker` (offset-0 / no-payload record — the shape
+  `DeveloperTagInput` writes for an empty payload and for which
+  `payload` returns `None`); `is_well_formed_within(input_len)`
+  (non-marker payload range fits the buffer, mirroring `parse`'s
+  per-record rejection rule); and `to_bytes()` emitting the on-disk
+  10-byte record (LE `u16` tag, LE `u32` offset, LE `u32` size).
+  `TgaDeveloperArea` gains `EMPTY` (empty-directory sentinel — the
+  in-memory shape for the spec's "If the Offset is ZERO (binary zero)
+  no directory and no Developer Area fields exist") + `Default` (==
+  `EMPTY`); construction via `new(tags)` /
+  `FromIterator<TgaDeveloperTag>`; geometry / sentinel via `len` /
+  `is_empty` / `is_unset` / `directory_byte_size` (the spec's
+  `(NUMBER_OF_TAGS_IN_THE_DIRECTORY * 10) + 2` formula, ==
+  `to_bytes().len()`); positional + by-id lookup via `get(i)` /
+  `find(tag_id)` (first match in directory order — spec §C.7: "The
+  TAGS may appear in any order in the directory") / `contains(tag_id)`;
+  whole-directory `is_well_formed_within(input_len)`; and `to_bytes()`
+  serialising the count-prefixed directory bit-exactly as `parse`
+  reads it (and bit-exactly as `encode_tga_with_extension` writes it).
+  New constants `TGA_DEVELOPER_TAG_BYTES` (= 10, spec: "each set is 10
+  bytes in size (1 short, 2 longs)") and
+  `TGA_DEVELOPER_DIRECTORY_HEADER_BYTES` (= 2). New `tests/round269.rs`
+  pins 32 cases (constants / construction / tuple round-trip / range
+  classification at both boundaries + full-domain partition / marker
+  shapes / per-record + whole-directory well-formedness accept +
+  reject / 10-byte LE record layout / count-prefixed directory layout
+  + empty directory / `to_bytes` ↔ `parse` round-trip with a real
+  payload / end-to-end encoder-written developer area through the
+  typed lookup surface including bit-exact directory-byte comparison).
+  Suite 309 → 341 tests; standalone (no `registry` feature) +
+  default-feature builds both green. No changes to the on-disk wire
+  format, the encoder, the registered decoder, or the existing
+  `TgaDeveloperArea::parse` / `payload` / `parse_tga_developer_area`
+  surface — strictly additive.
+
+### Fixed
+
+- Round 269: the §C.7 tag-id reservation ranges were documented
+  *inverted* in two doc comments (`TgaDeveloperTag` in `types.rs`,
+  `DeveloperTagInput::tag_id` in `encoder.rs`), claiming the low range
+  was Truevision-reserved. The spec says the opposite: "Values from
+  0 - 32767 are available for developer use, while values from
+  32768 - 65535 are reserved for Truevision." Doc-only fix — no code
+  ever branched on the ranges; the new `is_developer_use` /
+  `is_truevision_reserved` classifiers and their boundary tests pin
+  the correct direction.
+
+### Added
+
 - Round 261 (typed `TgaScanLineTable` accessors): the §C.6.9 scan-line
   table the decoder has long parsed and the encoder has long re-written
   byte-exactly now carries typed surfaces matching the r227 / r234 /

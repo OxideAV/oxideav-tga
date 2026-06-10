@@ -668,8 +668,8 @@ fn rle_one_row_u8(row: &[u8], out: &mut Vec<u8>) {
 /// `offset == 0` and `size == 0` — spec-legal).
 #[derive(Debug, Clone)]
 pub struct DeveloperTagInput {
-    /// Tag identifier. `0..=32767` reserved for Truevision,
-    /// `32768..=65535` available for user-defined tags (spec §C.7).
+    /// Tag identifier. `0..=32767` available for developer use,
+    /// `32768..=65535` reserved for Truevision (spec §C.7).
     pub tag_id: u16,
     /// Application-defined payload bytes. Empty = marker tag (no
     /// payload region written).

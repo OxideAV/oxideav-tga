@@ -95,7 +95,27 @@ text mirror of the same document are the only sources consulted.
   `TgaDeveloperArea` (a `Vec<TgaDeveloperTag>` with `tag_id` / `offset`
   / `size`), parsed by `parse_tga_developer_area`; each tag's
   application-defined payload bytes are borrowable via
-  `dev.payload(input, tag)`.
+  `dev.payload(input, tag)`. Typed accessors on both structs (matching
+  the pattern of `TgaScanLineTable` / `TgaFooter` / `TgaAsciiField` /
+  `TgaTimestamp`): `TgaDeveloperTag` carries `new` / `as_tuple` /
+  `from_tuple` (on-disk TAG, OFFSET, FIELD SIZE order); the §C.7
+  tag-id range classifiers `is_developer_use` (0..=32767, "available
+  for developer use") and `is_truevision_reserved` (32768..=65535,
+  "reserved for Truevision"); `is_marker` (offset-0 / no-payload
+  record); `is_well_formed_within(input_len)` (payload range fits the
+  buffer, mirroring `parse`'s per-record rejection rule); and
+  `to_bytes()` emitting the 10-byte LE record. `TgaDeveloperArea`
+  carries `EMPTY` (empty-directory sentinel) + `Default` (== `EMPTY`);
+  construction via `new` / `FromIterator<TgaDeveloperTag>`; geometry /
+  sentinel via `len` / `is_empty` / `is_unset` / `directory_byte_size`
+  (the spec's `n × 10 + 2` formula); positional + by-id lookup via
+  `get(i)` / `find(tag_id)` (first match in directory order — the spec
+  allows unsorted directories) / `contains(tag_id)`; whole-directory
+  `is_well_formed_within(input_len)`; and `to_bytes()` serialising the
+  count-prefixed directory bit-exactly as `parse` reads it. The
+  `TGA_DEVELOPER_TAG_BYTES` (10) and
+  `TGA_DEVELOPER_DIRECTORY_HEADER_BYTES` (2) constants expose the
+  on-disk dimensions.
 * The §3.3 / §C.3 Image Identification Field (the free-form,
   up-to-255-byte block at offset 18) is exposed verbatim by
   `parse_tga_image_id`; the helper returns the borrowed byte slice, an

@@ -1868,6 +1868,19 @@ impl FromIterator<u32> for TgaScanLineTable {
     }
 }
 
+/// On-disk size of one developer-directory record — spec §C.7
+/// ("each set is 10 bytes in size (1 short, 2 longs)"): a little-endian
+/// `u16` tag id, a little-endian `u32` payload offset, and a
+/// little-endian `u32` payload size.
+pub const TGA_DEVELOPER_TAG_BYTES: usize = 10;
+
+/// On-disk size of the developer-directory header — the leading SHORT
+/// holding the number of tags. Spec §C.7's directory-size formula
+/// `(NUMBER_OF_TAGS_IN_THE_DIRECTORY * 10) + 2` notes "the '+ 2'
+/// includes the 2 bytes for the SHORT value specifying the number of
+/// tags in the directory".
+pub const TGA_DEVELOPER_DIRECTORY_HEADER_BYTES: usize = 2;
+
 /// One entry from the developer area's tag directory (spec §C.7).
 ///
 /// The developer area is the writer-extensible scratch space TGA 2.0
@@ -1876,18 +1889,93 @@ impl FromIterator<u32> for TgaScanLineTable {
 /// `(tag_id, offset, size)` records that point into application-defined
 /// byte ranges elsewhere in the file.
 ///
-/// Tag IDs `0..=32767` are reserved for Truevision; `32768..=65535` are
-/// available for user-defined fields. The parser stores all tags
-/// regardless; semantic interpretation is left to the caller (spec
-/// §C.7 declines to enumerate well-known tag IDs).
+/// Per spec §C.7, each TAG is a SHORT in the range 0 to 65535: values
+/// `0..=32767` are available for developer use, while `32768..=65535`
+/// are reserved for Truevision. The parser stores all tags regardless;
+/// semantic interpretation is left to the caller (spec §C.7 declines
+/// to enumerate well-known tag IDs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TgaDeveloperTag {
-    /// Tag identifier (Truevision-reserved < 32768, user > 32767).
+    /// Tag identifier (`0..=32767` developer use, `32768..=65535`
+    /// Truevision-reserved per spec §C.7).
     pub tag_id: u16,
     /// Byte offset of the tag's payload from the start of the file.
     pub offset: u32,
     /// Length of the tag's payload in bytes.
     pub size: u32,
+}
+
+impl TgaDeveloperTag {
+    /// Construct a directory record from its three on-disk fields.
+    pub fn new(tag_id: u16, offset: u32, size: u32) -> Self {
+        Self {
+            tag_id,
+            offset,
+            size,
+        }
+    }
+
+    /// The record as a `(tag_id, offset, size)` tuple in on-disk field
+    /// order (spec §C.7: TAG, then OFFSET, then FIELD SIZE).
+    pub fn as_tuple(&self) -> (u16, u32, u32) {
+        (self.tag_id, self.offset, self.size)
+    }
+
+    /// Build a record from a `(tag_id, offset, size)` tuple in on-disk
+    /// field order. Inverse of [`Self::as_tuple`].
+    pub fn from_tuple(t: (u16, u32, u32)) -> Self {
+        Self {
+            tag_id: t.0,
+            offset: t.1,
+            size: t.2,
+        }
+    }
+
+    /// `true` when the tag id falls in the developer-use range
+    /// (`0..=32767` per spec §C.7: "Values from 0 - 32767 are
+    /// available for developer use").
+    pub fn is_developer_use(&self) -> bool {
+        self.tag_id <= 32767
+    }
+
+    /// `true` when the tag id falls in the Truevision-reserved range
+    /// (`32768..=65535` per spec §C.7: "values from 32768 - 65535 are
+    /// reserved for Truevision").
+    pub fn is_truevision_reserved(&self) -> bool {
+        self.tag_id >= 32768
+    }
+
+    /// `true` for a marker record — a directory entry whose payload
+    /// `offset` is 0, i.e. the tag is present in the directory but
+    /// carries no payload bytes. This is the shape
+    /// [`crate::DeveloperTagInput`] writes for an empty payload, and
+    /// the shape for which [`TgaDeveloperArea::payload`] returns
+    /// `None`.
+    pub fn is_marker(&self) -> bool {
+        self.offset == 0
+    }
+
+    /// Sanity check: a marker record is trivially well-formed; a
+    /// non-marker record's `[offset, offset + size)` payload range
+    /// must fit inside a buffer of `input_len` bytes. Mirrors the
+    /// bound [`TgaDeveloperArea::parse`] enforces per record.
+    pub fn is_well_formed_within(&self, input_len: usize) -> bool {
+        if self.offset == 0 {
+            return true;
+        }
+        (self.offset as usize).saturating_add(self.size as usize) <= input_len
+    }
+
+    /// Serialise the record into its on-disk 10-byte form (spec §C.7
+    /// Figure 2 - Developer Directory): little-endian `u16` tag id,
+    /// little-endian `u32` offset, little-endian `u32` size.
+    pub fn to_bytes(&self) -> [u8; TGA_DEVELOPER_TAG_BYTES] {
+        let mut out = [0u8; TGA_DEVELOPER_TAG_BYTES];
+        out[0..2].copy_from_slice(&self.tag_id.to_le_bytes());
+        out[2..6].copy_from_slice(&self.offset.to_le_bytes());
+        out[6..10].copy_from_slice(&self.size.to_le_bytes());
+        out
+    }
 }
 
 /// Parsed developer area: the tag directory plus a borrowed view of
@@ -1904,7 +1992,106 @@ pub struct TgaDeveloperArea {
     pub tags: Vec<TgaDeveloperTag>,
 }
 
+impl Default for TgaDeveloperArea {
+    /// Empty-directory default (zero tags recorded).
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl FromIterator<TgaDeveloperTag> for TgaDeveloperArea {
+    fn from_iter<I: IntoIterator<Item = TgaDeveloperTag>>(iter: I) -> Self {
+        Self {
+            tags: iter.into_iter().collect(),
+        }
+    }
+}
+
 impl TgaDeveloperArea {
+    /// Empty-directory sentinel (`tags.len() == 0`).
+    ///
+    /// Matches [`Self::is_unset`] and is the in-memory shape for a file
+    /// with no developer area; the file-level signal is the footer's
+    /// developer-directory offset being zero (spec §C.7: "If the Offset
+    /// is ZERO (binary zero) no directory and no Developer Area fields
+    /// exist").
+    pub const EMPTY: Self = Self { tags: Vec::new() };
+
+    /// Construct a directory from a pre-built tag vector.
+    pub fn new(tags: Vec<TgaDeveloperTag>) -> Self {
+        Self { tags }
+    }
+
+    /// Number of records in the tag directory (the leading SHORT of
+    /// the on-disk directory).
+    pub fn len(&self) -> usize {
+        self.tags.len()
+    }
+
+    /// `true` when the directory holds no records.
+    pub fn is_empty(&self) -> bool {
+        self.tags.is_empty()
+    }
+
+    /// `true` when the directory is the empty shape — same as
+    /// [`Self::is_empty`], named to match the typed-accessor convention
+    /// used by the other TGA 2.0 surfaces.
+    pub fn is_unset(&self) -> bool {
+        self.tags.is_empty()
+    }
+
+    /// Total serialised size of the tag directory in bytes — spec
+    /// §C.7's `(NUMBER_OF_TAGS_IN_THE_DIRECTORY * 10) + 2` formula.
+    /// Matches `to_bytes().len()`.
+    pub fn directory_byte_size(&self) -> usize {
+        TGA_DEVELOPER_DIRECTORY_HEADER_BYTES + self.tags.len() * TGA_DEVELOPER_TAG_BYTES
+    }
+
+    /// Bounds-checked accessor: returns the directory record at
+    /// on-disk position `i`, or `None` when `i >= len()`.
+    pub fn get(&self, i: usize) -> Option<&TgaDeveloperTag> {
+        self.tags.get(i)
+    }
+
+    /// Find the first record carrying `tag_id`, in on-disk order.
+    /// Spec §C.7 permits any directory ordering ("The TAGS may appear
+    /// in any order in the directory (i.e., they do not need to be
+    /// sorted)"), so a lookup by id rather than position is the
+    /// caller-facing primitive.
+    pub fn find(&self, tag_id: u16) -> Option<&TgaDeveloperTag> {
+        self.tags.iter().find(|t| t.tag_id == tag_id)
+    }
+
+    /// `true` when at least one record carries `tag_id`.
+    pub fn contains(&self, tag_id: u16) -> bool {
+        self.tags.iter().any(|t| t.tag_id == tag_id)
+    }
+
+    /// Sanity check: every record satisfies
+    /// [`TgaDeveloperTag::is_well_formed_within`] against a buffer of
+    /// `input_len` bytes. Returns `true` for the empty directory.
+    ///
+    /// This is a structural check only — it does not interpret any
+    /// payload, only that each non-marker payload range is addressable.
+    pub fn is_well_formed_within(&self, input_len: usize) -> bool {
+        self.tags.iter().all(|t| t.is_well_formed_within(input_len))
+    }
+
+    /// Serialise the tag directory into its on-disk form (spec §C.7
+    /// Figure 2 - Developer Directory): a little-endian `u16` record
+    /// count followed by one 10-byte [`TgaDeveloperTag::to_bytes`]
+    /// record per tag, in directory order. Byte-for-byte the layout
+    /// [`Self::parse`] reads (the payloads themselves live elsewhere
+    /// in the file and are not part of the directory).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.directory_byte_size());
+        out.extend_from_slice(&(self.tags.len() as u16).to_le_bytes());
+        for tag in &self.tags {
+            out.extend_from_slice(&tag.to_bytes());
+        }
+        out
+    }
+
     /// Parse the developer-area tag directory referenced by
     /// [`TgaFooter::developer_directory_offset`].
     ///
