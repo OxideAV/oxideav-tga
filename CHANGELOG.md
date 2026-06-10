@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Round 273 (Color Map Origin / First Entry Index application): the §C.2
+  Color Map Specification's "index of first color map entry" (header
+  bytes 3-4, parsed into `TgaHeader::cmap_first` since round 1) was read
+  but never applied during palette lookup. The on-disk colour map stores
+  `cmap_length` entries that correspond to *logical* palette indices
+  starting at the origin, so an image index `idx` addresses on-disk entry
+  `idx - cmap_first`. The decoder previously indexed the palette directly
+  by `idx`, so any colour-mapped file with a non-zero Color Map Origin
+  decoded with an off-by-origin palette error (or was spuriously rejected
+  as out of range when `idx >= cmap_length`). `emit_pixel` now subtracts
+  the origin for both the uncompressed (type 1) and RLE (type 9)
+  colour-mapped paths, and for the postage-stamp colour-mapped path that
+  shares the parent header; indices below the origin (`idx < cmap_first`)
+  are rejected via a checked subtraction rather than wrapping. Origin-0
+  files — everything this crate's own encoder writes — are bit-exact
+  unchanged (`idx - 0 == idx`), so no existing round-trip is affected.
+  New `tests/round273.rs` pins 7 cases: origin-0 regression, non-zero
+  origin offset on type 1, below-origin + past-(origin+length) rejection
+  on type 1, RLE (type 9) origin application + below-origin rejection,
+  and a high-origin case at the top of the 8-bit index space. Suite
+  341 → 348 tests; standalone (no `registry` feature) + default-feature
+  builds both green. No on-disk wire-format or encoder change.
+
 ### Added
 
 - Round 269 (typed `TgaDeveloperArea` / `TgaDeveloperTag` accessors):

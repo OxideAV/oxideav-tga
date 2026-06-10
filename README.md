@@ -18,6 +18,13 @@ text mirror of the same document are the only sources consulted.
 | 10   | RLE          | 15 / 16 / 24 / 32 bpp        | `Rgba`  |
 | 11   | RLE          | 8 bpp grayscale              | `Gray8` |
 
+* Colour-mapped types (1 / 9) honour the §C.2 Color Map Origin (the
+  "index of first color map entry", header bytes 3-4): the on-disk
+  palette stores `cmap_length` entries beginning at that origin, so an
+  image index `idx` addresses on-disk entry `idx - cmap_first`. Indices
+  below the origin or past the stored length are rejected as out of
+  range. Origin-0 files (everything this crate's encoder writes) are
+  unaffected.
 * 16-bit pixels decoded as A1R5G5B5 (top bit alpha); 15-bit forces
   alpha to `0xFF`.
 * 24-bit pixels are BGR on disk, 32-bit are BGRA — both swapped to

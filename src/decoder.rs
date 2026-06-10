@@ -716,7 +716,14 @@ fn decode_raw_pixels(
     };
     for i in 0..pixel_count {
         let src = &input[i * in_bpp..i * in_bpp + in_bpp];
-        emit_pixel(image_type, header.depth, src, palette, &mut out)?;
+        emit_pixel(
+            image_type,
+            header.depth,
+            header.cmap_first,
+            src,
+            palette,
+            &mut out,
+        )?;
     }
     Ok(out)
 }
@@ -755,7 +762,14 @@ fn decode_rle_pixels(
             }
             let src = &input[cursor..cursor + in_bpp];
             for _ in 0..count {
-                emit_pixel(image_type, header.depth, src, palette, &mut out)?;
+                emit_pixel(
+                    image_type,
+                    header.depth,
+                    header.cmap_first,
+                    src,
+                    palette,
+                    &mut out,
+                )?;
             }
             cursor += in_bpp;
         } else {
@@ -765,7 +779,14 @@ fn decode_rle_pixels(
             }
             for i in 0..count {
                 let src = &input[cursor + i * in_bpp..cursor + i * in_bpp + in_bpp];
-                emit_pixel(image_type, header.depth, src, palette, &mut out)?;
+                emit_pixel(
+                    image_type,
+                    header.depth,
+                    header.cmap_first,
+                    src,
+                    palette,
+                    &mut out,
+                )?;
             }
             cursor += count * in_bpp;
         }
@@ -777,17 +798,27 @@ fn decode_rle_pixels(
 fn emit_pixel(
     image_type: ImageType,
     depth: u8,
+    cmap_first: u16,
     src: &[u8],
     palette: Option<&[[u8; 4]]>,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     match image_type {
         ImageType::UncompressedColourMapped | ImageType::RleColourMapped => {
-            // 8-bit palette index.
+            // 8-bit palette index. The colour map on disk stores entries
+            // starting at the Color Map Origin (the §C.2 "index of first
+            // color map entry", header bytes 3-4). An image index `idx`
+            // therefore addresses on-disk entry `idx - cmap_first`; indices
+            // below the origin (or past the stored length) are out of range.
             let idx = src[0] as usize;
             let p = palette.ok_or_else(|| Error::invalid("TGA: colour-mapped without palette"))?;
+            let entry = idx.checked_sub(cmap_first as usize).ok_or_else(|| {
+                Error::invalid(format!(
+                    "TGA: palette index {idx} below colour-map origin {cmap_first}"
+                ))
+            })?;
             let rgba = *p
-                .get(idx)
+                .get(entry)
                 .ok_or_else(|| Error::invalid(format!("TGA: palette index {idx} out of range")))?;
             out.extend_from_slice(&rgba);
         }
