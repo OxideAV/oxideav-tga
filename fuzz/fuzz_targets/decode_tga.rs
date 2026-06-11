@@ -38,12 +38,13 @@
 //! footer / extension path is still exercised at sizes up to the cap.
 
 use libfuzzer_sys::fuzz_target;
-use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 use oxideav_tga::{
-    parse_tga, parse_tga_attributes_type, parse_tga_colour_correction_table,
-    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_image_id,
-    parse_tga_postage_stamp, parse_tga_scan_line_table,
+    compute_tga_scan_line_table, parse_tga, parse_tga_attributes_type,
+    parse_tga_colour_correction_table, parse_tga_developer_area, parse_tga_extension_area,
+    parse_tga_footer, parse_tga_image_id, parse_tga_postage_stamp, parse_tga_scan_line,
+    parse_tga_scan_line_table,
 };
+use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 
 /// Upper bound on the declared output raster (16 MiB). Anything
 /// larger is a resource request, not a logic path, so the harness
@@ -59,10 +60,23 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_tga_extension_area(data);
     let _ = parse_tga_postage_stamp(data);
     let _ = parse_tga_colour_correction_table(data);
-    let _ = parse_tga_scan_line_table(data);
     let _ = parse_tga_developer_area(data);
     let _ = parse_tga_attributes_type(data);
     let _ = parse_tga_image_id(data);
+
+    // §C.6.9 random access: derive a scan-line table from the bytes
+    // (an O(input) walk; the table itself is at most height × 4 ≈
+    // 256 KiB and a single decoded row at most width × 4 ≈ 256 KiB,
+    // so no raster cap is needed) and fetch one row through it; also
+    // drive the row fetch through a *file-supplied* (i.e. attacker-
+    // controlled) table when the input ships one.
+    if let Ok(table) = compute_tga_scan_line_table(data) {
+        let _ = parse_tga_scan_line(data, &table, 0);
+    }
+    if let Some(table) = parse_tga_scan_line_table(data) {
+        let _ = parse_tga_scan_line(data, &table, 0);
+        let _ = parse_tga_scan_line(data, &table, table.len().saturating_sub(1));
+    }
 
     // Pre-screen the header (no pixel allocation) so we can bound the
     // decoder's per-frame allocation before it runs. A header that

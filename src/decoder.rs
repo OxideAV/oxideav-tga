@@ -126,40 +126,8 @@ pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
         return Err(Error::invalid("TGA: zero dimension"));
     }
 
-    // Skip optional Image ID.
-    let mut cursor = TGA_HEADER_SIZE + header.id_length as usize;
-    if input.len() < cursor {
-        return Err(Error::invalid("TGA: truncated past image ID"));
-    }
-
-    // Read colour map if present.
-    let palette = if header.cmap_type == 1 {
-        if !image_type.is_colour_mapped() {
-            // The spec allows a colour map to be present even for
-            // true-colour images (some encoders do this), so we just
-            // read past it instead of erroring out.
-        }
-        if header.cmap_entry_size == 0 || header.cmap_length == 0 {
-            return Err(Error::invalid(
-                "TGA: cmap_type == 1 but cmap_entry_size / cmap_length == 0",
-            ));
-        }
-        let entry_bytes = header.cmap_entry_size.div_ceil(8) as usize;
-        let cmap_bytes = entry_bytes * header.cmap_length as usize;
-        if input.len() < cursor + cmap_bytes {
-            return Err(Error::invalid("TGA: colour map truncated"));
-        }
-        let cmap = &input[cursor..cursor + cmap_bytes];
-        cursor += cmap_bytes;
-        Some(decode_palette(cmap, header.cmap_entry_size, entry_bytes)?)
-    } else {
-        if image_type.is_colour_mapped() {
-            return Err(Error::invalid(
-                "TGA: colour-mapped image type but cmap_type == 0",
-            ));
-        }
-        None
-    };
+    // Skip optional Image ID, then read the colour map if present.
+    let (palette, cursor) = read_palette(input, &header, image_type)?;
 
     // Validate pixel depth for the chosen image type.
     validate_depth(image_type, header.depth)?;
@@ -298,6 +266,215 @@ pub fn parse_tga_scan_line_table(input: &[u8]) -> Option<TgaScanLineTable> {
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
     let header = parse_header(input)?;
     TgaScanLineTable::parse(input, ext.scan_line_offset, header.height)
+}
+
+/// Build the §C.6.9 scan-line table for an encoded TGA byte stream.
+///
+/// The spec provides the scan-line table (extension-area Field 25)
+/// "to make random access of compressed images easy" and "to allow
+/// 'giant picture' access in smaller 'chunks'": one 4-byte offset per
+/// scan line, measured from the start of the file, pointing at the
+/// first byte of each line **in the order the image was saved** (top
+/// down or bottom up — i.e. entry order is stream order, not display
+/// order). This helper derives that table from the file's own pixel
+/// data:
+///
+/// * Uncompressed types (1 / 2 / 3): pure arithmetic —
+///   `pixel_start + y × width × bytes_per_pixel`.
+/// * RLE types (9 / 10 / 11): the §C.5 packet stream is walked once,
+///   recording the byte position at which each row's first packet
+///   begins.
+///
+/// The result can be handed to
+/// [`crate::encoder::ExtensionAreaInput::scan_line_table`] (computed
+/// against the base file *before* [`crate::encode_tga_with_extension`]
+/// appends anything — the pixel data doesn't move, so the offsets stay
+/// valid in the extended file), or used directly with
+/// [`parse_tga_scan_line`] for random row access.
+///
+/// # Errors
+///
+/// * [`crate::TgaError::InvalidData`] for a malformed file (truncated
+///   header / colour map / pixel data, zero dimension, or a file so
+///   large a row offset exceeds the table's 4-byte field).
+/// * [`crate::TgaError::Unsupported`] for an unsupported image type /
+///   depth, **or** for an RLE file in which a packet spans a scan-line
+///   boundary. The spec's packet rule — packets "should never encode
+///   pixels from more than one scan line", precisely because that
+///   "allows software to create and use a scan line table for rapid,
+///   random access of individual lines" — is what makes the table
+///   well-defined; a file that breaks the rule has rows that don't
+///   start on packet boundaries, so no table can describe it. (The
+///   whole-image decoder [`parse_tga`] still accepts such files.)
+pub fn compute_tga_scan_line_table(input: &[u8]) -> Result<TgaScanLineTable> {
+    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
+        Error::unsupported(format!(
+            "TGA: image type {} not supported",
+            header.image_type_raw
+        ))
+    })?;
+    if image_type == ImageType::None {
+        return Err(Error::invalid("TGA: image_type == 0 (no image data)"));
+    }
+    if header.width == 0 || header.height == 0 {
+        return Err(Error::invalid("TGA: zero dimension"));
+    }
+    let (_palette, pixel_start) = read_palette(input, &header, image_type)?;
+    validate_depth(image_type, header.depth)?;
+
+    let width = header.width as usize;
+    let height = header.height as usize;
+    let in_bpp = header.depth.div_ceil(8) as usize;
+    let mut table = TgaScanLineTable::with_capacity(header.height);
+    if image_type.is_rle() {
+        let mut pos = pixel_start;
+        for _ in 0..height {
+            table.offsets.push(scan_line_offset_u32(pos)?);
+            let mut remaining = width;
+            while remaining > 0 {
+                if pos >= input.len() {
+                    return Err(Error::invalid("TGA: RLE stream truncated (no packet hdr)"));
+                }
+                let packet = input[pos];
+                pos += 1;
+                let count = (packet & 0x7F) as usize + 1;
+                if count > remaining {
+                    return Err(Error::unsupported(format!(
+                        "TGA: RLE packet spans a scan-line boundary (row has {remaining} \
+                         pixel(s) left, packet encodes {count}); rows don't start on packet \
+                         boundaries, so no §C.6.9 scan-line table can describe this file"
+                    )));
+                }
+                let body = if (packet & 0x80) != 0 {
+                    // Run-length packet: one pixel value.
+                    in_bpp
+                } else {
+                    // Raw packet: `count` literal pixel values.
+                    count * in_bpp
+                };
+                if pos + body > input.len() {
+                    return Err(Error::invalid("TGA: RLE packet truncated"));
+                }
+                pos += body;
+                remaining -= count;
+            }
+        }
+    } else {
+        let row_bytes = width * in_bpp;
+        if input.len() < pixel_start + row_bytes * height {
+            return Err(Error::invalid("TGA: pixel data truncated"));
+        }
+        for y in 0..height {
+            table
+                .offsets
+                .push(scan_line_offset_u32(pixel_start + y * row_bytes)?);
+        }
+    }
+    Ok(table)
+}
+
+/// Random-access decode of a single scan line through a §C.6.9
+/// scan-line table — the "rapid, random access of individual lines"
+/// the spec built the table for, without decoding (or, for RLE files,
+/// even walking) any preceding row.
+///
+/// `index` is in **saved order**, matching the table itself (the spec
+/// records offsets "in the order that the image was saved (i.e., top
+/// down or bottom up)"): for a top-down file (descriptor bit 5 set)
+/// saved index equals display row; for a bottom-up file entry 0 is the
+/// *bottom* display row, so display row `y` lives at saved index
+/// `height − 1 − y`. Use [`crate::TgaHeader::is_top_down`] to pick.
+/// Columns are normalised to left-to-right exactly as [`parse_tga`]
+/// does (descriptor bit 4 mirroring).
+///
+/// `table` is typically [`parse_tga_scan_line_table`]'s output for a
+/// file that ships one, or [`compute_tga_scan_line_table`]'s for one
+/// that doesn't.
+///
+/// Returns a 1-pixel-tall [`TgaImage`] in the same normalised pixel
+/// format the whole-image decoder would produce (`Rgba` for types
+/// 1/2/9/10, `Gray8` for 3/11). Errors mirror [`parse_tga`]'s, plus
+/// [`crate::TgaError::InvalidData`] when `index` is outside the table
+/// or the recorded offset points past the end of `input`; an RLE
+/// packet at the recorded offset that encodes more pixels than the row
+/// holds is rejected (the §C.5 overrun guard — a row that doesn't end
+/// on a packet boundary can't be randomly accessed).
+pub fn parse_tga_scan_line(
+    input: &[u8],
+    table: &TgaScanLineTable,
+    index: usize,
+) -> Result<TgaImage> {
+    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
+        Error::unsupported(format!(
+            "TGA: image type {} not supported",
+            header.image_type_raw
+        ))
+    })?;
+    if image_type == ImageType::None {
+        return Err(Error::invalid("TGA: image_type == 0 (no image data)"));
+    }
+    if header.width == 0 || header.height == 0 {
+        return Err(Error::invalid("TGA: zero dimension"));
+    }
+    let (palette, _pixel_start) = read_palette(input, &header, image_type)?;
+    validate_depth(image_type, header.depth)?;
+
+    let offset = table.get(index).ok_or_else(|| {
+        Error::invalid(format!(
+            "TGA: scan-line index {index} out of range (table has {} entries)",
+            table.len()
+        ))
+    })? as usize;
+    if offset > input.len() {
+        return Err(Error::invalid(
+            "TGA: scan-line table offset points past the end of the input",
+        ));
+    }
+
+    // Decode exactly one row's worth of pixels starting at the
+    // recorded offset, reusing the §C.5 packet / raw-pixel machinery
+    // with a synthetic single-row header.
+    let row_header = TgaHeader {
+        height: 1,
+        ..header
+    };
+    let row_input = &input[offset..];
+    let mut pixels = if image_type.is_rle() {
+        decode_rle_pixels(&row_header, image_type, row_input, palette.as_deref())?
+    } else {
+        decode_raw_pixels(&row_header, image_type, row_input, palette.as_deref())?
+    };
+
+    let pixel_format = if image_type.is_grayscale() {
+        TgaPixelFormat::Gray8
+    } else {
+        TgaPixelFormat::Rgba
+    };
+    // Normalise column order (descriptor bit 4), same as parse_tga.
+    // Row order (bit 5) needs no per-row work — the caller's `index`
+    // already addresses the saved order.
+    if header.is_right_to_left() {
+        let bpp = match pixel_format {
+            TgaPixelFormat::Gray8 => 1,
+            _ => 4,
+        };
+        let w = header.width as usize;
+        for x in 0..w / 2 {
+            for b in 0..bpp {
+                pixels.swap(x * bpp + b, (w - 1 - x) * bpp + b);
+            }
+        }
+    }
+
+    Ok(TgaImage {
+        width: header.width as u32,
+        height: 1,
+        pixel_format,
+        data: pixels,
+        pts: None,
+    })
 }
 
 /// Parse the TGA 2.0 developer-area tag directory if the file has one
@@ -524,29 +701,9 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
     }
 
     // Walk past the header + image ID + colour map to locate the
-    // colour map for palette lookups.
-    let mut cursor = TGA_HEADER_SIZE + header.id_length as usize;
-    if input.len() < cursor {
-        return Err(Error::invalid("TGA: truncated past image ID"));
-    }
-    let palette = if header.cmap_type == 1 {
-        if header.cmap_entry_size == 0 || header.cmap_length == 0 {
-            return Err(Error::invalid(
-                "TGA: cmap_type == 1 but cmap_entry_size / cmap_length == 0",
-            ));
-        }
-        let entry_bytes = header.cmap_entry_size.div_ceil(8) as usize;
-        let cmap_bytes = entry_bytes * header.cmap_length as usize;
-        if input.len() < cursor + cmap_bytes {
-            return Err(Error::invalid("TGA: colour map truncated"));
-        }
-        let cmap = &input[cursor..cursor + cmap_bytes];
-        cursor += cmap_bytes;
-        let _ = cursor;
-        Some(decode_palette(cmap, header.cmap_entry_size, entry_bytes)?)
-    } else {
-        None
-    };
+    // colour map for palette lookups (the stamp shares the parent's
+    // palette).
+    let (palette, _pixel_start) = read_palette(input, &header, image_type)?;
 
     let pp_off = ext.postage_stamp_offset as usize;
     if input.len() < pp_off + 2 {
@@ -623,6 +780,58 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/// Walk past the header + Image ID, decode the colour map if
+/// `cmap_type == 1`, and return `(palette, pixel_data_start)` where
+/// `pixel_data_start` is the absolute byte offset of the first pixel-
+/// data byte (the file layout is header, then Image ID, then colour
+/// map, then the pixel array).
+///
+/// The spec allows a colour map to be present even for non-colour-
+/// mapped image types (the §C.2 Color Map Type byte only declares
+/// whether map data follows), so those still read — and skip — the
+/// map rather than erroring out; a colour-mapped image type with
+/// `cmap_type == 0` is rejected.
+fn read_palette(
+    input: &[u8],
+    header: &TgaHeader,
+    image_type: ImageType,
+) -> Result<(Option<Vec<[u8; 4]>>, usize)> {
+    let mut cursor = TGA_HEADER_SIZE + header.id_length as usize;
+    if input.len() < cursor {
+        return Err(Error::invalid("TGA: truncated past image ID"));
+    }
+    let palette = if header.cmap_type == 1 {
+        if header.cmap_entry_size == 0 || header.cmap_length == 0 {
+            return Err(Error::invalid(
+                "TGA: cmap_type == 1 but cmap_entry_size / cmap_length == 0",
+            ));
+        }
+        let entry_bytes = header.cmap_entry_size.div_ceil(8) as usize;
+        let cmap_bytes = entry_bytes * header.cmap_length as usize;
+        if input.len() < cursor + cmap_bytes {
+            return Err(Error::invalid("TGA: colour map truncated"));
+        }
+        let cmap = &input[cursor..cursor + cmap_bytes];
+        cursor += cmap_bytes;
+        Some(decode_palette(cmap, header.cmap_entry_size, entry_bytes)?)
+    } else {
+        if image_type.is_colour_mapped() {
+            return Err(Error::invalid(
+                "TGA: colour-mapped image type but cmap_type == 0",
+            ));
+        }
+        None
+    };
+    Ok((palette, cursor))
+}
+
+/// Narrow a file position to the scan-line table's 4-byte on-disk
+/// offset width (§C.6.9 entries are 4-byte values).
+fn scan_line_offset_u32(pos: usize) -> Result<u32> {
+    u32::try_from(pos)
+        .map_err(|_| Error::invalid("TGA: scan-line offset exceeds the table's 4-byte field"))
+}
 
 fn validate_depth(image_type: ImageType, depth: u8) -> Result<()> {
     let ok = match image_type {

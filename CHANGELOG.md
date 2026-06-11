@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Round 280 (§C.6.9 scan-line tables — compute + random row access): the
+  scan-line table could be parsed (`parse_tga_scan_line_table`), typed
+  (`TgaScanLineTable`, r261), serialised, and embedded on encode, but the
+  crate could neither *build* one from a file's own pixel data nor *use*
+  one for the random access the spec created it for ("to make random
+  access of compressed images easy", "to allow 'giant picture' access in
+  smaller 'chunks'"). Two new public functions close that:
+  - `compute_tga_scan_line_table(input)` derives the table from any
+    supported file — pure offset arithmetic for uncompressed types
+    1/2/3, a single §C.5 packet walk for RLE types 9/10/11. Entries are
+    in saved order (top-down or bottom-up), from-file-start, one per
+    row, exactly the Field 25 shape. An RLE file in which a packet
+    spans a scan-line boundary is rejected with
+    `TgaError::Unsupported`: the spec's packet rule (packets "should
+    never encode pixels from more than one scan line") is precisely
+    what makes the table well-defined, and a file that breaks it has
+    rows that don't start on packet boundaries — `parse_tga` still
+    decodes such files whole. Offsets that would not fit the table's
+    4-byte field are rejected rather than truncated.
+  - `parse_tga_scan_line(input, &table, index)` decodes exactly one row
+    through a table (file-supplied or computed) without touching any
+    preceding row, returning a 1-pixel-tall `TgaImage` in the same
+    normalised format `parse_tga` produces (palette lookup, BGR→RGBA
+    swap, A1R5G5B5 expansion, descriptor-bit-4 column mirroring all
+    applied; `index` is in the table's saved order, so bottom-up files
+    address display row `height − 1 − y` at entry `y`). Out-of-range
+    indices, offsets past the end of the input, and rows whose packets
+    overrun the row are rejected with returned errors.
+  The duplicated header→Image-ID→colour-map walk in `parse_tga` /
+  `parse_tga_postage_stamp` was factored into a shared internal helper
+  (also used by both new functions); as a side effect the postage-stamp
+  path now rejects a colour-mapped parent with `cmap_type == 0` up
+  front instead of failing later at pixel-emit time. New
+  `tests/round280.rs` pins 9 cases: arithmetic table shape +
+  row-vs-whole-decode equality across all six writer-covered image
+  types (uncompressed/RLE × true-colour/palette/grayscale, run-heavy
+  and raw-heavy RLE), saved-order semantics on a hand-built bottom-up
+  file, column mirroring on a right-to-left file, boundary-spanning
+  packet rejection (whole-file decode still accepted), hostile
+  index/offset rejection, and an end-to-end compute → embed via
+  `encode_tga_with_extension` → re-parse → random-access round trip.
+  The `decode_tga` fuzz harness now also drives both new functions
+  (computed table + attacker-controlled file-supplied table) on every
+  input.
+
 ### Fixed
 
 - Round 273 (Color Map Origin / First Entry Index application): the §C.2

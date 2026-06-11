@@ -98,6 +98,25 @@ text mirror of the same document are the only sources consulted.
   for the last row) and borrowing the row's bytes straight out of the
   input. The `TGA_SCAN_LINE_OFFSET_BYTES` constant exposes the on-disk
   4-byte size of one entry.
+* The scan-line table is also *computed* and *used*, not just carried:
+  `compute_tga_scan_line_table` derives the §C.6.9 table from any
+  supported file's own pixel data (offset arithmetic for uncompressed
+  types, one §C.5 packet walk for RLE types; entries in saved order,
+  from-file-start, one per row). An RLE file whose packets span a
+  scan-line boundary is rejected with `Unsupported` — the spec's
+  packet rule ("should never encode pixels from more than one scan
+  line") is what makes the table well-defined, and `parse_tga` still
+  decodes such files whole. `parse_tga_scan_line(input, &table,
+  index)` then does the random access the spec built the table for:
+  decode exactly one row (no preceding rows touched), returning a
+  1-pixel-tall `TgaImage` in the same normalised format `parse_tga`
+  produces (palette lookup, BGR→RGBA swap, A1R5G5B5 expansion,
+  bit-4 column mirroring); `index` is in the table's saved order, so
+  bottom-up files address display row `height − 1 − y` at entry `y`.
+  A table computed against a freshly-encoded base file can be handed
+  straight to `ExtensionAreaInput::scan_line_table` — the extension
+  writer only appends after the pixel data, so the offsets stay valid
+  in the extended file.
 * The §C.7 developer-area tag directory is exposed as
   `TgaDeveloperArea` (a `Vec<TgaDeveloperTag>` with `tag_id` / `offset`
   / `size`), parsed by `parse_tga_developer_area`; each tag's
@@ -249,7 +268,9 @@ area body to the output. Optional companions on `ExtensionAreaInput`:
 * `colour_correction_table: Option<TgaColourCorrectionTable>` —
   4 × 256 × u16 ARGB curves (§C.6.8), 2048 bytes on disk.
 * `scan_line_table: Option<TgaScanLineTable>` — `height × u32` per-row
-  byte offsets for partial-image readers (§C.6.9).
+  byte offsets for partial-image readers (§C.6.9); build one against
+  the base file with `compute_tga_scan_line_table` (the writer only
+  appends, so the offsets stay valid in the extended file).
 * `developer_tags: Vec<DeveloperTagInput>` — application-defined
   tagged payloads (§C.7); the writer lays the payloads down, builds
   the directory, and back-patches the footer's
