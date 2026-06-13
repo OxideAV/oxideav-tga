@@ -965,20 +965,36 @@ fn decode_rle_pixels(
             )));
         }
         if is_run {
-            // Run-length packet: 1 pixel × `count`.
+            // Run-length packet: 1 pixel × `count`. Every output pixel
+            // in the run is byte-identical, so expand the source pixel
+            // exactly once through `emit_pixel`, then replicate the
+            // resulting output bytes for the remaining `count - 1`
+            // pixels. This is bit-identical to calling `emit_pixel`
+            // `count` times (same bytes, same order) but skips the
+            // per-pixel image_type/depth match dispatch on the run.
             if cursor + in_bpp > input.len() {
                 return Err(Error::invalid("TGA: RLE run packet truncated"));
             }
             let src = &input[cursor..cursor + in_bpp];
-            for _ in 0..count {
-                emit_pixel(
-                    image_type,
-                    header.depth,
-                    header.cmap_first,
-                    src,
-                    palette,
-                    &mut out,
-                )?;
+            let before = out.len();
+            emit_pixel(
+                image_type,
+                header.depth,
+                header.cmap_first,
+                src,
+                palette,
+                &mut out,
+            )?;
+            let unit = out.len() - before;
+            // Replicate the just-emitted pixel's bytes `count - 1` more
+            // times by doubling the freshly-written tail in place.
+            out.reserve(unit * (count - 1));
+            let mut filled = unit;
+            let target = unit * count;
+            while filled < target {
+                let chunk = filled.min(target - filled);
+                out.extend_from_within(before..before + chunk);
+                filled += chunk;
             }
             cursor += in_bpp;
         } else {

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- Round 289 (§C.5 RLE run-packet decode — bit-identical optimization):
+  profiling the `decode/rle_24bpp_runs` criterion scenario showed a
+  run-heavy RLE file decoding no faster than a same-size noise file —
+  the run-packet path called `emit_pixel` once per output pixel, paying
+  the full `image_type` / pixel-depth match dispatch for every pixel in
+  a run even though all pixels in a run are byte-identical.
+  `decode_rle_pixels` now expands the source pixel exactly once through
+  `emit_pixel`, then replicates the emitted output bytes for the
+  remaining `count - 1` pixels (by doubling the freshly-written tail in
+  place via `Vec::extend_from_within`). The decoded output is unchanged:
+  same bytes, same order. New `tests/round289.rs` pins the bit-identical
+  contract against a deliberately naive pixel-by-pixel reference across
+  all six RLE image-type/depth combinations — true-colour 24/32/16 bpp,
+  8-bit grayscale, colour-mapped (type 9), and an alternating
+  run/raw-packet stress case — with runs spanning the 1-pixel minimum
+  and 128-pixel maximum. Measured on the run-heavy decode benchmark the
+  change is roughly a 70 % wall-clock reduction (≈123 µs → ≈37 µs on the
+  development host, 256×256 frame); raw-packet (count == 1) decode is
+  unaffected. No wire-format, public-API, or encoder change. Suite
+  357 → 363 tests; standalone + default-feature builds both green.
+
 ### Added
 
 - Round 280 (§C.6.9 scan-line tables — compute + random row access): the

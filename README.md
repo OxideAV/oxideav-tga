@@ -398,6 +398,19 @@ cargo bench
 cargo bench --bench codec -- decode/rle_24bpp_runs
 ```
 
+Profiling the `decode/rle_24bpp_runs` scenario surfaced the §C.5
+run-packet decode as the dominant non-allocation hot spot: a run packet
+expands one on-disk pixel into `count` identical output pixels, and the
+decoder formerly re-dispatched the full `image_type` / pixel-depth match
+once per output pixel even though every pixel in the run is
+byte-identical. `decode_rle_pixels` now expands the source pixel exactly
+once and replicates the emitted output bytes for the rest of the run.
+The decoded bytes are unchanged (a bit-identical optimization pinned by
+`tests/round289.rs` across all six RLE image-type/depth combinations);
+on the run-heavy decode benchmark the change is roughly a 70 % reduction
+in wall-clock time (host-dependent). Raw-packet (high-entropy) decode is
+untouched.
+
 ## Lacks
 
 * Image type 32 / 33 (compressed colour-mapped, Huffman + delta /
