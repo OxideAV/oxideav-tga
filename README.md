@@ -159,6 +159,19 @@ text mirror of the same document are the only sources consulted.
   `TGA_DEVELOPER_TAG_BYTES` (10) and
   `TGA_DEVELOPER_DIRECTORY_HEADER_BYTES` (2) constants expose the
   on-disk dimensions.
+* The §C.2 Color Map Specification (header bytes 3-7 — Color Map Origin,
+  Color Map Length, Color Map Entry Size) is exposed as a typed
+  `TgaColorMap` (`first_index` / `entry_size` / `entries`, plus `empty`
+  sentinel / `len` / `is_empty` / origin-aware `get(idx)`), parsed by
+  `parse_tga_color_map`. The helper reads only the header + color-map
+  block, so it surfaces the palette of a colour-mapped file **and** of a
+  **Data Type 0 (No Image Data)** palette-only file (a header + color map
+  with no pixel array) that `parse_tga` rejects as having no image.
+  Entries are de-interleaved into straight RGBA exactly as `parse_tga`
+  expands the palette internally (15/16-bit A1R5G5B5, 24-bit BGR, 32-bit
+  BGRA), and the Color Map Origin is recorded so a logical pixel index
+  `idx` resolves to `entries[idx - first_index]`. Returns `None` when the
+  Color Map Type byte is `0` (no map present).
 * The §3.3 / §C.3 Image Identification Field (the free-form,
   up-to-255-byte block at offset 18) is exposed verbatim by
   `parse_tga_image_id`; the helper returns the borrowed byte slice, an
@@ -337,7 +350,7 @@ auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly).
 
 Drives the public decoder surface (`parse_tga` + every `parse_tga_*`
 helper for footer / extension area / postage stamp / colour-correction /
-scan-line / developer area / Image ID / attributes type) with arbitrary
+scan-line / developer area / Image ID / attributes type / color map) with arbitrary
 bytes. The contract is panic-free regardless of how hostile the input
 is. A 16-MiB declared-raster cap inside the harness mirrors what a real
 demuxer's sanity limits would enforce (`width × height × 4 ≤ 16 MiB`);

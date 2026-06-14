@@ -34,8 +34,8 @@ use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
     parse_extension_area, parse_footer, parse_header, AttributesType, GammaValue, ImageType,
     JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField,
-    TgaAuthorComments, TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter,
-    TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
+    TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea,
+    TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -859,6 +859,54 @@ fn read_palette(
         None
     };
     Ok((palette, cursor))
+}
+
+/// Parse a TGA file's **Color Map** (the on-disk palette declared by the
+/// header's Color Map Specification, spec §C.2 / Data Type 1 header
+/// bytes 3-7) into a typed [`TgaColorMap`].
+///
+/// Unlike [`parse_tga`] — which decodes the full raster and so rejects
+/// **Data Type 0 (No Image Data)** files — this helper only reads the
+/// header and the color-map block, so it works on a palette-only type-0
+/// TGA (a header + color map with no pixel array) as well as on a
+/// colour-mapped image whose palette a caller wants to inspect directly.
+///
+/// Returns:
+/// * `Ok(None)` when the header's Color Map Type byte is `0` (no color
+///   map present) — including a true-colour or grayscale file.
+/// * `Ok(Some(map))` with the de-interleaved palette (15/16-bit
+///   A1R5G5B5, 24-bit BGR, or 32-bit BGRA expanded to straight RGBA,
+///   matching [`parse_tga`]'s internal palette expansion) and the
+///   Color Map Origin recorded in [`TgaColorMap::first_index`].
+/// * `Err` for a truncated header / color map, a Color Map Type byte
+///   of `1` with a zero entry-size or length, or an unsupported entry
+///   bit depth.
+///
+/// The color-map block sits after the Image Identification Field, so the
+/// header's `id_length` is honoured when locating it.
+pub fn parse_tga_color_map(input: &[u8]) -> Result<Option<TgaColorMap>> {
+    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    if header.cmap_type != 1 {
+        return Ok(None);
+    }
+    if header.cmap_entry_size == 0 || header.cmap_length == 0 {
+        return Err(Error::invalid(
+            "TGA: cmap_type == 1 but cmap_entry_size / cmap_length == 0",
+        ));
+    }
+    let cursor = TGA_HEADER_SIZE + header.id_length as usize;
+    let entry_bytes = header.cmap_entry_size.div_ceil(8) as usize;
+    let cmap_bytes = entry_bytes * header.cmap_length as usize;
+    if input.len() < cursor + cmap_bytes {
+        return Err(Error::invalid("TGA: colour map truncated"));
+    }
+    let cmap = &input[cursor..cursor + cmap_bytes];
+    let entries = decode_palette(cmap, header.cmap_entry_size, entry_bytes)?;
+    Ok(Some(TgaColorMap {
+        first_index: header.cmap_first,
+        entry_size: header.cmap_entry_size,
+        entries,
+    }))
 }
 
 /// Narrow a file position to the scan-line table's 4-byte on-disk

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Round 304 (§C.2 Color Map Specification — public palette extraction):
+  new `parse_tga_color_map` reads a TGA file's on-disk color map (header
+  bytes 3-7 — Color Map Origin, Color Map Length, Color Map Entry Size)
+  into a typed `TgaColorMap` (`first_index` / `entry_size` / `entries`
+  plus `empty` / `len` / `is_empty` / origin-aware `get(idx)`). It reads
+  only the header + color-map block, so it surfaces the palette of a
+  colour-mapped file **and** of a **Data Type 0 (No Image Data)**
+  palette-only file (a header + color map with no pixel array) that
+  `parse_tga` rejects as having no image. Entries are de-interleaved into
+  straight RGBA exactly as the decoder expands the palette internally
+  (15/16-bit A1R5G5B5, 24-bit BGR, 32-bit BGRA); the Color Map Origin is
+  recorded so a logical pixel index `idx` resolves to
+  `entries[idx - first_index]`. Returns `None` when the Color Map Type
+  byte is `0`. The `decode_tga` fuzz harness now drives the new helper.
+  New `tests/round304.rs` (9 tests) covers the typed view, the
+  encoder-palette round-trip, the type-0 palette-only case, a non-zero
+  Color Map Origin, and the truncation / malformed-length / truncated-
+  header error paths.
+
 ### Performance
 
 - Round 289 (§C.5 RLE run-packet decode — bit-identical optimization):

@@ -2253,6 +2253,72 @@ impl TgaDeveloperArea {
     }
 }
 
+/// Typed view of a TGA **Color Map** (the on-disk palette declared by the
+/// header's Color Map Specification — bytes 3-7: Color Map Origin, Color
+/// Map Length, Color Map Entry Size — per spec §C.2 / the Data Type 1
+/// header layout).
+///
+/// A color map is present whenever the header's Color Map Type byte
+/// (byte 1) is `1`, regardless of the Image Type Code. It is the palette
+/// consumed when decoding colour-mapped image types (1 / 9), but the spec
+/// also permits a **Data Type 0 (No Image Data)** file to carry only a
+/// color map (and/or metadata) with no pixel array — a palette-only TGA.
+/// [`crate::parse_tga`] returns the fully decoded raster for image types
+/// 1-11; this lighter view exposes just the palette, so a caller can pull
+/// the color map out of a type-0 file (which `parse_tga` rejects as having
+/// no image) or inspect a colour-mapped file's palette directly.
+///
+/// Each entry is de-interleaved from its on-disk form (15/16-bit
+/// A1R5G5B5, 24-bit BGR, or 32-bit BGRA) into normalised straight RGBA,
+/// matching how [`crate::parse_tga`] expands the palette internally. The
+/// [`Self::first_index`] field records the Color Map Origin: the on-disk
+/// entry at slot `i` of [`Self::entries`] is logical palette index
+/// `first_index + i`, so a pixel value `idx` addresses
+/// `entries[idx - first_index]` (per spec §C.2; mirrors the decoder's
+/// origin-aware lookup).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TgaColorMap {
+    /// Color Map Origin (header bytes 3-4): the logical palette index of
+    /// the first stored entry. Indices below this value are not stored.
+    pub first_index: u16,
+    /// Color Map Entry Size in bits (header byte 7): 15, 16, 24, or 32.
+    pub entry_size: u8,
+    /// The decoded palette entries in straight RGBA, in on-disk order
+    /// (entry `i` is logical index `first_index + i`).
+    pub entries: Vec<[u8; 4]>,
+}
+
+impl TgaColorMap {
+    /// Sentinel for "no color map" (origin 0, entry size 0, no entries).
+    pub const fn empty() -> Self {
+        Self {
+            first_index: 0,
+            entry_size: 0,
+            entries: Vec::new(),
+        }
+    }
+
+    /// `true` when no entries are stored — the empty / absent map.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Number of stored palette entries (== the header's Color Map
+    /// Length when the map is well-formed).
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Look up a logical palette index, honouring the Color Map Origin
+    /// (spec §C.2): index `idx` addresses stored entry
+    /// `idx - first_index`. Returns `None` for an index below the origin
+    /// or past the stored length, mirroring the decoder's bounds rule.
+    pub fn get(&self, idx: usize) -> Option<[u8; 4]> {
+        let local = idx.checked_sub(self.first_index as usize)?;
+        self.entries.get(local).copied()
+    }
+}
+
 #[inline]
 pub fn read_u16_le(buf: &[u8], off: usize) -> u16 {
     u16::from_le_bytes([buf[off], buf[off + 1]])
