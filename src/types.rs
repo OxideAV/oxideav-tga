@@ -1204,6 +1204,104 @@ impl SoftwareVersion {
     }
 }
 
+/// Truevision's recommended maximum postage-stamp edge length, per spec
+/// **Field 26 (Postage Stamp Image)**: "Truevision does not recommend
+/// stamps larger than 64 x 64 pixels, and suggests that any stamps stored
+/// larger be clipped." The recommendation is advisory — the on-disk size
+/// header is a single byte per axis, so the format permits up to
+/// 255 × 255 — and this constant carries the recommended cap so callers
+/// can size or clip a thumbnail before embedding it.
+pub const TGA_POSTAGE_STAMP_RECOMMENDED_MAX: u8 = 64;
+
+/// Hard on-disk limit for a postage-stamp edge length, per spec
+/// **Field 26**: "The first byte of the postage stamp image specifies the
+/// X size of the stamp in pixels, the second byte … the Y size". Both
+/// dimensions are single unsigned bytes, so neither axis can exceed 255.
+pub const TGA_POSTAGE_STAMP_MAX: u8 = 255;
+
+/// Typed view of the extension area's **Field 26 (Postage Stamp Image)**
+/// dimension header per spec §C.6.10.
+///
+/// The postage stamp is the embedded thumbnail; its pixel payload is
+/// decoded by [`crate::parse_tga_postage_stamp`]. This struct is the
+/// lightweight view of just the two on-disk size bytes that prefix that
+/// payload — "The first byte of the postage stamp image specifies the X
+/// size of the stamp in pixels, the second byte … the Y size" — so a
+/// caller can inspect or validate the stamp geometry (and the spec's
+/// 64 × 64 recommendation) without decoding the pixels.
+///
+/// Both axes are single bytes on disk (`0..=255`); `(0, 0)` is the
+/// "no stamp" sentinel (the offset that points at this header is itself
+/// zero when no stamp is stored, per Field 22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PostageStamp {
+    /// Stamp width in pixels (the first on-disk size byte).
+    pub width: u8,
+    /// Stamp height in pixels (the second on-disk size byte).
+    pub height: u8,
+}
+
+impl PostageStamp {
+    /// Spec sentinel for "no postage stamp" (`(0, 0)`).
+    pub const UNSET: Self = Self {
+        width: 0,
+        height: 0,
+    };
+
+    /// Wrap a `(width, height)` pixel pair.
+    pub fn new(width: u8, height: u8) -> Self {
+        Self { width, height }
+    }
+
+    /// Re-emit the on-disk `(width, height)` byte pair (Field 26's two
+    /// leading size bytes).
+    pub fn as_tuple(self) -> (u8, u8) {
+        (self.width, self.height)
+    }
+
+    /// Build from the on-disk `(width, height)` byte pair.
+    pub fn from_tuple((width, height): (u8, u8)) -> Self {
+        Self { width, height }
+    }
+
+    /// `true` when either dimension is zero. The spec stores the stamp
+    /// only when Field 22 (Postage Stamp Offset) is non-zero, and a
+    /// well-formed stamp has positive width and height, so a zero on
+    /// either axis is the "absent / degenerate" case.
+    pub fn is_unset(self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    /// Total pixel count (`width × height`). Promoted to `u32` so the
+    /// 255 × 255 worst case (65025) does not overflow.
+    pub fn pixel_count(self) -> u32 {
+        self.width as u32 * self.height as u32
+    }
+
+    /// `true` when both edges fall within Truevision's recommended
+    /// 64 × 64 maximum ([`TGA_POSTAGE_STAMP_RECOMMENDED_MAX`]). A larger
+    /// stamp is still spec-legal — the recommendation is advisory and
+    /// the on-disk header permits up to 255 per axis — but the spec
+    /// "suggests that any stamps stored larger be clipped".
+    pub fn within_recommended_size(self) -> bool {
+        self.width <= TGA_POSTAGE_STAMP_RECOMMENDED_MAX
+            && self.height <= TGA_POSTAGE_STAMP_RECOMMENDED_MAX
+    }
+
+    /// Clip both edges to Truevision's recommended 64 × 64 maximum,
+    /// returning the clipped geometry. Stamps already within the
+    /// recommendation are returned unchanged; this implements the spec's
+    /// "suggests that any stamps stored larger be clipped" guidance at
+    /// the dimension level (it does not touch pixel data — the caller
+    /// resamples or crops the thumbnail to match).
+    pub fn clipped_to_recommended(self) -> Self {
+        Self {
+            width: self.width.min(TGA_POSTAGE_STAMP_RECOMMENDED_MAX),
+            height: self.height.min(TGA_POSTAGE_STAMP_RECOMMENDED_MAX),
+        }
+    }
+}
+
 impl TgaExtensionArea {
     /// Typed view of [`Self::attributes_type`] per spec §C.6.13.
     /// Equivalent to `AttributesType::from_u8(self.attributes_type)`.

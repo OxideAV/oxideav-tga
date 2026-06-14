@@ -32,6 +32,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 297 (§C.6.10 Postage Stamp Image / Field 26 — typed dimension
+  view): the embedded-thumbnail decoder (`parse_tga_postage_stamp`,
+  r7) already read the stamp's two leading on-disk size bytes ("The
+  first byte of the postage stamp image specifies the X size of the
+  stamp in pixels, the second byte … the Y size") while decoding the
+  full pixel payload, but those dimensions had no typed view of their
+  own — the only field in the extension area's `_typed` family without
+  one. New `PostageStamp` struct wraps the `(width, height)` byte pair
+  with `UNSET` / `new` / `as_tuple` / `from_tuple` / `is_unset` (either
+  axis zero) / `pixel_count` (promoted to `u32` so the 255×255 worst
+  case can't overflow) / `within_recommended_size` (both edges ≤ 64,
+  Truevision's "does not recommend stamps larger than 64 x 64 pixels"
+  guidance) / `clipped_to_recommended` (clamps each axis to the 64-pixel
+  cap — the recommendation is advisory, not a hard limit; the full
+  decoder still reads oversized stamps unchanged). New
+  `parse_tga_postage_stamp_dimensions(input)` reads just the two size
+  bytes from a real file (`None` for a TGA 1.0 file / no-stamp file,
+  `Err` for an out-of-range offset, never a panic) so a caller can
+  inspect the stamp geometry without decoding its pixels; its reported
+  geometry agrees with `parse_tga_postage_stamp`'s. New
+  `TGA_POSTAGE_STAMP_RECOMMENDED_MAX` (64) and `TGA_POSTAGE_STAMP_MAX`
+  (255, the single-byte axis ceiling) constants expose the spec's
+  dimension bounds. New `tests/round297.rs` (10 tests) pins the
+  pure-data helpers, the against-real-files dimension reader (no-stamp /
+  embedded / oversized / out-of-range-offset), and the agreement with
+  the full decoder. No wire-format or encoder change; purely additive.
 - Round 280 (§C.6.9 scan-line tables — compute + random row access): the
   scan-line table could be parsed (`parse_tga_scan_line_table`), typed
   (`TgaScanLineTable`, r261), serialised, and embedded on encode, but the

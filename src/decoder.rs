@@ -33,9 +33,9 @@ use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
     parse_extension_area, parse_footer, parse_header, AttributesType, GammaValue, ImageType,
-    JobTime, KeyColor, PixelAspectRatio, SoftwareVersion, TgaAsciiField, TgaAuthorComments,
-    TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader,
-    TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
+    JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField,
+    TgaAuthorComments, TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter,
+    TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -775,6 +775,41 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
         data: pixels,
         pts: None,
     }))
+}
+
+/// Read just the **Field 26 (Postage Stamp Image)** dimension header
+/// (spec §C.6.10) — the two leading `u8` size bytes — without decoding
+/// the thumbnail's pixels.
+///
+/// "The first byte of the postage stamp image specifies the X size of
+/// the stamp in pixels, the second byte … the Y size". This helper seeks
+/// to [`TgaExtensionArea::postage_stamp_offset`] and returns those two
+/// bytes wrapped in a [`PostageStamp`] so a caller can inspect the stamp
+/// geometry — including Truevision's 64 × 64 recommendation via
+/// [`PostageStamp::within_recommended_size`] — cheaply, e.g. to decide
+/// whether to call the heavier [`parse_tga_postage_stamp`].
+///
+/// Returns `Ok(None)` when the file has no extension area or no postage
+/// stamp (Field 22 offset zero); `Err` when the offset points past the
+/// end of the buffer (size header truncated). A `(0, _)` or `(_, 0)`
+/// degenerate header is returned as-is (the caller's
+/// [`PostageStamp::is_unset`] surfaces it); the full decoder is the path
+/// that rejects a zero-dimension stamp.
+pub fn parse_tga_postage_stamp_dimensions(input: &[u8]) -> Result<Option<PostageStamp>> {
+    let Some(footer) = parse_footer(input) else {
+        return Ok(None);
+    };
+    let Some(ext) = parse_extension_area(input, footer.extension_area_offset) else {
+        return Ok(None);
+    };
+    if ext.postage_stamp_offset == 0 {
+        return Ok(None);
+    }
+    let off = ext.postage_stamp_offset as usize;
+    if input.len() < off + 2 {
+        return Err(Error::invalid("TGA: postage stamp size header truncated"));
+    }
+    Ok(Some(PostageStamp::new(input[off], input[off + 1])))
 }
 
 // ---------------------------------------------------------------------------

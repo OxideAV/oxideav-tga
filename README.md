@@ -51,6 +51,23 @@ text mirror of the same document are the only sources consulted.
   pixel-aspect / gamma / colour-correction + postage-stamp +
   scan-line offsets / attributes-type), and `parse_tga_postage_stamp`
   to pull out the embedded thumbnail.
+* The §C.6.10 Postage Stamp Image (Field 26) dimension header — the two
+  leading on-disk size bytes that prefix the thumbnail's pixels ("The
+  first byte … specifies the X size of the stamp in pixels, the second
+  byte … the Y size") — is surfaced as a typed `PostageStamp` view
+  matching the rest of the `_typed` family: `UNSET` / `new` / `as_tuple`
+  / `from_tuple` / `is_unset` (either axis zero) / `pixel_count` (`u32`,
+  so the 255×255 worst case doesn't overflow) / `within_recommended_size`
+  (both edges ≤ 64 per Truevision's "does not recommend stamps larger
+  than 64 x 64 pixels" guidance) / `clipped_to_recommended` (clamps each
+  axis to the recommended 64-pixel cap — the recommendation is advisory,
+  not a hard limit). `parse_tga_postage_stamp_dimensions` reads just
+  those two bytes straight from a file (returning `None` for a TGA 1.0
+  file / a file with no stamp, `Err` for an out-of-range offset) so a
+  caller can inspect the stamp geometry without decoding its pixels. The
+  `TGA_POSTAGE_STAMP_RECOMMENDED_MAX` (64) and `TGA_POSTAGE_STAMP_MAX`
+  (255, the single-byte axis ceiling) constants expose the spec's
+  dimension bounds.
 * The §C.6.13 attributes byte is exposed as both the raw
   `attributes_type: u8` and a typed `AttributesType` enum reachable
   via `TgaExtensionArea::attributes()` (`NoAlpha` / `UndefinedIgnore`
