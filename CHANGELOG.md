@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2](https://github.com/OxideAV/oxideav-tga/compare/v0.0.1...v0.0.2) - 2026-06-15
+
+### Fixed
+
+- *(decode)* apply §C.2 Color Map Origin (First Entry Index) in palette lookup
+
+### Other
+
+- Round 311: §C.2 attribute-bit count typed view + header-local alpha resolver
+- Round 304: public §C.2 Color Map extraction (parse_tga_color_map + TgaColorMap)
+- tga r297: §C.6.10 Postage Stamp Image (Field 26) typed dimension view
+- Round 289: bit-identical §C.5 RLE run-packet decode optimization
+- Round 280: compute + random-access §C.6.9 scan-line tables
+- Round 269: typed TgaDeveloperArea / TgaDeveloperTag accessors (spec §C.7)
+- Round 261: typed TgaScanLineTable accessors
+- Round 257: typed TgaFooter accessors + canonical to_bytes serialiser
+- Round 252: typed Field 11/12/14/16 ASCII extension-area accessors
+- drop release-plz.toml — use release-plz defaults across the workspace
+- Round 234: typed Field 13 timestamp + Field 15 job-time accessors
+- Round 227: typed §C.6.4/§C.6.5/§C.6.6/§C.6.7 accessors + gamma application
+- Round 221: TARGA-32 vs ARGB-32 alpha-channel fallback (opt-in resolver)
+- Round 213: criterion benchmark harness for decode + encode hot paths
+- Round 207: cargo-fuzz encode_roundtrip target
+- round 8 part 2: Image Identification Field round-trip (spec §3.3 / §C.3)
+- honour image-descriptor bit 4 (right-to-left columns)
+- Round 7 fix: postage-stamp validate_depth gate
+- Round 7: cargo-fuzz decode_tga harness + daily 30-min CI run
+- apply attributes-type alpha interpretation (spec §C.6.13)
+- Round 5: colour-correction table application + interleaved on-disk layout fix
+- round 4: developer area + CCT + scan-line table + typed AttributesType
+- round 3: RGB24-input standalone entry points + hardening tests
+- fix rustdoc broken intra-doc link to TgaError
+- clean round-2 [Unreleased] above 0.0.1 release notes
+- Round 2: type 1/3/9/11 writers + TGA 2.0 extension area + thumbnail
+- release v0.0.1
+
 ### Added
 
 - Round 311 (§C.2 Image Descriptor attribute-bit count — typed view +
