@@ -381,21 +381,14 @@ color map) with arbitrary
 bytes. The contract is panic-free regardless of how hostile the input
 is. A 16-MiB declared-raster cap inside the harness mirrors what a real
 demuxer's sanity limits would enforce (`width × height × 4 ≤ 16 MiB`);
-the library itself keeps no policy cap. Eleven encoder-produced seeds
-live in `fuzz/corpus/decode_tga/` (the eleventh is the reproducer for
-the round-7 postage-stamp `validate_depth` regression below, kept as a
-sentinel against future re-introduction).
+the library itself keeps no policy cap. Encoder-produced seeds live in
+`fuzz/corpus/decode_tga/`, including a sentinel reproducer for a
+previously-fixed postage-stamp depth-validation crash.
 
-A round-7 catch from this harness: `parse_tga_postage_stamp` was
-driving `decode_raw_pixels` against the parent header's pixel depth
-without first running `validate_depth`. Files crafted with a
-`postage_stamp_offset` set against an `image_type` / `pixel_depth`
-combination the spec rejects (e.g. type 2 + depth 4, type 3 + depth 0)
-reached `emit_pixel`'s `unreachable!()` arm and panicked. The main
-decoder (`parse_tga`) already validated depth pre-decode; the
-postage-stamp path now mirrors that, and both `unreachable!()` arms in
-`emit_pixel` have been replaced with returned `Err`s so future callers
-fail closed.
+Every decode path validates the `image_type` / `pixel_depth`
+combination before expanding pixels (including the postage-stamp path),
+and `emit_pixel` returns `Err` for any combination the spec rejects, so
+malformed input fails closed rather than panicking.
 
 ### `encode_roundtrip`
 
@@ -458,15 +451,13 @@ cargo bench --bench codec -- decode/rle_24bpp_runs
 Profiling the `decode/rle_24bpp_runs` scenario surfaced the §C.5
 run-packet decode as the dominant non-allocation hot spot: a run packet
 expands one on-disk pixel into `count` identical output pixels, and the
-decoder formerly re-dispatched the full `image_type` / pixel-depth match
-once per output pixel even though every pixel in the run is
-byte-identical. `decode_rle_pixels` now expands the source pixel exactly
-once and replicates the emitted output bytes for the rest of the run.
-The decoded bytes are unchanged (a bit-identical optimization pinned by
-`tests/round289.rs` across all six RLE image-type/depth combinations);
-on the run-heavy decode benchmark the change is roughly a 70 % reduction
-in wall-clock time (host-dependent). Raw-packet (high-entropy) decode is
-untouched.
+decoder expands a run packet's source pixel exactly once and replicates
+the emitted output bytes for the rest of the run, rather than
+re-dispatching the full `image_type` / pixel-depth match per output
+pixel. The decoded bytes are identical across all six RLE
+image-type/depth combinations (pinned by tests); on the run-heavy decode
+benchmark this is roughly a 70 % reduction in wall-clock time
+(host-dependent). Raw-packet (high-entropy) decode is untouched.
 
 ## Lacks
 
