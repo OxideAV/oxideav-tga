@@ -36,6 +36,24 @@ text mirror of the same document are the only sources consulted.
   left-to-right origin — rows are flipped when bit 5 is clear and
   columns are mirrored when bit 4 is set (both axes for a file that sets
   bit 4 with bit 5 clear, i.e. a 180° rotation).
+* The image-descriptor **data-storage interleaving flag** (Field 5.6, bits
+  7-6) is surfaced as a typed `Interleaving` view via
+  `TgaHeader::interleaving()` / the one-call `parse_tga_interleaving` reader
+  (`NonInterleaved` / `TwoWay` / `FourWay` / `Reserved`, plus `raw` /
+  `to_descriptor_bits` / `is_non_interleaved` / `is_two_way` / `is_four_way`
+  / `is_reserved` / `is_tga2_compliant`). The TGA 2.0 FFS requires these
+  bits to be zero ("Must be zero to insure future compatibility" — TGA 2.0
+  abandoned the earlier interleaving scheme), so a conformant 2.0 file
+  reports `NonInterleaved`; the legacy values defined by the earlier
+  Truevision layout (00 non-interleaved / 01 two-way even-odd / 10 four-way
+  / 11 reserved) are surfaced verbatim so a caller can recognise — and
+  choose to reject — a legacy interleaved file. The crate does **not**
+  de-interleave: the 2.0 FFS removed interleaving and never documents the
+  reorder algorithm, and the decoder treats the raster as non-interleaved
+  regardless (matching the dominant zero case). `TGA_INTERLEAVING_MASK`
+  (`0xC0`) exposes the field's bit mask. This mirrors the surface-but-don't-
+  guess approach already taken for the §C.2 attribute-bit count
+  (`AttributeBits`).
 * The optional 26-byte TGA 2.0 footer is recognised. Use
   `parse_tga_footer` for the extension/developer-area offsets — the
   returned `TgaFooter` carries typed accessors (`has_extension_area` /
@@ -377,7 +395,7 @@ auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly).
 Drives the public decoder surface (`parse_tga` + every `parse_tga_*`
 helper for footer / extension area / postage stamp / colour-correction /
 scan-line / developer area / Image ID / attributes type / attribute bits /
-color map) with arbitrary
+interleaving flag / color map) with arbitrary
 bytes. The contract is panic-free regardless of how hostile the input
 is. A 16-MiB declared-raster cap inside the harness mirrors what a real
 demuxer's sanity limits would enforce (`width × height × 4 ≤ 16 MiB`);

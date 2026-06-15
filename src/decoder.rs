@@ -33,9 +33,9 @@ use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
     parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, GammaValue,
-    ImageType, JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField,
-    TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea,
-    TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
+    ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion,
+    TgaAsciiField, TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea,
+    TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -677,6 +677,33 @@ pub fn resolve_alpha_with_targa32_fallback(
 /// shorter than the 18-byte header.
 pub fn parse_tga_attribute_bits(input: &[u8]) -> Option<AttributeBits> {
     parse_header(input).map(|h| h.attribute_bits())
+}
+
+/// Read the **§C.2 Image Descriptor** data-storage interleaving flag
+/// (Field 5.6, bits 7-6) straight from a TGA file's 18-byte header.
+///
+/// The TGA 2.0 FFS requires this field to be zero "to insure future
+/// compatibility" — TGA 2.0 abandoned the earlier interleaving scheme —
+/// so a conformant 2.0 file reports
+/// [`Interleaving::NonInterleaved`](crate::Interleaving::NonInterleaved).
+/// The earlier Truevision layout defined the field as a data-storage
+/// interleaving flag (`00` non-interleaved, `01` two-way even/odd, `10`
+/// four-way, `11` reserved); a legacy file that set a non-zero value is
+/// surfaced verbatim by the returned [`Interleaving`] so a caller can
+/// detect it. Like the field-5.6 attribute-bit count, this declaration
+/// lives in the fixed header and is present in **every** TGA file
+/// including TGA 1.0.
+///
+/// This crate does not perform a de-interleaving row reorder: the 2.0 FFS
+/// removed interleaving and never documents the reorder algorithm, and no
+/// in-the-wild fixtures set a non-zero value — the decoder treats the
+/// pixel array as non-interleaved regardless. The view exists so a caller
+/// can recognise (and choose to reject) a legacy interleaved file.
+///
+/// Returns the typed [`Interleaving`] view, or `None` when the input is
+/// shorter than the 18-byte header.
+pub fn parse_tga_interleaving(input: &[u8]) -> Option<Interleaving> {
+    parse_header(input).map(|h| h.interleaving())
 }
 
 /// Resolve a decoded RGBA image's alpha channel using only the

@@ -132,6 +132,16 @@ impl TgaHeader {
         AttributeBits::from_descriptor(self.descriptor)
     }
 
+    /// Typed view of the §C.2 Image Descriptor **data-storage
+    /// interleaving flag** (Field 5.6, bits 7-6). Equivalent to
+    /// `Interleaving::from_descriptor(self.descriptor)`; the wrapper
+    /// carries the spec predicates ([`Interleaving::is_non_interleaved`]
+    /// / [`Interleaving::is_two_way`] / [`Interleaving::is_four_way`] /
+    /// [`Interleaving::is_reserved`] / [`Interleaving::is_tga2_compliant`]).
+    pub fn interleaving(&self) -> Interleaving {
+        Interleaving::from_descriptor(self.descriptor)
+    }
+
     /// `true` when bit 5 of the descriptor is set, i.e. the on-disk
     /// pixel rows are in top-to-bottom order. `false` (the most common
     /// case) means bottom-to-top, and the decoder will flip rows so the
@@ -1392,6 +1402,113 @@ impl AttributeBits {
             _ => 0,
         };
         self.count == expected
+    }
+}
+
+/// Bit mask isolating the §C.2 Image Descriptor **data-storage
+/// interleaving flag** (Field 5.6, bits 7-6). The flag is two bits, so
+/// the raw value after shifting down is bounded at 3.
+pub const TGA_INTERLEAVING_MASK: u8 = 0xC0;
+
+/// Typed view of the **§C.2 Image Descriptor** data-storage interleaving
+/// flag (Field 5.6, bits 7-6).
+///
+/// The two interpretations the project's two source documents give this
+/// field differ, and both are surfaced here:
+///
+/// * The **TGA 2.0 File Format Specification** (the 39-page PDF, this
+///   crate's primary source) states for bits 7 & 6: *"Must be zero to
+///   insure future compatibility."* TGA 2.0 abandoned the earlier
+///   interleaving scheme; a conformant 2.0 file always stores `00` here.
+///   [`Self::is_tga2_compliant`] reports whether a file honours that.
+/// * The earlier Truevision header layout (mirrored in the Gamers.org
+///   plain-text document) defined the field as a *data-storage
+///   interleaving flag*: `00` = non-interleaved, `01` = two-way
+///   (even/odd) interleaving, `10` = four-way interleaving, `11` =
+///   reserved. Those are the variants below.
+///
+/// This crate **surfaces and classifies** the field but does not perform
+/// a de-interleaving row reorder: the TGA 2.0 FFS removed interleaving
+/// and never documents the reorder algorithm, and no in-the-wild
+/// fixtures set a non-zero value. The decoder treats the pixel array as
+/// non-interleaved regardless (matching the dominant `00` case), and a
+/// caller that needs to detect a legacy interleaved file can inspect
+/// this view. Mirrors the surface-but-don't-guess approach already taken
+/// for [`AttributeBits`].
+///
+/// Reachable from a parsed header via [`TgaHeader::interleaving`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Interleaving {
+    /// `00` — pixels stored in a single non-interleaved raster (the only
+    /// value a conformant TGA 2.0 file uses, and the default).
+    #[default]
+    NonInterleaved,
+    /// `01` — legacy two-way (even/odd) interleaving.
+    TwoWay,
+    /// `10` — legacy four-way interleaving.
+    FourWay,
+    /// `11` — reserved by the legacy layout / non-conformant under TGA 2.0.
+    Reserved,
+}
+
+impl Interleaving {
+    /// Extract the interleaving flag from a raw image-descriptor byte
+    /// (Field 5.6) by isolating bits 7-6.
+    pub fn from_descriptor(descriptor: u8) -> Self {
+        match (descriptor & TGA_INTERLEAVING_MASK) >> 6 {
+            0 => Self::NonInterleaved,
+            1 => Self::TwoWay,
+            2 => Self::FourWay,
+            _ => Self::Reserved,
+        }
+    }
+
+    /// The raw two-bit field value (`0..=3`), i.e. descriptor bits 7-6
+    /// shifted down to the low two bits.
+    pub fn raw(self) -> u8 {
+        match self {
+            Self::NonInterleaved => 0,
+            Self::TwoWay => 1,
+            Self::FourWay => 2,
+            Self::Reserved => 3,
+        }
+    }
+
+    /// The descriptor-byte bit pattern this flag contributes (the raw
+    /// value shifted back into bits 7-6). OR this into a descriptor byte
+    /// to set the field.
+    pub fn to_descriptor_bits(self) -> u8 {
+        self.raw() << 6
+    }
+
+    /// `true` for the `00` non-interleaved value — the canonical layout
+    /// for every TGA file this crate writes and the only value a
+    /// conformant TGA 2.0 file stores.
+    pub fn is_non_interleaved(self) -> bool {
+        matches!(self, Self::NonInterleaved)
+    }
+
+    /// `true` for the legacy `01` two-way (even/odd) interleaving value.
+    pub fn is_two_way(self) -> bool {
+        matches!(self, Self::TwoWay)
+    }
+
+    /// `true` for the legacy `10` four-way interleaving value.
+    pub fn is_four_way(self) -> bool {
+        matches!(self, Self::FourWay)
+    }
+
+    /// `true` for the `11` reserved value.
+    pub fn is_reserved(self) -> bool {
+        matches!(self, Self::Reserved)
+    }
+
+    /// `true` when this flag is consistent with the TGA 2.0 FFS, which
+    /// requires bits 7-6 to be zero "to insure future compatibility".
+    /// Equivalent to [`Self::is_non_interleaved`]; named for symmetry
+    /// with the rest of the spec-predicate accessors.
+    pub fn is_tga2_compliant(self) -> bool {
+        self.is_non_interleaved()
     }
 }
 
