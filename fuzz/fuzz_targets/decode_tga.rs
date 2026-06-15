@@ -40,10 +40,10 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    compute_tga_scan_line_table, parse_tga, parse_tga_attributes_type, parse_tga_color_map,
-    parse_tga_colour_correction_table, parse_tga_developer_area, parse_tga_extension_area,
-    parse_tga_footer, parse_tga_image_id, parse_tga_postage_stamp, parse_tga_scan_line,
-    parse_tga_scan_line_table,
+    compute_tga_scan_line_table, parse_tga, parse_tga_attribute_bits, parse_tga_attributes_type,
+    parse_tga_color_map, parse_tga_colour_correction_table, parse_tga_developer_area,
+    parse_tga_extension_area, parse_tga_footer, parse_tga_image_id, parse_tga_postage_stamp,
+    parse_tga_scan_line, parse_tga_scan_line_table, resolve_alpha_from_descriptor,
 };
 use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 
@@ -65,6 +65,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_tga_attributes_type(data);
     let _ = parse_tga_image_id(data);
     let _ = parse_tga_color_map(data);
+    let _ = parse_tga_attribute_bits(data);
 
     // §C.6.9 random access: derive a scan-line table from the bytes
     // (an O(input) walk; the table itself is at most height × 4 ≈
@@ -100,5 +101,10 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let _ = parse_tga(data);
+    if let Ok(mut image) = parse_tga(data) {
+        // §C.2 header-local alpha resolver: mutates a decoded RGBA frame
+        // in place from the descriptor's attribute-bit count. Must stay
+        // panic-free on any decodable input.
+        let _ = resolve_alpha_from_descriptor(data, &mut image);
+    }
 });

@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 311 (§C.2 Image Descriptor attribute-bit count — typed view +
+  header-local alpha resolver): the image-descriptor byte's low four bits
+  (Field 5.6, bits 3-0) "specify the number of attribute bits per pixel …
+  designated as Alpha Channel bits". The crate exposed the raw count
+  (`TgaHeader::alpha_bits`) but never gave it a typed view and never
+  *applied* it at decode time. New `AttributeBits` struct wraps the count
+  with `NONE` / `from_descriptor` / `new` (four-bit masked) / `is_none` /
+  `has_alpha` / `is_canonical_for_depth` (8 for 32 bpp, 1 for 16 bpp,
+  0 for the alpha-less depths), reachable via the new
+  `TgaHeader::attribute_bits()` accessor and the public
+  `parse_tga_attribute_bits(input)` reader (works on TGA 1.0 — the field
+  is in the fixed header, unlike the extension-area `AttributesType`).
+  New `resolve_alpha_from_descriptor(input, &mut image)` is the
+  apply-side: the spec states a Field 24 value of `0` ("no Alpha data
+  included") means "bits 3-0 of field 5.6 should also be set to zero", so
+  for an RGBA image whose header declares zero attribute bits the resolver
+  forces every alpha byte to `0xFF` (`force_opaque`) and otherwise leaves
+  the decoded alpha untouched, returning the `AttributeBits` read. It is
+  the header-only counterpart to `resolve_alpha_with_targa32_fallback`:
+  it consults the header bits alone, never reads the extension area, and
+  never inspects pixel values, so it acts even on a non-zero-but-
+  uninitialised alpha plane. New `TGA_ATTRIBUTE_BITS_MAX` (15) constant.
+  The `decode_tga` fuzz harness now drives `parse_tga_attribute_bits` and
+  `resolve_alpha_from_descriptor`. New `tests/round311.rs` (10 tests)
+  covers the typed view + spec predicates, the header reader (incl.
+  truncation), the raw-vs-typed agreement, and the resolver's
+  force-opaque / honour-declared-alpha / acts-on-nonzero-alpha /
+  truncated-no-op branches.
+
 - Round 304 (§C.2 Color Map Specification — public palette extraction):
   new `parse_tga_color_map` reads a TGA file's on-disk color map (header
   bytes 3-7 — Color Map Origin, Color Map Length, Color Map Entry Size)

@@ -80,13 +80,14 @@ pub mod types;
 pub const CODEC_ID_STR: &str = "tga";
 
 pub use decoder::{
-    compute_tga_scan_line_table, parse_tga, parse_tga_attributes_type, parse_tga_author_comments,
-    parse_tga_author_name, parse_tga_color_map, parse_tga_colour_correction_table,
-    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_gamma,
-    parse_tga_image_id, parse_tga_job_name, parse_tga_job_time, parse_tga_key_color,
-    parse_tga_pixel_aspect_ratio, parse_tga_postage_stamp, parse_tga_postage_stamp_dimensions,
-    parse_tga_scan_line, parse_tga_scan_line_table, parse_tga_software_id,
-    parse_tga_software_version, parse_tga_timestamp, resolve_alpha_with_targa32_fallback,
+    compute_tga_scan_line_table, parse_tga, parse_tga_attribute_bits, parse_tga_attributes_type,
+    parse_tga_author_comments, parse_tga_author_name, parse_tga_color_map,
+    parse_tga_colour_correction_table, parse_tga_developer_area, parse_tga_extension_area,
+    parse_tga_footer, parse_tga_gamma, parse_tga_image_id, parse_tga_job_name, parse_tga_job_time,
+    parse_tga_key_color, parse_tga_pixel_aspect_ratio, parse_tga_postage_stamp,
+    parse_tga_postage_stamp_dimensions, parse_tga_scan_line, parse_tga_scan_line_table,
+    parse_tga_software_id, parse_tga_software_version, parse_tga_timestamp,
+    resolve_alpha_from_descriptor, resolve_alpha_with_targa32_fallback,
 };
 pub use encoder::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
@@ -97,16 +98,16 @@ pub use encoder::{
 pub use error::{Result, TgaError};
 pub use image::{TgaImage, TgaPixelFormat};
 pub use types::{
-    parse_extension_area, parse_footer, parse_header, AttributesType, GammaValue, ImageType,
-    JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField,
+    parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, GammaValue,
+    ImageType, JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField,
     TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea, TgaDeveloperTag,
     TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp,
-    TGA_ASCII_FIELD_MAX_CHARS, TGA_AUTHOR_COMMENT_LINES, TGA_AUTHOR_COMMENT_LINE_BYTES,
-    TGA_AUTHOR_COMMENT_LINE_MAX_CHARS, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
-    TGA_COLOUR_CORRECTION_TABLE_SIZE, TGA_DEVELOPER_DIRECTORY_HEADER_BYTES,
-    TGA_DEVELOPER_TAG_BYTES, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
-    TGA_HEADER_SIZE, TGA_POSTAGE_STAMP_MAX, TGA_POSTAGE_STAMP_RECOMMENDED_MAX,
-    TGA_SCAN_LINE_OFFSET_BYTES,
+    TGA_ASCII_FIELD_MAX_CHARS, TGA_ATTRIBUTE_BITS_MAX, TGA_AUTHOR_COMMENT_LINES,
+    TGA_AUTHOR_COMMENT_LINE_BYTES, TGA_AUTHOR_COMMENT_LINE_MAX_CHARS,
+    TGA_COLOUR_CORRECTION_TABLE_ENTRIES, TGA_COLOUR_CORRECTION_TABLE_SIZE,
+    TGA_DEVELOPER_DIRECTORY_HEADER_BYTES, TGA_DEVELOPER_TAG_BYTES, TGA_EXTENSION_AREA_SIZE,
+    TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE, TGA_HEADER_SIZE, TGA_POSTAGE_STAMP_MAX,
+    TGA_POSTAGE_STAMP_RECOMMENDED_MAX, TGA_SCAN_LINE_OFFSET_BYTES,
 };
 
 #[cfg(feature = "registry")]

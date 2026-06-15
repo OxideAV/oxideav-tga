@@ -243,6 +243,32 @@ text mirror of the same document are the only sources consulted.
   file's bytes — each returns `None` for a TGA 1.0 file or any file
   without an extension area.
 
+* The §C.2 Image Descriptor **attribute-bit count** (Field 5.6, bits 3-0
+  — "the number of attribute bits per pixel … designated as Alpha Channel
+  bits") is exposed as a typed `AttributeBits` view via
+  `TgaHeader::attribute_bits()` (`count` / `is_none` / `has_alpha` /
+  `is_canonical_for_depth` — 8 for 32 bpp, 1 for 16 bpp, 0 for the
+  alpha-less depths) and read straight from a file by
+  `parse_tga_attribute_bits`. Unlike the extension-area `AttributesType`
+  (Field 24, TGA 2.0 only), this declaration lives in the fixed 18-byte
+  header, so it is present in **every** TGA file including TGA 1.0. The
+  spec ties the two together — a Field 24 value of `0` ("no Alpha data
+  included") states "bits 3-0 of field 5.6 should also be set to zero" —
+  so a zero attribute-bit count is the header-local signal that a 32-bpp
+  pixel's fourth byte (or a 16-bpp pixel's top bit) carries no meaningful
+  alpha and the picture should display opaque.
+  `resolve_alpha_from_descriptor(input, &mut image)` is the apply-side:
+  for an RGBA image whose header declares zero attribute bits it forces
+  every alpha byte to `0xFF` (`TgaImage::force_opaque`) and otherwise
+  leaves the decoded alpha untouched, returning the `AttributeBits` it
+  read. It is the header-only counterpart to
+  `resolve_alpha_with_targa32_fallback` (which prefers the TGA 2.0
+  extension area and falls back to the all-alpha-zero heuristic): the
+  descriptor resolver consults the header bits alone, never reads the
+  extension area, and never inspects pixel values — so it acts even on a
+  non-zero-but-uninitialised alpha plane when the header says "no
+  attribute bits". `TGA_ATTRIBUTE_BITS_MAX` (15) exposes the four-bit
+  field's ceiling.
 * The well-known **TARGA-32 vs ARGB-32 ambiguity** (32-bpp files written
   by legacy paint tools that left `attributes_type` unset and the alpha
   channel uninitialised) has an opt-in resolver:
@@ -350,7 +376,8 @@ auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly).
 
 Drives the public decoder surface (`parse_tga` + every `parse_tga_*`
 helper for footer / extension area / postage stamp / colour-correction /
-scan-line / developer area / Image ID / attributes type / color map) with arbitrary
+scan-line / developer area / Image ID / attributes type / attribute bits /
+color map) with arbitrary
 bytes. The contract is panic-free regardless of how hostile the input
 is. A 16-MiB declared-raster cap inside the harness mirrors what a real
 demuxer's sanity limits would enforce (`width × height × 4 ≤ 16 MiB`);

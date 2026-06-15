@@ -32,8 +32,8 @@
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
-    parse_extension_area, parse_footer, parse_header, AttributesType, GammaValue, ImageType,
-    JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField,
+    parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, GammaValue,
+    ImageType, JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField,
     TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea,
     TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
 };
@@ -659,6 +659,60 @@ pub fn resolve_alpha_with_targa32_fallback(
         image.force_opaque();
     }
     None
+}
+
+/// Read the **§C.2 Image Descriptor** attribute-bit count (Field 5.6,
+/// bits 3-0) straight from a TGA file's 18-byte header.
+///
+/// "These bits specify the number of attribute bits per pixel … these
+/// bits indicate the number of bits per pixel which are designated as
+/// Alpha Channel bits." Unlike the extension-area
+/// [`AttributesType`](crate::AttributesType) (Field 24, TGA 2.0 only),
+/// this declaration lives in the fixed header, so it is present in
+/// **every** TGA file including TGA 1.0 — making it the header-local way
+/// to learn whether a 32-bpp pixel's fourth byte (or a 16-bpp pixel's top
+/// bit) carries meaningful alpha.
+///
+/// Returns the typed [`AttributeBits`] view, or `None` when the input is
+/// shorter than the 18-byte header.
+pub fn parse_tga_attribute_bits(input: &[u8]) -> Option<AttributeBits> {
+    parse_header(input).map(|h| h.attribute_bits())
+}
+
+/// Resolve a decoded RGBA image's alpha channel using only the
+/// **§C.2 Image Descriptor** attribute-bit count (Field 5.6, bits 3-0) —
+/// the header-local counterpart to
+/// [`resolve_alpha_with_targa32_fallback`].
+///
+/// The spec states that an extension-area Field 24 value of `0` ("no
+/// Alpha data included") means "bits 3-0 of field 5.6 should also be set
+/// to zero", so a header that declares **zero** attribute bits is the
+/// standalone (TGA-1.0-compatible) signal that the on-disk alpha data is
+/// not meaningful and the picture should display opaque. This resolver
+/// reads that count from the header and, when it is zero on an RGBA
+/// image, forces every alpha byte to `0xFF` ([`TgaImage::force_opaque`]).
+/// A non-zero count is honoured as "the file declares useful alpha" and
+/// the decoded alpha bytes are left untouched.
+///
+/// Distinct from [`resolve_alpha_with_targa32_fallback`], which prefers
+/// the TGA 2.0 extension-area [`AttributesType`] and only falls back to
+/// the *all-alpha-zero* heuristic: this resolver consults the header bits
+/// alone, never reads the extension area, and never inspects pixel values
+/// — so it acts even on a non-zero-but-uninitialised alpha plane when the
+/// header says "no attribute bits". A caller wanting the descriptor to
+/// win can run this first; one wanting the extension area to win runs the
+/// other.
+///
+/// `image.pixel_format != Rgba` is a no-op (no alpha channel to resolve).
+/// Returns the [`AttributeBits`] read from the header (`None` only when
+/// the input is shorter than the 18-byte header), so the caller can tell
+/// which branch ran.
+pub fn resolve_alpha_from_descriptor(input: &[u8], image: &mut TgaImage) -> Option<AttributeBits> {
+    let bits = parse_tga_attribute_bits(input)?;
+    if image.pixel_format == TgaPixelFormat::Rgba && bits.is_none() {
+        image.force_opaque();
+    }
+    Some(bits)
 }
 
 /// Decode the TGA 2.0 postage-stamp (thumbnail) image from a file with

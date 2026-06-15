@@ -124,6 +124,14 @@ impl TgaHeader {
         self.descriptor & 0x0F
     }
 
+    /// Typed view of the §C.2 attribute-bit count (descriptor bits 3-0).
+    /// Equivalent to `AttributeBits::from_descriptor(self.descriptor)`;
+    /// the wrapper carries the spec predicates ([`AttributeBits::is_none`]
+    /// / [`AttributeBits::has_alpha`] / [`AttributeBits::is_canonical_for_depth`]).
+    pub fn attribute_bits(&self) -> AttributeBits {
+        AttributeBits::from_descriptor(self.descriptor)
+    }
+
     /// `true` when bit 5 of the descriptor is set, i.e. the on-disk
     /// pixel rows are in top-to-bottom order. `false` (the most common
     /// case) means bottom-to-top, and the decoder will flip rows so the
@@ -1299,6 +1307,91 @@ impl PostageStamp {
             width: self.width.min(TGA_POSTAGE_STAMP_RECOMMENDED_MAX),
             height: self.height.min(TGA_POSTAGE_STAMP_RECOMMENDED_MAX),
         }
+    }
+}
+
+/// Widest attribute-bit count the §C.2 image-descriptor field (Field 5.6,
+/// bits 3-0) can encode. The field is four bits, so the value is bounded
+/// at 15 even though no spec-defined pixel format declares more than 8.
+pub const TGA_ATTRIBUTE_BITS_MAX: u8 = 0x0F;
+
+/// Typed view of the **§C.2 Image Descriptor** attribute-bit count
+/// (Field 5.6, bits 3-0) — "These bits specify the number of attribute
+/// bits per pixel … these bits indicate the number of bits per pixel
+/// which are designated as Alpha Channel bits".
+///
+/// This is the header-local declaration of how many of a pixel's bits
+/// carry alpha / attribute data, distinct from (and present even without)
+/// the extension-area [`AttributesType`] (Field 24). The spec ties the
+/// two together: a Field 24 value of `0` ("no Alpha data included")
+/// states that "bits 3-0 of field 5.6 should also be set to zero", so a
+/// zero attribute-bit count is the header-only signal that a 32-bpp
+/// pixel's fourth byte (or a 16-bpp pixel's top bit) is not meaningful
+/// alpha and the image should be treated as opaque.
+///
+/// Reachable from a parsed header via [`TgaHeader::attribute_bits`]; the
+/// raw count is also exposed directly by [`TgaHeader::alpha_bits`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AttributeBits {
+    /// The attribute-bit count from descriptor bits 3-0 (`0..=15`).
+    pub count: u8,
+}
+
+impl AttributeBits {
+    /// The "no attribute / alpha bits" sentinel (`count == 0`). The
+    /// spec pairs this with [`AttributesType::NoAlpha`] (Field 24 value
+    /// `0`, which "should also" zero this field).
+    pub const NONE: Self = Self { count: 0 };
+
+    /// Extract the attribute-bit count from a raw image-descriptor byte
+    /// (Field 5.6) by masking the low four bits.
+    pub fn from_descriptor(descriptor: u8) -> Self {
+        Self {
+            count: descriptor & 0x0F,
+        }
+    }
+
+    /// Build directly from a bit count, masking to the field's four-bit
+    /// width so an out-of-range value can never be constructed.
+    pub fn new(count: u8) -> Self {
+        Self {
+            count: count & 0x0F,
+        }
+    }
+
+    /// `true` when no attribute / alpha bits are declared. For a 32-bpp
+    /// true-colour image (or a 16-bpp 5-5-5-1 image) this is the
+    /// header-local signal that the on-disk alpha data is not meaningful
+    /// and the picture should be treated as opaque — the spec states a
+    /// Field 24 value of `0` ("no Alpha data included") implies this field
+    /// is zero too.
+    pub fn is_none(self) -> bool {
+        self.count == 0
+    }
+
+    /// `true` when at least one attribute / alpha bit is declared.
+    pub fn has_alpha(self) -> bool {
+        self.count != 0
+    }
+
+    /// `true` when the declared count matches the canonical number of
+    /// alpha bits for a given pixel depth: 8 for a 32-bpp true-colour /
+    /// 32-bit colour-map entry (one full attribute byte), 1 for a 16-bpp
+    /// 5-5-5-1 pixel (the single top "A" bit), and 0 for the alpha-less
+    /// 24-bpp / 15-bpp / 8-bpp depths. A count of `0` is always
+    /// consistent (it just declares "no meaningful alpha"); any other
+    /// mismatch (e.g. 32 bpp declaring 4 attribute bits) is a malformed /
+    /// non-canonical descriptor the caller may choose to reject.
+    pub fn is_canonical_for_depth(self, depth: u8) -> bool {
+        if self.count == 0 {
+            return true;
+        }
+        let expected = match depth {
+            32 => 8,
+            16 => 1,
+            _ => 0,
+        };
+        self.count == expected
     }
 }
 
