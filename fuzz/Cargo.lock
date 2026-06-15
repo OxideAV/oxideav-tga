@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-tga"
-version = "0.0.1"
+version = "0.0.2"
 
 [[package]]
 name = "oxideav-tga-fuzz"

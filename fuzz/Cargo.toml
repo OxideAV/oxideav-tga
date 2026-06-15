@@ -65,3 +65,21 @@ name = "encode_roundtrip"
 path = "fuzz_targets/encode_roundtrip.rs"
 test = false
 doc = false
+
+# Extension-area encode↔decode round-trip target. Drives
+# `encode_tga_with_extension` with an `ExtensionAreaInput` built from
+# arbitrary fuzz bytes (gamma / key colour / aspect ratio / software
+# version / attributes type / §C.6.8 colour-correction table / §C.6.9
+# scan-line table / §C.6.10 postage stamp / §C.7 developer tags), then
+# re-parses the result and asserts the round trip is faithful: the
+# footer is recognised as TGA 2.0, the colour-correction table and
+# scan-line offsets come back byte-/value-exact, and the verbatim
+# SHORT-pair fields recover their exact tuples. Exercises the
+# extension-area offset back-patch arithmetic (Field 21 / 22 / 23
+# offsets + the developer-directory offset) that neither `decode_tga`
+# nor `encode_roundtrip` reaches.
+[[bin]]
+name = "extension_roundtrip"
+path = "fuzz_targets/extension_roundtrip.rs"
+test = false
+doc = false

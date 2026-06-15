@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 319: third cargo-fuzz target `extension_roundtrip` — exercises
+  `encode_tga_with_extension` and the extension-area offset back-patch
+  arithmetic (Field 21 / 22 / 23 internal offsets + developer-directory
+  offset) via a write→read round trip, asserting the §C.6.8 colour-
+  correction table and §C.6.9 scan-line offsets recover byte-/value-exact
+  and the verbatim SHORT-pair fields (gamma / key colour / aspect ratio /
+  software version) recover their exact tuples. 122 minimised corpus seeds.
 - Round 316: §C.2 Image Descriptor data-storage interleaving flag (Field 5.6,
   bits 7-6) typed `Interleaving` view + `parse_tga_interleaving` reader
 

@@ -386,8 +386,8 @@ oxideav_tga::register(&mut codecs, &mut containers);
 
 ## Fuzzing
 
-Two cargo-fuzz harnesses live under `fuzz/`. `.github/workflows/fuzz.yml`
-runs both daily, sharing a 30-minute budget (the reusable workflow
+Three cargo-fuzz harnesses live under `fuzz/`. `.github/workflows/fuzz.yml`
+runs them daily, sharing a 30-minute budget (the reusable workflow
 auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly).
 
 ### `decode_tga`
@@ -428,9 +428,34 @@ The same 16 MiB raster cap applies; the harness tiles (rather than
 zero-pads) the fuzz tail so the RLE writers exercise their raw-packet
 code path instead of collapsing every row to one giant run.
 
+### `extension_roundtrip`
+
+Attacks the **extension-area writer** that neither sibling target
+reaches: `encode_tga_with_extension`. From arbitrary fuzz bytes it
+builds a small base TGA plus an `ExtensionAreaInput` carrying every
+optional block — gamma (Field 20), key colour (Field 18), pixel aspect
+ratio (Field 19), software version (Field 17), attributes type
+(Field 24), a §C.6.8 colour-correction table (Field 27), a §C.6.9
+scan-line table (Field 25), a §C.6.10 postage-stamp thumbnail
+(Field 26), and §C.7 developer tags. It then re-parses the encoded file
+and asserts a faithful round trip: the footer is recognised as TGA 2.0
+with a present extension area, the colour-correction table and
+scan-line offsets come back **byte- / value-exact**, and the verbatim
+SHORT-pair fields recover their exact tuples. These are stronger
+oracles than `encode_roundtrip`'s frame-shape check because the
+extension-area blocks are stored without any lossy re-quantisation, so
+the assertions directly pin the writer's offset back-patch arithmetic
+(the Field 21 / 22 / 23 internal offsets plus the developer-directory
+offset that get filled in after each variable-length block lands).
+Base image and postage stamp are clamped to tiny side lengths — the
+logic under test is the offset arithmetic, not the pixel loop the other
+two targets already stress at size. Minimised seeds live in
+`fuzz/corpus/extension_roundtrip/`.
+
 ```sh
 cargo +nightly fuzz run decode_tga -- -runs=10000
 cargo +nightly fuzz run encode_roundtrip -- -runs=10000
+cargo +nightly fuzz run extension_roundtrip -- -runs=10000
 ```
 
 ## Benchmarks
