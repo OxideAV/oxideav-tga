@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 327: §C.6.10 Postage Stamp Image (Field 26) generator —
+  `PostageStamp::recommended_for(src_w, src_h)` (thumbnail geometry:
+  longer edge scaled down to the recommended 64-pixel cap, aspect-ratio
+  preserving, downscale-only, ≥1 per axis, degenerate → `UNSET`) and
+  `PostageStamp::subsample(&image)` (point sub-sampled thumbnail in the
+  source's pixel format, feedable to `ExtensionAreaInput::postage_stamp`).
+  Point sub-sampling copies whole source pixels and never averages,
+  honouring Field 26's "DO NOT average … if the original image is color
+  mapped". Mirrors the carry-then-apply pattern of
+  `PixelAspectRatio::resampled`; empty / already-small sources return
+  `None`.
 - Round 323: §C.6.5 Pixel Aspect Ratio (Field 19) apply-path —
   `PixelAspectRatio::corrected_display_dimensions` (square-display-pixel
   size by upscaling the shorter pixel axis only), `resampled` (new

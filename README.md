@@ -86,6 +86,24 @@ text mirror of the same document are the only sources consulted.
   `TGA_POSTAGE_STAMP_RECOMMENDED_MAX` (64) and `TGA_POSTAGE_STAMP_MAX`
   (255, the single-byte axis ceiling) constants expose the spec's
   dimension bounds.
+* The §C.6.10 stamp is also *generated*, not just carried:
+  `PostageStamp::recommended_for(src_w, src_h)` derives the thumbnail
+  geometry for a source frame — the longer edge scaled down to the
+  recommended 64-pixel cap, the shorter edge by the same ratio
+  (aspect-ratio preserving, downscale-only so a source already ≤ 64×64
+  is its own stamp, each axis floored at 1, degenerate source →
+  `UNSET`). `PostageStamp::subsample(&image)` then builds the thumbnail
+  by **point sub-sampling** (nearest-neighbour) a decoded `TgaImage` at
+  that size, returning a new image in the source's pixel format
+  (RGBA / Rgb24 / Gray8) feedable straight to
+  `ExtensionAreaInput::postage_stamp`. Per Field 26's "create one using
+  sub-sampling techniques" and "If the original image is color mapped,
+  DO NOT average the postage stamp, as you will create new colors not in
+  your map", point sub-sampling only ever copies whole source pixels and
+  never averages two colours into a third — safe for colour-mapped
+  parents. Returns `None` (caller omits the stamp) for an empty source or
+  one already within the recommended box, matching the no-op convention
+  of `PixelAspectRatio::resampled`.
 * The §C.6.13 attributes byte is exposed as both the raw
   `attributes_type: u8` and a typed `AttributesType` enum reachable
   via `TgaExtensionArea::attributes()` (`NoAlpha` / `UndefinedIgnore`

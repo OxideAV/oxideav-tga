@@ -1407,6 +1407,105 @@ impl PostageStamp {
             height: self.height.min(TGA_POSTAGE_STAMP_RECOMMENDED_MAX),
         }
     }
+
+    /// Thumbnail dimensions Truevision recommends for a `src_w × src_h`
+    /// source image, per spec **Field 26**: "The Postage Stamp area is a
+    /// smaller representation of the original image … Truevision does not
+    /// recommend stamps larger than 64 x 64 pixels, and suggests that any
+    /// stamps stored larger be clipped."
+    ///
+    /// The longer source edge is scaled down to the recommended
+    /// 64-pixel cap ([`TGA_POSTAGE_STAMP_RECOMMENDED_MAX`]) and the
+    /// shorter edge is scaled by the same factor (aspect-ratio
+    /// preserving). A source that already fits within 64 × 64 is returned
+    /// **unchanged** — the spec frames the cap as a downscale-only
+    /// recommendation, so a small image is its own best stamp and is
+    /// never enlarged. Each axis is floored at `1` so a thumbnail of a
+    /// very wide / very tall frame keeps at least one pixel on the minor
+    /// axis. Returns [`Self::UNSET`] for a degenerate (`0`-edge) source.
+    pub fn recommended_for(src_w: u32, src_h: u32) -> Self {
+        if src_w == 0 || src_h == 0 {
+            return Self::UNSET;
+        }
+        let cap = TGA_POSTAGE_STAMP_RECOMMENDED_MAX as u32;
+        // Already within the recommended box — the image is its own stamp.
+        if src_w <= cap && src_h <= cap {
+            return Self::new(src_w as u8, src_h as u8);
+        }
+        // Scale the longer edge down to the cap; the shorter edge follows
+        // by the same ratio, computed in u64 to avoid intermediate
+        // overflow on large frames.
+        let (w, h) = if src_w >= src_h {
+            let h = (src_h as u64 * cap as u64 / src_w as u64).max(1);
+            (cap, h as u32)
+        } else {
+            let w = (src_w as u64 * cap as u64 / src_h as u64).max(1);
+            (w as u32, cap)
+        };
+        Self::new(w as u8, h as u8)
+    }
+
+    /// Sub-sample a decoded [`crate::image::TgaImage`] into a postage-stamp
+    /// thumbnail at [`Self::recommended_for`] dimensions, returning a
+    /// **new** image in the source's pixel format.
+    ///
+    /// Per spec **Field 26**: "If your application can deal with a postage
+    /// stamp image, it is recommended that you create one using
+    /// sub-sampling techniques … The postage stamp image must be stored in
+    /// the same format as the normal image … If the original image is
+    /// color mapped, DO NOT average the postage stamp, as you will create
+    /// new colors not in your map."
+    ///
+    /// The thumbnail is built by **point sub-sampling** (nearest-neighbour:
+    /// `src = dst × src_dim / dst_dim`), which only ever copies whole
+    /// source pixels and so never averages two colours into a third —
+    /// satisfying the spec's colour-mapped caveat for every decoded format
+    /// (RGBA / Rgb24 / Gray8). The result keeps the source's
+    /// `pixel_format`, so it can be handed straight to
+    /// `ExtensionAreaInput::postage_stamp` (the encoder serialises the
+    /// stamp in the parent's on-disk format, uncompressed, as Field 26
+    /// requires).
+    ///
+    /// Returns `None` — leaving the caller to omit the stamp — when:
+    /// * the source frame is empty (zero width or height), or
+    /// * the source already fits within the recommended 64 × 64 box, so a
+    ///   separate down-sampled thumbnail would just duplicate the image at
+    ///   its own size (matching the no-op convention of
+    ///   [`PixelAspectRatio::resampled`]).
+    pub fn subsample(image: &crate::image::TgaImage) -> Option<crate::image::TgaImage> {
+        if image.width == 0 || image.height == 0 {
+            return None;
+        }
+        let stamp = Self::recommended_for(image.width, image.height);
+        let (dw, dh) = (stamp.width as u32, stamp.height as u32);
+        // No downscale needed: the image is already its own best stamp.
+        if dw == image.width && dh == image.height {
+            return None;
+        }
+        let bpp = image.bytes_per_pixel();
+        let src_stride = image.width as usize * bpp;
+        let dst_stride = dw as usize * bpp;
+        let mut data = vec![0u8; dst_stride * dh as usize];
+        for dy in 0..dh as usize {
+            let sy = (dy as u64 * image.height as u64 / dh as u64) as usize;
+            let sy = sy.min(image.height as usize - 1);
+            let src_row = &image.data[sy * src_stride..sy * src_stride + src_stride];
+            let dst_row = &mut data[dy * dst_stride..dy * dst_stride + dst_stride];
+            for dx in 0..dw as usize {
+                let sx = (dx as u64 * image.width as u64 / dw as u64) as usize;
+                let sx = sx.min(image.width as usize - 1);
+                dst_row[dx * bpp..dx * bpp + bpp]
+                    .copy_from_slice(&src_row[sx * bpp..sx * bpp + bpp]);
+            }
+        }
+        Some(crate::image::TgaImage {
+            width: dw,
+            height: dh,
+            pixel_format: image.pixel_format,
+            data,
+            pts: image.pts,
+        })
+    }
 }
 
 /// Widest attribute-bit count the §C.2 image-descriptor field (Field 5.6,
