@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 323: §C.6.5 Pixel Aspect Ratio (Field 19) apply-path —
+  `PixelAspectRatio::corrected_display_dimensions` (square-display-pixel
+  size by upscaling the shorter pixel axis only), `resampled` (new
+  nearest-neighbour-resampled `TgaImage`, every pixel format), and the
+  in-place `apply_to_image`. Mirrors the carry-then-apply pattern of
+  `GammaValue` / `TgaColourCorrectionTable`; unset / square / empty
+  inputs are no-ops.
 - Round 319: third cargo-fuzz target `extension_roundtrip` — exercises
   `encode_tga_with_extension` and the extension-area offset back-patch
   arithmetic (Field 21 / 22 / 23 internal offsets + developer-directory

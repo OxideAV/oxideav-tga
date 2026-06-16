@@ -202,7 +202,16 @@ text mirror of the same document are the only sources consulted.
   `to_argb` / `as_rgba8` / `is_unset` / `has_alpha`; `PixelAspectRatio`
   (§C.6.5) wraps `(numerator, denominator)` with `is_unset` / `is_square`
   / `as_f32` / `corrected_display_height(h)` / `corrected_display_width(w)`
-  for square-display-pixel resampling; `GammaValue` (§C.6.6) wraps the
+  for square-display-pixel resampling. The aspect ratio is also
+  *applied*, not just carried: `corrected_display_dimensions(w, h)`
+  picks the square-pixel target size by **upscaling the shorter pixel
+  axis only** (wide pixels stretch width, tall pixels stretch height —
+  so no source sample is ever dropped); `resampled(&img)` produces a new
+  nearest-neighbour-resampled `TgaImage` at that size (every pixel
+  format — RGBA / Rgb24 / Gray8); and `apply_to_image(&mut img)` is the
+  in-place companion. Unset / square / empty inputs are no-ops (`None` /
+  image left untouched), matching the `GammaValue` apply-path
+  semantics. `GammaValue` (§C.6.6) wraps the
   same SHORT pair with `is_unset` / `is_identity` / `as_f32` plus
   `apply_to_channel8` / `apply_to_rgba8` / `apply_to_image` (RGBA / Rgb24
   / Gray8) that raises each channel to the gamma exponent

@@ -1012,6 +1012,95 @@ impl PixelAspectRatio {
         let w = (width as f32 * r).round();
         Some((w as u32).max(1))
     }
+
+    /// Square-display-pixel dimensions for a `width × height` stored
+    /// frame, computed by **upscaling the shorter axis only** so no
+    /// source sample is ever dropped.
+    ///
+    /// The §C.6.5 ratio is the stored pixel's width:height. To make the
+    /// *displayed* pixels square the raster must be stretched along the
+    /// longer-pixel axis:
+    ///
+    /// * `r > 1` (wide pixels) → stretch width to
+    ///   [`Self::corrected_display_width`] (height unchanged).
+    /// * `r < 1` (tall pixels) → stretch height to
+    ///   [`Self::corrected_display_height`] (width unchanged).
+    /// * `r == 1` (square) → dimensions unchanged.
+    ///
+    /// Stretching (rather than shrinking the other axis) keeps the apply
+    /// path a pure upscale: every source row/column is sampled at least
+    /// once, so no information is lost. Returns `None` for the unset /
+    /// degenerate (`as_f32()` → `None`) field.
+    pub fn corrected_display_dimensions(self, width: u32, height: u32) -> Option<(u32, u32)> {
+        let r = self.as_f32()?;
+        if !r.is_finite() || r <= 0.0 {
+            return None;
+        }
+        if (r - 1.0).abs() < f32::EPSILON {
+            return Some((width, height));
+        }
+        if r > 1.0 {
+            Some((self.corrected_display_width(width)?, height))
+        } else {
+            Some((width, self.corrected_display_height(height)?))
+        }
+    }
+
+    /// Resample a decoded [`crate::image::TgaImage`] to square display
+    /// pixels, returning a **new** image at the
+    /// [`Self::corrected_display_dimensions`].
+    ///
+    /// Nearest-neighbour sampling (`src = dst × src_dim / dst_dim`)
+    /// along the single stretched axis; the unstretched axis is copied
+    /// row-for-row / column-for-column. Works for every decoded pixel
+    /// format (RGBA / Rgb24 / Gray8).
+    ///
+    /// Returns `None` — leaving the caller to keep the original — when:
+    /// * the field is unset / degenerate (no correction needed),
+    /// * the correction is a no-op (`dimensions == (width, height)`), or
+    /// * the source frame is empty (zero width or height).
+    pub fn resampled(self, image: &crate::image::TgaImage) -> Option<crate::image::TgaImage> {
+        let (dw, dh) = self.corrected_display_dimensions(image.width, image.height)?;
+        if image.width == 0 || image.height == 0 {
+            return None;
+        }
+        if dw == image.width && dh == image.height {
+            return None;
+        }
+        let bpp = image.bytes_per_pixel();
+        let src_stride = image.width as usize * bpp;
+        let dst_stride = dw as usize * bpp;
+        let mut data = vec![0u8; dst_stride * dh as usize];
+        for dy in 0..dh as usize {
+            // Nearest-neighbour source row.
+            let sy = (dy as u64 * image.height as u64 / dh as u64) as usize;
+            let sy = sy.min(image.height as usize - 1);
+            let src_row = &image.data[sy * src_stride..sy * src_stride + src_stride];
+            let dst_row = &mut data[dy * dst_stride..dy * dst_stride + dst_stride];
+            for dx in 0..dw as usize {
+                let sx = (dx as u64 * image.width as u64 / dw as u64) as usize;
+                let sx = sx.min(image.width as usize - 1);
+                dst_row[dx * bpp..dx * bpp + bpp]
+                    .copy_from_slice(&src_row[sx * bpp..sx * bpp + bpp]);
+            }
+        }
+        Some(crate::image::TgaImage {
+            width: dw,
+            height: dh,
+            pixel_format: image.pixel_format,
+            data,
+            pts: image.pts,
+        })
+    }
+
+    /// In-place companion to [`Self::resampled`]: rewrite `image` to its
+    /// square-display-pixel dimensions. A no-op (image untouched) when
+    /// [`Self::resampled`] returns `None`.
+    pub fn apply_to_image(self, image: &mut crate::image::TgaImage) {
+        if let Some(out) = self.resampled(image) {
+            *image = out;
+        }
+    }
 }
 
 /// Typed view of the extension area's §C.6.6 **Gamma Value**
