@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 337: §C.6.4 Key Color (Field 18) apply-path — chroma-keying.
+  `KeyColor::key_out_image(&mut TgaImage)` makes every RGBA pixel whose
+  R/G/B equals the key colour fully transparent (alpha set to 0, colour
+  bytes untouched), returning the count keyed out; `matches_rgb` /
+  `matches_rgba` are the underlying match predicates. Spec §C.6.4 calls
+  Field 18 the image's "transparent colour" / "the colour the screen
+  would be cleared to", so chroma-keying is the apply-side of that
+  interpretation — completing the carry-then-apply pattern already shared
+  by `GammaValue` / `PixelAspectRatio` / `TgaColourCorrectionTable`. The
+  RGB-only match is the useful one because the decoder forces alpha to
+  `0xFF` for no-alpha 24-bpp source files. No-op (returns 0) for
+  `Rgb24` / `Gray8` images, which carry no alpha channel.
 - Round 332: one-call §C.7 developer-payload lookup —
   `TgaDeveloperArea::payload_by_id(input, tag_id)` composes the existing
   `find` + `payload` so a caller that knows only the tag id (not its

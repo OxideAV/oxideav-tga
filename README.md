@@ -221,7 +221,17 @@ text mirror of the same document are the only sources consulted.
 * The §C.6.4 / §C.6.5 / §C.6.6 / §C.6.7 numeric extension-area fields are
   surfaced as typed views in addition to the raw on-disk tuples:
   `KeyColor` (§C.6.4) wraps the `[A,R,G,B]` quadruple with `from_argb` /
-  `to_argb` / `as_rgba8` / `is_unset` / `has_alpha`; `PixelAspectRatio`
+  `to_argb` / `as_rgba8` / `is_unset` / `has_alpha`. It is also
+  *applied*, not just carried: spec §C.6.4 calls Field 18 the image's
+  "transparent colour" (the colour the screen is cleared to), so
+  `key_out_image(&mut img)` chroma-keys a decoded RGBA image — every
+  pixel whose R/G/B equals the key colour has its alpha set to `0`
+  (colour bytes untouched), and the call returns the number of pixels
+  keyed out. `matches_rgb` / `matches_rgba` are the underlying match
+  predicates (RGB-only vs exact four-channel; the RGB-only form is the
+  useful one because the decoder forces alpha to `0xFF` for no-alpha
+  24-bpp source files). Keying is a no-op (returns `0`) for `Rgb24` /
+  `Gray8` images, which carry no alpha channel. `PixelAspectRatio`
   (§C.6.5) wraps `(numerator, denominator)` with `is_unset` / `is_square`
   / `as_f32` / `corrected_display_height(h)` / `corrected_display_width(w)`
   for square-display-pixel resampling. The aspect ratio is also

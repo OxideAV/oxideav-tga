@@ -916,6 +916,64 @@ impl KeyColor {
     pub fn has_alpha(self) -> bool {
         self.a != 0
     }
+
+    /// `true` when the key colour's R/G/B match the R/G/B of an
+    /// `[R, G, B, A]` pixel (the in-memory order of a decoded
+    /// [`crate::image::TgaImage`]). The pixel's alpha and the key
+    /// colour's own alpha byte are both ignored.
+    ///
+    /// Per spec §C.6.4 the Key Color is the "transparent colour" / the
+    /// colour the screen is cleared to; chroma-keying a true-colour
+    /// image means "wherever a pixel equals this colour, treat it as the
+    /// background". Because the decoder forces alpha to `0xFF` for
+    /// 24-bpp (no-alpha) source files, an RGB-only comparison is the
+    /// useful match for those images — see [`Self::matches_rgba`] for
+    /// the exact four-channel variant.
+    pub fn matches_rgb(self, rgba: [u8; 4]) -> bool {
+        rgba[0] == self.r && rgba[1] == self.g && rgba[2] == self.b
+    }
+
+    /// `true` when all four channels of an `[R, G, B, A]` pixel equal
+    /// the key colour (the key colour's [`Self::a`] byte is compared
+    /// against the pixel's alpha). Use this when the source genuinely
+    /// carries a meaningful alpha channel; otherwise prefer
+    /// [`Self::matches_rgb`].
+    pub fn matches_rgba(self, rgba: [u8; 4]) -> bool {
+        self.matches_rgb(rgba) && rgba[3] == self.a
+    }
+
+    /// Chroma-key a decoded [`crate::image::TgaImage`] in place against
+    /// this key colour: every pixel whose R/G/B equals the key colour is
+    /// made fully transparent (alpha set to `0`), leaving its colour
+    /// bytes untouched; non-matching pixels are left unchanged. Returns
+    /// the number of pixels keyed out.
+    ///
+    /// This is the apply-side of the §C.6.4 "transparent colour"
+    /// interpretation (it mirrors the carry-then-apply pattern of
+    /// [`GammaValue::apply_to_image`] / [`PixelAspectRatio::apply_to_image`]).
+    /// Only [`crate::image::TgaPixelFormat::Rgba`] images carry an alpha
+    /// channel to mark, so this is a no-op (returns `0`) for
+    /// [`crate::image::TgaPixelFormat::Rgb24`] /
+    /// [`crate::image::TgaPixelFormat::Gray8`].
+    ///
+    /// The match is RGB-only ([`Self::matches_rgb`]): the key colour's
+    /// own alpha byte describes the *key*, not a pixel to compare against
+    /// the freshly-decoded data (which is opaque for no-alpha source
+    /// files). A caller wanting exact four-channel keying can filter with
+    /// [`Self::matches_rgba`] directly.
+    pub fn key_out_image(self, image: &mut crate::image::TgaImage) -> u32 {
+        if image.pixel_format != crate::image::TgaPixelFormat::Rgba {
+            return 0;
+        }
+        let mut keyed = 0u32;
+        for px in image.data.chunks_exact_mut(4) {
+            if self.r == px[0] && self.g == px[1] && self.b == px[2] {
+                px[3] = 0;
+                keyed += 1;
+            }
+        }
+        keyed
+    }
 }
 
 /// Typed view of the extension area's §C.6.5 **Pixel Aspect Ratio**
