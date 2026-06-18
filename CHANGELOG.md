@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 332: one-call §C.7 developer-payload lookup —
+  `TgaDeveloperArea::payload_by_id(input, tag_id)` composes the existing
+  `find` + `payload` so a caller that knows only the tag id (not its
+  directory position) retrieves the payload bytes in a single step.
+  Spec §C.7 lets the directory be unsorted ("The TAGS may appear in any
+  order"), so by-id retrieval is the natural primitive. Returns `None`
+  for a missing id, a payload-less marker record (offset 0), or an
+  out-of-buffer range; a duplicate id resolves to the first record in
+  directory order.
 - Round 327: §C.6.10 Postage Stamp Image (Field 26) generator —
   `PostageStamp::recommended_for(src_w, src_h)` (thumbnail geometry:
   longer edge scaled down to the recommended 64-pixel cap, aspect-ratio

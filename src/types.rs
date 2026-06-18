@@ -2649,6 +2649,22 @@ impl TgaDeveloperArea {
         }
         Some(&input[off..off + sz])
     }
+
+    /// Borrow the payload bytes for the first record carrying `tag_id`,
+    /// the one-call composition of [`Self::find`] + [`Self::payload`].
+    ///
+    /// Spec §C.7 lets the directory be unsorted ("The TAGS may appear
+    /// in any order in the directory"), so a caller that knows only the
+    /// tag id — not its directory position — wants to retrieve the
+    /// payload in a single step. Returns `None` when no record carries
+    /// `tag_id`, when the matched record is a marker (offset `0`, no
+    /// payload), or when the recorded `[offset, offset + size)` range
+    /// falls outside `input`. Because [`Self::find`] takes the first
+    /// match in directory order, a duplicate id resolves to the earliest
+    /// record — the same tag [`Self::find`] / [`Self::contains`] report.
+    pub fn payload_by_id<'a>(&self, input: &'a [u8], tag_id: u16) -> Option<&'a [u8]> {
+        self.payload(input, self.find(tag_id)?)
+    }
 }
 
 /// Typed view of a TGA **Color Map** (the on-disk palette declared by the

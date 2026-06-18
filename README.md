@@ -174,7 +174,11 @@ text mirror of the same document are the only sources consulted.
   `TgaDeveloperArea` (a `Vec<TgaDeveloperTag>` with `tag_id` / `offset`
   / `size`), parsed by `parse_tga_developer_area`; each tag's
   application-defined payload bytes are borrowable via
-  `dev.payload(input, tag)`. Typed accessors on both structs (matching
+  `dev.payload(input, tag)`, or in one call straight from a tag id with
+  `dev.payload_by_id(input, tag_id)` (the spec §C.7 "tags may appear in
+  any order" lookup — `find` + `payload` composed, first match in
+  directory order, `None` for a missing id or a payload-less marker).
+  Typed accessors on both structs (matching
   the pattern of `TgaScanLineTable` / `TgaFooter` / `TgaAsciiField` /
   `TgaTimestamp`): `TgaDeveloperTag` carries `new` / `as_tuple` /
   `from_tuple` (on-disk TAG, OFFSET, FIELD SIZE order); the §C.7
