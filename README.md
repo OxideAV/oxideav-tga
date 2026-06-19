@@ -212,6 +212,26 @@ text mirror of the same document are the only sources consulted.
   BGRA), and the Color Map Origin is recorded so a logical pixel index
   `idx` resolves to `entries[idx - first_index]`. Returns `None` when the
   Color Map Type byte is `0` (no map present).
+* The §C.2 **Color Map Type** byte (fixed-header byte 1 — "0 means no
+  color map is included … 1 means a color map is included") is surfaced
+  as a typed `ColorMapType` view (`Absent` / `Present` / `Reserved(u8)`
+  for the non-conformant non-`0`/`1` values the spec never defines)
+  reachable via `TgaHeader::color_map_type()` and the one-call
+  `parse_tga_color_map_type`, mirroring the `Interleaving` /
+  `AttributeBits` surface. Predicates: `is_absent` / `is_present` /
+  `is_reserved` / `is_conformant` (one of the two spec-legal values) /
+  `has_map_data` (the decoder's lenient "any non-zero byte means map
+  data follows" reading) plus `to_u8` for a bit-exact round trip.
+* The §C.2 **TIPS border / background colour** is *applied*, not just
+  skipped: the spec notes that for an **un**mapped image type (2 / 3 /
+  10 / 11) a colour map may still be present, and "TIPS (a Targa paint
+  system) will set the border color [to] the first map color if it is
+  present." The main decode path reads and skips that vestigial map;
+  `parse_tga_border_color` surfaces its first entry as straight RGBA.
+  Returns `None` for a colour-mapped image type (1 / 9 — there the map
+  is the working palette, so the caller uses `parse_tga_color_map`) and
+  for a map-absent file. De-interleaving matches `parse_tga_color_map`
+  exactly (15/16-bit A1R5G5B5, 24-bit BGR, 32-bit BGRA).
 * The §3.3 / §C.3 Image Identification Field (the free-form,
   up-to-255-byte block at offset 18) is exposed verbatim by
   `parse_tga_image_id`; the helper returns the borrowed byte slice, an
@@ -436,8 +456,8 @@ auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly).
 Drives the public decoder surface (`parse_tga` + every `parse_tga_*`
 helper for footer / extension area / postage stamp / colour-correction /
 scan-line / developer area / Image ID / attributes type / attribute bits /
-interleaving flag / color map) with arbitrary
-bytes. The contract is panic-free regardless of how hostile the input
+interleaving flag / color map / color-map-type / border-colour) with
+arbitrary bytes. The contract is panic-free regardless of how hostile the input
 is. A 16-MiB declared-raster cap inside the harness mirrors what a real
 demuxer's sanity limits would enforce (`width × height × 4 ≤ 16 MiB`);
 the library itself keeps no policy cap. Encoder-produced seeds live in

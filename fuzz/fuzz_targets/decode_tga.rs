@@ -12,7 +12,8 @@
 //! `parse_tga_footer`, `parse_tga_extension_area`,
 //! `parse_tga_postage_stamp`, `parse_tga_colour_correction_table`,
 //! `parse_tga_scan_line_table`, `parse_tga_developer_area`,
-//! `parse_tga_color_map`, and `parse_tga_interleaving`.
+//! `parse_tga_color_map`, `parse_tga_color_map_type`,
+//! `parse_tga_border_color`, and `parse_tga_interleaving`.
 //!
 //! The contract under test is purely that every call *returns*: a
 //! malformed stream yields `Err(TgaError::…)`, a well-formed one
@@ -41,10 +42,10 @@
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
     compute_tga_scan_line_table, parse_tga, parse_tga_attribute_bits, parse_tga_attributes_type,
-    parse_tga_color_map, parse_tga_colour_correction_table, parse_tga_developer_area,
-    parse_tga_extension_area, parse_tga_footer, parse_tga_image_id, parse_tga_interleaving,
-    parse_tga_postage_stamp, parse_tga_scan_line, parse_tga_scan_line_table,
-    resolve_alpha_from_descriptor,
+    parse_tga_border_color, parse_tga_color_map, parse_tga_color_map_type,
+    parse_tga_colour_correction_table, parse_tga_developer_area, parse_tga_extension_area,
+    parse_tga_footer, parse_tga_image_id, parse_tga_interleaving, parse_tga_postage_stamp,
+    parse_tga_scan_line, parse_tga_scan_line_table, resolve_alpha_from_descriptor,
 };
 use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 
@@ -66,6 +67,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_tga_attributes_type(data);
     let _ = parse_tga_image_id(data);
     let _ = parse_tga_color_map(data);
+    let _ = parse_tga_color_map_type(data);
+    let _ = parse_tga_border_color(data);
     let _ = parse_tga_attribute_bits(data);
     let _ = parse_tga_interleaving(data);
 

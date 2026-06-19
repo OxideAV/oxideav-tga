@@ -32,10 +32,11 @@
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
-    parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, GammaValue,
-    ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion,
-    TgaAsciiField, TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea,
-    TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
+    parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, ColorMapType,
+    GammaValue, ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio, PostageStamp,
+    SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable,
+    TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp,
+    TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -988,6 +989,62 @@ pub fn parse_tga_color_map(input: &[u8]) -> Result<Option<TgaColorMap>> {
         entry_size: header.cmap_entry_size,
         entries,
     }))
+}
+
+/// Read the §C.2 **TIPS border / background colour** — the first colour
+/// map entry of a file whose header declares a Color Map Type of `1`
+/// (spec, Color Map Type byte: *"1 means a color map is included, but
+/// since this is an unmapped image it is usually ignored. TIPS (a Targa
+/// paint system) will set the border color [to] the first map color if
+/// it is present"*).
+///
+/// This is the meaningful interpretation of the vestigial colour map an
+/// **un**mapped image (image type 2 / 3 / 10 / 11) may carry: a single
+/// (or first) palette entry that records the paint-system's border /
+/// background colour. The main decode path reads and skips that map; this
+/// helper surfaces its first entry as straight RGBA.
+///
+/// Returns:
+/// * `Ok(None)` when the header's Color Map Type byte is `0` (no map at
+///   all) **or** when the file's image type is itself colour-mapped
+///   (1 / 9) — for a colour-mapped image the map is the working palette,
+///   not a border colour, so the "border colour" reading does not apply
+///   and the caller should use [`parse_tga_color_map`] instead.
+/// * `Ok(Some(rgba))` with the first colour-map entry (de-interleaved
+///   exactly as [`parse_tga_color_map`] expands the palette).
+/// * `Err` for a truncated header / colour map, a Color Map Type byte of
+///   `1` with a zero entry-size or length, or an unsupported entry depth
+///   — the same rejection rules [`parse_tga_color_map`] enforces.
+///
+/// A stored map with zero entries cannot occur (the parser rejects a
+/// `cmap_type == 1` map of length 0), so a successful return always
+/// carries a colour.
+pub fn parse_tga_border_color(input: &[u8]) -> Result<Option<[u8; 4]>> {
+    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    // Only an *unmapped* image type with a present map carries a TIPS
+    // border colour; for a colour-mapped type the map is the palette.
+    if let Some(image_type) = ImageType::from_u8(header.image_type_raw) {
+        if image_type.is_colour_mapped() {
+            return Ok(None);
+        }
+    }
+    match parse_tga_color_map(input)? {
+        Some(map) => Ok(map.entries.first().copied()),
+        None => Ok(None),
+    }
+}
+
+/// Read the §C.2 **Color Map Type** byte (fixed-header byte 1) as a typed
+/// [`ColorMapType`] view straight from a file's bytes, without decoding
+/// the colour map or the raster.
+///
+/// Returns `Err` only when the input is too short to hold the 18-byte
+/// header; every byte value `0..=255` otherwise classifies
+/// ([`ColorMapType::Absent`] / [`ColorMapType::Present`] /
+/// [`ColorMapType::Reserved`]).
+pub fn parse_tga_color_map_type(input: &[u8]) -> Result<ColorMapType> {
+    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    Ok(header.color_map_type())
 }
 
 /// Narrow a file position to the scan-line table's 4-byte on-disk

@@ -142,6 +142,15 @@ impl TgaHeader {
         Interleaving::from_descriptor(self.descriptor)
     }
 
+    /// Typed view of the §C.2 **Color Map Type** byte (fixed-header byte
+    /// 1). Equivalent to `ColorMapType::from_u8(self.cmap_type)`; the
+    /// wrapper carries the spec predicates ([`ColorMapType::is_absent`]
+    /// / [`ColorMapType::is_present`] / [`ColorMapType::is_reserved`] /
+    /// [`ColorMapType::is_conformant`] / [`ColorMapType::has_map_data`]).
+    pub fn color_map_type(&self) -> ColorMapType {
+        ColorMapType::from_u8(self.cmap_type)
+    }
+
     /// `true` when bit 5 of the descriptor is set, i.e. the on-disk
     /// pixel rows are in top-to-bottom order. `false` (the most common
     /// case) means bottom-to-top, and the decoder will flip rows so the
@@ -1755,6 +1764,99 @@ impl Interleaving {
     /// with the rest of the spec-predicate accessors.
     pub fn is_tga2_compliant(self) -> bool {
         self.is_non_interleaved()
+    }
+}
+
+/// Typed view of the §C.2 **Color Map Type** byte (the fixed-header byte
+/// at offset 1).
+///
+/// The spec constrains this field to two values: *"This field contains
+/// either 0 or 1. 0 means no color map is included. 1 means a color map
+/// is included."* For a colour-mapped image type (1 / 9) the map carries
+/// the palette; for an **un**mapped image type (2 / 3 / 10 / 11) a map
+/// *may still be present* — *"but since this is an unmapped image it is
+/// usually ignored. TIPS (a Targa paint system) will set the border
+/// color [to] the first map color if it is present."* That single-entry
+/// (or first-entry) palette on an unmapped image is the file's
+/// *border / background* colour; [`crate::parse_tga_border_color`] reads
+/// it.
+///
+/// Any value other than `0` / `1` is non-conformant; it is surfaced
+/// verbatim as [`Self::Reserved`] so a caller can recognise — and choose
+/// to reject — a malformed file rather than have the value silently
+/// coerced. The decoder treats every non-zero value as "map present"
+/// (it reads the Color Map Specification fields to size and skip the
+/// block), matching the spec's binary description.
+///
+/// Reachable from a parsed header via [`TgaHeader::color_map_type`].
+/// Mirrors the surface-but-classify pattern of [`Interleaving`] /
+/// [`AttributeBits`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorMapType {
+    /// `0` — no color map included (the value every true-colour /
+    /// grayscale file this crate writes stores, and the default).
+    #[default]
+    Absent,
+    /// `1` — a color map is included. For a colour-mapped image type it
+    /// is the palette; for an unmapped type it is the vestigial
+    /// border-colour map.
+    Present,
+    /// Any value `2..=255` — non-conformant per the spec's "either 0 or
+    /// 1" rule. The raw byte is preserved.
+    Reserved(u8),
+}
+
+impl ColorMapType {
+    /// Classify the raw §C.2 Color Map Type byte (`0` / `1` / other).
+    pub fn from_u8(byte: u8) -> Self {
+        match byte {
+            0 => Self::Absent,
+            1 => Self::Present,
+            other => Self::Reserved(other),
+        }
+    }
+
+    /// The raw on-disk byte this view represents — the inverse of
+    /// [`Self::from_u8`].
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Absent => 0,
+            Self::Present => 1,
+            Self::Reserved(b) => b,
+        }
+    }
+
+    /// `true` when no color map is present (`0`).
+    pub fn is_absent(self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    /// `true` when a color map is present (`1`). A [`Self::Reserved`]
+    /// (non-`0`/`1`) value is **not** reported as present here — use
+    /// [`Self::has_map_data`] for the decoder's lenient "non-zero means
+    /// map data follows" interpretation.
+    pub fn is_present(self) -> bool {
+        matches!(self, Self::Present)
+    }
+
+    /// `true` for any value other than `0` / `1` (the spec's only two
+    /// legal values).
+    pub fn is_reserved(self) -> bool {
+        matches!(self, Self::Reserved(_))
+    }
+
+    /// `true` when the field is one of the two spec-legal values
+    /// (`0` / `1`).
+    pub fn is_conformant(self) -> bool {
+        !self.is_reserved()
+    }
+
+    /// `true` when map data follows the header — the decoder's lenient
+    /// interpretation, where *any* non-zero byte means "read and skip the
+    /// Color Map Specification block". Differs from [`Self::is_present`]
+    /// only for a non-conformant [`Self::Reserved`] value.
+    pub fn has_map_data(self) -> bool {
+        !self.is_absent()
     }
 }
 

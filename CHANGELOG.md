@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 345: §C.2 Color Map Type typed view + the TIPS border-colour
+  feature. The fixed-header Color Map Type byte (offset 1) gains a typed
+  `ColorMapType` view (`Absent` / `Present` / `Reserved(u8)`) reachable
+  via `TgaHeader::color_map_type()` and the one-call
+  `parse_tga_color_map_type`, with predicates `is_absent` / `is_present`
+  / `is_reserved` / `is_conformant` / `has_map_data` and a `to_u8`
+  round trip — mirroring the `Interleaving` / `AttributeBits` surface.
+  `parse_tga_border_color` is the apply-side of the spec's note that an
+  **un**mapped image (type 2 / 3 / 10 / 11) may still carry a colour map
+  whose first entry is the paint-system border / background colour
+  ("TIPS … will set the border color [to] the first map color if it is
+  present"): it returns that first entry as straight RGBA, `None` for a
+  colour-mapped image type (the map is the working palette there) or a
+  map-absent file. The `decode_tga` fuzz target drives both new parsers;
+  a border-colour corpus seed is added.
 - Round 337: §C.6.4 Key Color (Field 18) apply-path — chroma-keying.
   `KeyColor::key_out_image(&mut TgaImage)` makes every RGBA pixel whose
   R/G/B equals the key colour fully transparent (alpha set to 0, colour
