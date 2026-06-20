@@ -101,6 +101,91 @@ impl ImageType {
     }
 }
 
+/// Color Map Entry Size — the bit width of one colour-map entry as
+/// declared in fixed-header byte 7 (spec §C.2 "Color Map Entry Size …
+/// Number of bits in each color map entry").
+///
+/// The spec defines exactly three on-disk byte widths: "Each color map
+/// entry is 2, 3, or 4 bytes." This crate's encoder writes one of four
+/// canonical entry sizes:
+///
+/// * [`Bits16`](Self::Bits16) — 2 bytes, `ARRRRRGG GGGBBBBB` (the top
+///   bit is an attribute/alpha bit).
+/// * [`Bits15`](Self::Bits15) — 2 bytes, the same packing with the top
+///   bit reserved (no alpha; written `0` and read as opaque).
+/// * [`Bits24`](Self::Bits24) — 3 bytes, blue / green / red.
+/// * [`Bits32`](Self::Bits32) — 4 bytes, blue / green / red / attribute.
+///
+/// 15- and 16-bit entries both occupy two on-disk bytes; they differ
+/// only in whether the top bit is treated as a meaningful alpha bit.
+/// The decoder distinguishes them by the literal `cmap_entry_size`
+/// value (15 vs 16), matching [`decode_palette`](crate::parse_tga)'s
+/// existing expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ColorMapEntrySize {
+    /// 15-bit `_RRRRRGG GGGBBBBB` (2 bytes, no alpha).
+    Bits15 = 15,
+    /// 16-bit `ARRRRRGG GGGBBBBB` (2 bytes, top bit alpha).
+    Bits16 = 16,
+    /// 24-bit blue / green / red (3 bytes, no alpha).
+    Bits24 = 24,
+    /// 32-bit blue / green / red / attribute (4 bytes).
+    Bits32 = 32,
+}
+
+impl ColorMapEntrySize {
+    /// Decode a raw `cmap_entry_size` header byte. Returns `None` for
+    /// any value the spec doesn't define (only 15 / 16 / 24 / 32 are
+    /// legal colour-map entry widths).
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            15 => Self::Bits15,
+            16 => Self::Bits16,
+            24 => Self::Bits24,
+            32 => Self::Bits32,
+            _ => return None,
+        })
+    }
+
+    /// The on-disk entry size in **bits** (15 / 16 / 24 / 32).
+    pub fn bits(self) -> u8 {
+        self as u8
+    }
+
+    /// The on-disk entry size in **bytes** (2 / 2 / 3 / 4) — the value
+    /// written into the header maps to `bits.div_ceil(8)` exactly.
+    pub fn bytes(self) -> usize {
+        match self {
+            Self::Bits15 | Self::Bits16 => 2,
+            Self::Bits24 => 3,
+            Self::Bits32 => 4,
+        }
+    }
+
+    /// `true` when an entry of this size carries a meaningful alpha /
+    /// attribute channel: 16-bit (top bit) and 32-bit (fourth byte).
+    /// 15-bit and 24-bit entries are alpha-less.
+    pub fn has_alpha(self) -> bool {
+        matches!(self, Self::Bits16 | Self::Bits32)
+    }
+
+    /// The narrowest entry size that can losslessly carry the given
+    /// 8-bit-per-channel RGBA palette. Returns [`Bits32`](Self::Bits32)
+    /// when any entry needs alpha (`a != 0xFF`), otherwise
+    /// [`Bits24`](Self::Bits24). The 15/16-bit sizes are never chosen
+    /// automatically because they quantise 8-bit colour down to 5 bits
+    /// per channel (lossy); a caller asks for them explicitly via
+    /// [`encode_tga_palette_with_entry_size`](crate::encode_tga_palette_with_entry_size).
+    pub fn smallest_lossless_for(palette: &[[u8; 4]]) -> Self {
+        if palette.iter().any(|p| p[3] != 0xFF) {
+            Self::Bits32
+        } else {
+            Self::Bits24
+        }
+    }
+}
+
 /// Parsed TGA header fields. Sizes match the on-disk u8/u16 widths.
 #[derive(Debug, Clone, Copy)]
 pub struct TgaHeader {

@@ -9,8 +9,11 @@
 //!   (max 128 per run-packet) vs raw runs (max 128 per raw-packet) per
 //!   spec §C.5.
 //! * [`encode_tga_palette`] — image type 1 (uncompressed colour-mapped),
-//!   8-bit indices into a 32-bit BGRA colour map (max 256 unique RGBA
-//!   colours in the input).
+//!   8-bit indices into a colour map whose entry size auto-selects to
+//!   the narrowest lossless width (24-bit BGR for an opaque palette,
+//!   32-bit BGRA when alpha is used); max 256 unique RGBA colours in the
+//!   input. [`encode_tga_palette_with_entry_size`] writes an explicit
+//!   15 / 16 / 24 / 32-bit colour map.
 //! * [`encode_tga_palette_rle`] — image type 9 (RLE colour-mapped).
 //! * [`encode_tga_grayscale`] — image type 3 (uncompressed grayscale),
 //!   8 bpp luma.
@@ -26,7 +29,7 @@
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
-    ImageType, TgaColourCorrectionTable, TgaDeveloperTag, TgaScanLineTable,
+    ColorMapEntrySize, ImageType, TgaColourCorrectionTable, TgaDeveloperTag, TgaScanLineTable,
     TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
 };
 
@@ -473,25 +476,70 @@ fn to_rgba(image: &TgaImage) -> Result<Vec<u8>> {
 /// Encode `width × height` RGBA bytes into an uncompressed colour-mapped
 /// TGA file (image type 1) with an 8-bit palette index.
 ///
-/// The palette is built from the unique RGBA colours in the input. A
-/// 32-bit BGRA colour map is always emitted (even if the input is fully
-/// opaque) because the spec doesn't require us to pick a smaller entry
-/// size — and the on-disk overhead is only 1024 bytes for a full
-/// palette.
+/// The palette is built from the unique RGBA colours in the input. The
+/// colour-map **entry size** is auto-selected to the narrowest spec-legal
+/// width that carries the palette losslessly per
+/// [`ColorMapEntrySize::smallest_lossless_for`]: a 24-bit BGR map when
+/// every palette entry is fully opaque, a 32-bit BGRA map when any entry
+/// uses alpha. (Callers who want a fixed 15/16/24/32-bit entry size — for
+/// instance to write a compact Targa-16 palette — use
+/// [`encode_tga_palette_with_entry_size`].)
 ///
 /// Returns [`crate::TgaError::Unsupported`] if the input contains more
 /// than 256 unique RGBA colours (the indexed palette can't represent
 /// them).
 pub fn encode_tga_palette(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
-    encode_palette_inner(width, height, rgba, ImageType::UncompressedColourMapped)
+    encode_palette_inner(
+        width,
+        height,
+        rgba,
+        ImageType::UncompressedColourMapped,
+        None,
+    )
 }
 
 /// Encode `width × height` RGBA bytes into an RLE colour-mapped TGA
-/// file (image type 9). Palette construction matches
-/// [`encode_tga_palette`]; RLE packetisation runs on the 8-bit indices,
-/// per spec §C.5.
+/// file (image type 9). Palette construction + entry-size auto-selection
+/// match [`encode_tga_palette`]; RLE packetisation runs on the 8-bit
+/// indices, per spec §C.5.
 pub fn encode_tga_palette_rle(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
-    encode_palette_inner(width, height, rgba, ImageType::RleColourMapped)
+    encode_palette_inner(width, height, rgba, ImageType::RleColourMapped, None)
+}
+
+/// Encode `width × height` RGBA bytes into a colour-mapped TGA file with
+/// an explicit colour-map [`ColorMapEntrySize`].
+///
+/// `image_type` must be a colour-mapped type ([`ImageType::UncompressedColourMapped`]
+/// = 1 or [`ImageType::RleColourMapped`] = 9); any other type is rejected
+/// with [`crate::TgaError::Invalid`].
+///
+/// The entry size controls how each palette colour is packed on disk
+/// (spec §C.2 "Each color map entry is 2, 3, or 4 bytes"):
+///
+/// * [`ColorMapEntrySize::Bits24`] / [`Bits32`](ColorMapEntrySize::Bits32)
+///   store the full 8-bit channels (BGR / BGRA) — lossless.
+/// * [`ColorMapEntrySize::Bits15`] / [`Bits16`](ColorMapEntrySize::Bits16)
+///   pack each colour into the 5-5-5 `ARRRRRGG GGGBBBBB` layout — the
+///   8-bit channels are quantised to 5 bits (top 5 bits kept), so a
+///   round trip through the decoder reproduces the **expanded** 5-bit
+///   colour, not the original 8-bit colour. 16-bit keeps the top alpha
+///   bit (set when an entry's alpha ≥ 0x80); 15-bit writes it `0`.
+///
+/// Pass [`encode_tga_palette`] / [`encode_tga_palette_rle`] instead to
+/// auto-select the narrowest *lossless* (24/32-bit) size.
+pub fn encode_tga_palette_with_entry_size(
+    width: u16,
+    height: u16,
+    rgba: &[u8],
+    image_type: ImageType,
+    entry_size: ColorMapEntrySize,
+) -> Result<Vec<u8>> {
+    if !image_type.is_colour_mapped() {
+        return Err(Error::invalid(
+            "TGA palette encoder: image_type must be 1 (uncompressed) or 9 (RLE) colour-mapped",
+        ));
+    }
+    encode_palette_inner(width, height, rgba, image_type, Some(entry_size))
 }
 
 fn encode_palette_inner(
@@ -499,6 +547,7 @@ fn encode_palette_inner(
     height: u16,
     rgba: &[u8],
     image_type: ImageType,
+    entry_size: Option<ColorMapEntrySize>,
 ) -> Result<Vec<u8>> {
     if rgba.len() % 4 != 0 {
         return Err(Error::invalid(
@@ -532,15 +581,21 @@ fn encode_palette_inner(
         indices.push(idx as u8);
     }
 
-    // Header. cmap_type=1, depth=8, cmap_entry_size=32.
+    // Pick the colour-map entry size: the caller's explicit choice, else
+    // the narrowest lossless (24/32-bit) width for this palette.
+    let entry = entry_size.unwrap_or_else(|| ColorMapEntrySize::smallest_lossless_for(&palette));
+    let entry_bytes = entry.bytes();
+
+    // Header. cmap_type=1, depth=8.
     let palette_len: u16 = palette.len() as u16;
-    let mut out = Vec::with_capacity(TGA_HEADER_SIZE + (palette_len as usize) * 4 + indices.len());
+    let mut out =
+        Vec::with_capacity(TGA_HEADER_SIZE + (palette_len as usize) * entry_bytes + indices.len());
     out.push(0); // id_length
     out.push(1); // cmap_type
     out.push(image_type as u8);
     out.extend_from_slice(&0u16.to_le_bytes()); // cmap_first
     out.extend_from_slice(&palette_len.to_le_bytes()); // cmap_length
-    out.push(32); // cmap_entry_size — BGRA
+    out.push(entry.bits()); // cmap_entry_size — 15 / 16 / 24 / 32
     out.extend_from_slice(&0u16.to_le_bytes()); // x_origin
     out.extend_from_slice(&0u16.to_le_bytes()); // y_origin
     out.extend_from_slice(&width.to_le_bytes());
@@ -550,12 +605,9 @@ fn encode_palette_inner(
                  // the palette entry holds the alpha channel.
     out.push(0x20); // top-down
 
-    // Colour map: BGRA per entry.
+    // Colour map: one entry per palette colour, packed per `entry`.
     for p in &palette {
-        out.push(p[2]);
-        out.push(p[1]);
-        out.push(p[0]);
-        out.push(p[3]);
+        push_colour_map_entry(&mut out, *p, entry);
     }
 
     // Pixel data.
@@ -568,6 +620,41 @@ fn encode_palette_inner(
         out.extend_from_slice(&indices);
     }
     Ok(out)
+}
+
+/// Pack one straight-RGBA palette colour into the on-disk colour-map
+/// entry layout for `entry` (spec §C.2). The byte order mirrors
+/// `decode_palette`'s expansion exactly so a round trip is faithful:
+///
+/// * 24-bit → blue, green, red.
+/// * 32-bit → blue, green, red, attribute (alpha).
+/// * 15/16-bit → little-endian `u16` of `[A]RRRRRGG GGGBBBBB` (top 5 bits
+///   of each 8-bit channel; 16-bit sets the top alpha bit when `a ≥ 0x80`,
+///   15-bit clears it).
+fn push_colour_map_entry(out: &mut Vec<u8>, rgba: [u8; 4], entry: ColorMapEntrySize) {
+    match entry {
+        ColorMapEntrySize::Bits24 => {
+            out.push(rgba[2]); // B
+            out.push(rgba[1]); // G
+            out.push(rgba[0]); // R
+        }
+        ColorMapEntrySize::Bits32 => {
+            out.push(rgba[2]); // B
+            out.push(rgba[1]); // G
+            out.push(rgba[0]); // R
+            out.push(rgba[3]); // A
+        }
+        ColorMapEntrySize::Bits15 | ColorMapEntrySize::Bits16 => {
+            let r5 = (rgba[0] >> 3) as u16;
+            let g5 = (rgba[1] >> 3) as u16;
+            let b5 = (rgba[2] >> 3) as u16;
+            let mut v = (r5 << 10) | (g5 << 5) | b5;
+            if entry == ColorMapEntrySize::Bits16 && rgba[3] >= 0x80 {
+                v |= 0x8000;
+            }
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

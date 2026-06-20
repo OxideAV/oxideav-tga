@@ -47,9 +47,12 @@
 //!
 //! Output depth for true-colour writers is auto-selected: 32 bpp if
 //! any input alpha byte is `< 0xFF`, otherwise 24 bpp. Palette writers
-//! cap the input at 256 unique RGBA colours and emit a 32-bit BGRA
-//! colour-map. Top-down origin (descriptor bit 5 set) is used
-//! unconditionally.
+//! cap the input at 256 unique RGBA colours and auto-select the colour-
+//! map entry size to the narrowest lossless width (24-bit BGR for an
+//! opaque palette, 32-bit BGRA when alpha is used);
+//! [`encode_tga_palette_with_entry_size`] writes an explicit
+//! 15 / 16 / 24 / 32-bit colour map. Top-down origin (descriptor bit 5
+//! set) is used unconditionally.
 //!
 //! [`encode_tga_with_extension`] wraps any of the encoders above and
 //! appends a TGA 2.0 footer + 495-byte extension-area body authored
@@ -92,19 +95,20 @@ pub use decoder::{
 };
 pub use encoder::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_rle, encode_tga_rle_image, encode_tga_rle_rgb24, encode_tga_uncompressed,
-    encode_tga_uncompressed_image, encode_tga_uncompressed_rgb24, encode_tga_with_extension,
-    splice_image_id, DeveloperTagInput, ExtensionAreaInput, TGA_IMAGE_ID_MAX,
+    encode_tga_palette_with_entry_size, encode_tga_rle, encode_tga_rle_image, encode_tga_rle_rgb24,
+    encode_tga_uncompressed, encode_tga_uncompressed_image, encode_tga_uncompressed_rgb24,
+    encode_tga_with_extension, splice_image_id, DeveloperTagInput, ExtensionAreaInput,
+    TGA_IMAGE_ID_MAX,
 };
 pub use error::{Result, TgaError};
 pub use image::{TgaImage, TgaPixelFormat};
 pub use types::{
-    parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, ColorMapType,
-    GammaValue, ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio, PostageStamp,
-    SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable,
-    TgaDeveloperArea, TgaDeveloperTag, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable,
-    TgaTimestamp, TGA_ASCII_FIELD_MAX_CHARS, TGA_ATTRIBUTE_BITS_MAX, TGA_AUTHOR_COMMENT_LINES,
-    TGA_AUTHOR_COMMENT_LINE_BYTES, TGA_AUTHOR_COMMENT_LINE_MAX_CHARS,
+    parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType,
+    ColorMapEntrySize, ColorMapType, GammaValue, ImageType, Interleaving, JobTime, KeyColor,
+    PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap,
+    TgaColourCorrectionTable, TgaDeveloperArea, TgaDeveloperTag, TgaExtensionArea, TgaFooter,
+    TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_ASCII_FIELD_MAX_CHARS, TGA_ATTRIBUTE_BITS_MAX,
+    TGA_AUTHOR_COMMENT_LINES, TGA_AUTHOR_COMMENT_LINE_BYTES, TGA_AUTHOR_COMMENT_LINE_MAX_CHARS,
     TGA_COLOUR_CORRECTION_TABLE_ENTRIES, TGA_COLOUR_CORRECTION_TABLE_SIZE,
     TGA_DEVELOPER_DIRECTORY_HEADER_BYTES, TGA_DEVELOPER_TAG_BYTES, TGA_EXTENSION_AREA_SIZE,
     TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE, TGA_HEADER_SIZE, TGA_INTERLEAVING_MASK,

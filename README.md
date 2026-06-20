@@ -366,11 +366,11 @@ text mirror of the same document are the only sources consulted.
 
 | Type | Compression  | Pixel input  | API                          |
 | ---- | ------------ | ------------ | ---------------------------- |
-| 1    | uncompressed | RGBA → index | `encode_tga_palette`         |
+| 1    | uncompressed | RGBA → index | `encode_tga_palette` / `encode_tga_palette_with_entry_size` |
 | 2    | uncompressed | RGBA         | `encode_tga_uncompressed`    |
 | 2    | uncompressed | RGB24        | `encode_tga_uncompressed_rgb24` |
 | 3    | uncompressed | Gray8        | `encode_tga_grayscale`       |
-| 9    | RLE          | RGBA → index | `encode_tga_palette_rle`     |
+| 9    | RLE          | RGBA → index | `encode_tga_palette_rle` / `encode_tga_palette_with_entry_size` |
 | 10   | RLE          | RGBA         | `encode_tga_rle`             |
 | 10   | RLE          | RGB24        | `encode_tga_rle_rgb24`       |
 | 11   | RLE          | Gray8        | `encode_tga_grayscale_rle`   |
@@ -382,8 +382,23 @@ text mirror of the same document are the only sources consulted.
 * True-colour RGBA writers auto-select depth: 32 bpp if any input
   alpha byte is `< 0xFF`, else 24 bpp. The RGB24-input variants
   always emit 24 bpp BGR (no alpha-detection scan).
-* Palette writers cap at 256 unique RGBA colours and emit a 32-bit
-  BGRA colour map (with a clear `Unsupported` error past that).
+* Palette writers cap at 256 unique RGBA colours (with a clear
+  `Unsupported` error past that) and auto-select the colour-map **entry
+  size** per the §C.2 "Each color map entry is 2, 3, or 4 bytes" rule:
+  the narrowest *lossless* width for the palette — a compact 24-bit BGR
+  map when every entry is fully opaque, a 32-bit BGRA map when any entry
+  uses alpha (`ColorMapEntrySize::smallest_lossless_for`).
+  `encode_tga_palette_with_entry_size(w, h, rgba, image_type, entry_size)`
+  writes an explicit entry size for either colour-mapped type (1 / 9):
+  24-bit / 32-bit are lossless; 15-bit / 16-bit pack each colour into the
+  spec's 5-5-5 `ARRRRRGG GGGBBBBB` layout (8-bit channels quantised to
+  5 bits, 16-bit keeping the top alpha bit when an entry's alpha
+  `≥ 0x80`, 15-bit forcing opaque). `ColorMapEntrySize` (`Bits15` /
+  `Bits16` / `Bits24` / `Bits32`) is a typed view of fixed-header byte 7
+  with `from_u8` (only the four spec-legal widths) / `bits` / `bytes`
+  (2 / 2 / 3 / 4) / `has_alpha`. Every entry size round-trips through
+  `parse_tga`'s `decode_palette` expansion (15/16-bit A1R5G5B5, 24-bit
+  BGR, 32-bit BGRA).
 * Top-down origin (descriptor bit 5 set) is used unconditionally.
 
 `splice_image_id(&mut base, image_id_bytes)?` rewrites a freshly-encoded

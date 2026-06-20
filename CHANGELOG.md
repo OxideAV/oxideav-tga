@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 354: colour-map **entry-size matrix** on the encode side. The
+  palette writers (`encode_tga_palette` / `encode_tga_palette_rle`)
+  previously always emitted a 32-bit BGRA colour map; they now
+  auto-select the narrowest *lossless* colour-map entry size per §C.2
+  ("Each color map entry is 2, 3, or 4 bytes") — a compact 24-bit BGR
+  map for a fully-opaque palette, a 32-bit BGRA map when any entry uses
+  alpha (`ColorMapEntrySize::smallest_lossless_for`). New
+  `encode_tga_palette_with_entry_size(w, h, rgba, image_type,
+  entry_size)` writes an explicit 15 / 16 / 24 / 32-bit colour map for
+  either colour-mapped image type (1 / 9): 24/32-bit are lossless;
+  15/16-bit pack each colour into the 5-5-5 `ARRRRRGG GGGBBBBB` layout
+  (channels quantised to 5 bits, 16-bit keeping the top alpha bit when an
+  entry's alpha `>= 0x80`, 15-bit forcing opaque). `ColorMapEntrySize`
+  (`Bits15` / `Bits16` / `Bits24` / `Bits32`) is a new typed view of
+  fixed-header byte 7 with `from_u8` / `bits` / `bytes` / `has_alpha`.
+  All four entry sizes round-trip through the existing `parse_tga`
+  `decode_palette` expansion.
 - Round 345: §C.2 Color Map Type typed view + the TIPS border-colour
   feature. The fixed-header Color Map Type byte (offset 1) gains a typed
   `ColorMapType` view (`Absent` / `Present` / `Reserved(u8)`) reachable

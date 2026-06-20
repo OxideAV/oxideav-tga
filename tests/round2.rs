@@ -92,11 +92,15 @@ fn roundtrip_type1_palette() {
 
 #[test]
 fn roundtrip_type1_palette_opaque() {
-    // No alpha-bearing colours; should still produce a 32-bit BGRA
-    // colour-map (we don't bother specialising on opacity).
+    // No alpha-bearing colours → the writer auto-selects the narrowest
+    // lossless colour-map entry size, a compact 24-bit BGR map (see
+    // round354). The round trip is still bit-exact: 24-bit entries are
+    // alpha-less, so every decoded pixel comes back opaque (0xFF), which
+    // matches the all-opaque input.
     let rgba = opaque_palette_image(4, 4);
     let bytes = encode_tga_palette(4, 4, &rgba).unwrap();
     assert_eq!(bytes[2], 1);
+    assert_eq!(bytes[7], 24, "opaque palette → 24-bit colour-map entries");
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.data, rgba);
 }
