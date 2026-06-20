@@ -488,11 +488,14 @@ malformed input fails closed rather than panicking.
 
 Generates a pixel buffer from arbitrary fuzz bytes (selector byte +
 two `u16` dimensions + a tiled payload tail), feeds it through one of
-the eight standalone writers
+twelve writer selectors — the eight standalone writers
 (`encode_tga_uncompressed`, `encode_tga_uncompressed_rgb24`,
 `encode_tga_rle`, `encode_tga_rle_rgb24`,
 `encode_tga_grayscale`, `encode_tga_grayscale_rle`,
-`encode_tga_palette`, `encode_tga_palette_rle`),
+`encode_tga_palette`, `encode_tga_palette_rle`) plus four
+`encode_tga_palette_with_entry_size` paths (16- and 24-bit colour-map
+entries × image types 1 and 9, exercising the 2-byte 5-5-5 and 3-byte
+BGR colour-map packings the default writers don't always pick) —
 decodes the result through `parse_tga`, and asserts the round-tripped
 frame's `width` / `height` / `pixel_format` / payload length match the
 requested dimensions. Pixel-content equality is not asserted (the

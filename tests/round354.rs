@@ -448,3 +448,87 @@ fn on_disk_colour_map_byte_layout() {
     let want = (r5 << 10) | (g5 << 5) | b5 | 0x8000;
     assert_eq!(map, &want.to_le_bytes());
 }
+
+// ---------------------------------------------------------------------------
+// Full breadth matrix — every entry size × both colour-mapped image types.
+// ---------------------------------------------------------------------------
+
+/// The value an 8-bit channel reproduces after a given entry size's
+/// round trip: full 8-bit precision for 24/32-bit, 5-bit quantised for
+/// 15/16-bit.
+fn channel_after(entry: ColorMapEntrySize, c: u8) -> u8 {
+    match entry {
+        ColorMapEntrySize::Bits24 | ColorMapEntrySize::Bits32 => c,
+        ColorMapEntrySize::Bits15 | ColorMapEntrySize::Bits16 => quantise_5bit(c),
+    }
+}
+
+/// The alpha an entry reproduces given its declared alpha and the entry
+/// size's alpha handling.
+fn alpha_after(entry: ColorMapEntrySize, a: u8) -> u8 {
+    match entry {
+        // Lossless alpha channel.
+        ColorMapEntrySize::Bits32 => a,
+        // 16-bit: one alpha bit, set when input alpha >= 0x80.
+        ColorMapEntrySize::Bits16 => {
+            if a >= 0x80 {
+                0xFF
+            } else {
+                0x00
+            }
+        }
+        // 15-bit / 24-bit: no alpha → always opaque.
+        ColorMapEntrySize::Bits15 | ColorMapEntrySize::Bits24 => 0xFF,
+    }
+}
+
+#[test]
+fn entry_size_matrix_roundtrip() {
+    // A small palette that uses both translucent and opaque entries plus
+    // colours with non-trivial low bits (so 5-bit quantise is visible).
+    let pixels: [[u8; 4]; 4] = [
+        [0xF8, 0x10, 0x08, 0xFF], // opaque
+        [0x00, 0xFF, 0x80, 0x40], // translucent (alpha < 0x80)
+        [0x12, 0x34, 0x56, 0xC0], // translucent (alpha >= 0x80)
+        [0xAB, 0xCD, 0xEF, 0x00], // transparent
+    ];
+    let mut rgba = Vec::new();
+    for p in &pixels {
+        rgba.extend_from_slice(p);
+    }
+
+    for entry in [
+        ColorMapEntrySize::Bits15,
+        ColorMapEntrySize::Bits16,
+        ColorMapEntrySize::Bits24,
+        ColorMapEntrySize::Bits32,
+    ] {
+        for ty in [
+            ImageType::UncompressedColourMapped,
+            ImageType::RleColourMapped,
+        ] {
+            let bytes = encode_tga_palette_with_entry_size(4, 1, &rgba, ty, entry).unwrap();
+            let hdr = parse_header(&bytes).unwrap();
+            assert_eq!(hdr.cmap_entry_size, entry.bits(), "{entry:?} {ty:?}");
+            assert_eq!(hdr.image_type_raw, ty as u8);
+            // On-disk colour-map block length = entries × entry bytes.
+            let cmap_len = u16::from_le_bytes([bytes[5], bytes[6]]) as usize;
+            assert_eq!(cmap_len, 4);
+
+            let img = parse_tga(&bytes).unwrap();
+            assert_eq!(img.width, 4);
+            assert_eq!(img.height, 1);
+            assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+            for (i, p) in pixels.iter().enumerate() {
+                let got = &img.data[i * 4..i * 4 + 4];
+                let want = [
+                    channel_after(entry, p[0]),
+                    channel_after(entry, p[1]),
+                    channel_after(entry, p[2]),
+                    alpha_after(entry, p[3]),
+                ];
+                assert_eq!(got, &want, "{entry:?} {ty:?} pixel {i}");
+            }
+        }
+    }
+}
