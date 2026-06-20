@@ -53,8 +53,9 @@
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_rle, encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
-    parse_tga, TgaPixelFormat,
+    encode_tga_palette_with_entry_size, encode_tga_rle, encode_tga_rle_rgb24,
+    encode_tga_uncompressed, encode_tga_uncompressed_rgb24, parse_tga, ColorMapEntrySize, ImageType,
+    TgaPixelFormat,
 };
 
 /// Upper bound on the declared raster (16 MiB worth of RGBA = 4 M
@@ -68,7 +69,13 @@ const MAX_PIXELS: usize = 4 * 1024 * 1024;
 /// degenerate 1-pixel-wide rasters.
 const MAX_SIDE: u16 = 4096;
 
-/// Eight encoder selectors, one per public writer entry point.
+/// Encoder selectors, one per public writer entry point. The last four
+/// drive `encode_tga_palette_with_entry_size` so the explicit
+/// 16 / 24-bit colour-map writer paths (image types 1 and 9) get the
+/// same encode-then-decode frame-shape oracle. (15- and 32-bit are
+/// shape-equivalent to 16- and the default writers respectively; the two
+/// here exercise the 2-byte-packed and 3-byte-packed colour-map layouts
+/// the default writers don't always pick.)
 #[derive(Clone, Copy)]
 enum Writer {
     UncompressedRgba,
@@ -79,11 +86,15 @@ enum Writer {
     GrayscaleRle,
     Palette,
     PaletteRle,
+    PaletteEntry16Type1,
+    PaletteEntry24Type1,
+    PaletteEntry16Type9,
+    PaletteEntry24Type9,
 }
 
 impl Writer {
     fn from_byte(b: u8) -> Self {
-        match b % 8 {
+        match b % 12 {
             0 => Writer::UncompressedRgba,
             1 => Writer::UncompressedRgb24,
             2 => Writer::RleRgba,
@@ -91,14 +102,25 @@ impl Writer {
             4 => Writer::Grayscale,
             5 => Writer::GrayscaleRle,
             6 => Writer::Palette,
-            _ => Writer::PaletteRle,
+            7 => Writer::PaletteRle,
+            8 => Writer::PaletteEntry16Type1,
+            9 => Writer::PaletteEntry24Type1,
+            10 => Writer::PaletteEntry16Type9,
+            _ => Writer::PaletteEntry24Type9,
         }
     }
 
     /// Bytes per pixel the writer wants on input.
     fn input_bpp(self) -> usize {
         match self {
-            Writer::UncompressedRgba | Writer::RleRgba | Writer::Palette | Writer::PaletteRle => 4,
+            Writer::UncompressedRgba
+            | Writer::RleRgba
+            | Writer::Palette
+            | Writer::PaletteRle
+            | Writer::PaletteEntry16Type1
+            | Writer::PaletteEntry24Type1
+            | Writer::PaletteEntry16Type9
+            | Writer::PaletteEntry24Type9 => 4,
             Writer::UncompressedRgb24 | Writer::RleRgb24 => 3,
             Writer::Grayscale | Writer::GrayscaleRle => 1,
         }
@@ -124,6 +146,34 @@ impl Writer {
             Writer::GrayscaleRle => encode_tga_grayscale_rle(w, h, pixels),
             Writer::Palette => encode_tga_palette(w, h, pixels),
             Writer::PaletteRle => encode_tga_palette_rle(w, h, pixels),
+            Writer::PaletteEntry16Type1 => encode_tga_palette_with_entry_size(
+                w,
+                h,
+                pixels,
+                ImageType::UncompressedColourMapped,
+                ColorMapEntrySize::Bits16,
+            ),
+            Writer::PaletteEntry24Type1 => encode_tga_palette_with_entry_size(
+                w,
+                h,
+                pixels,
+                ImageType::UncompressedColourMapped,
+                ColorMapEntrySize::Bits24,
+            ),
+            Writer::PaletteEntry16Type9 => encode_tga_palette_with_entry_size(
+                w,
+                h,
+                pixels,
+                ImageType::RleColourMapped,
+                ColorMapEntrySize::Bits16,
+            ),
+            Writer::PaletteEntry24Type9 => encode_tga_palette_with_entry_size(
+                w,
+                h,
+                pixels,
+                ImageType::RleColourMapped,
+                ColorMapEntrySize::Bits24,
+            ),
         }
     }
 }
