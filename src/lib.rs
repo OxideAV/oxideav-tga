@@ -97,8 +97,8 @@ pub use encoder::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
     encode_tga_palette_with_entry_size, encode_tga_rle, encode_tga_rle_image, encode_tga_rle_rgb24,
     encode_tga_uncompressed, encode_tga_uncompressed_image, encode_tga_uncompressed_rgb24,
-    encode_tga_with_extension, splice_image_id, DeveloperTagInput, ExtensionAreaInput,
-    TGA_IMAGE_ID_MAX,
+    encode_tga_with_extension, set_image_origin, splice_image_id, DeveloperTagInput,
+    ExtensionAreaInput, TGA_IMAGE_ID_MAX,
 };
 pub use error::{Result, TgaError};
 pub use image::{TgaImage, TgaPixelFormat};

@@ -15,8 +15,10 @@
 //! plus the `to_bytes` / `from_header` round-trip primitives, mirroring
 //! `AttributeBits` / `Interleaving` / `ColorMapType`.
 
+use oxideav_tga::{encode_tga_rle, encode_tga_with_extension, parse_tga_footer};
 use oxideav_tga::{
-    encode_tga_uncompressed, parse_header, parse_tga_image_origin, ImageOrigin, TGA_HEADER_SIZE,
+    encode_tga_uncompressed, parse_header, parse_tga, parse_tga_image_id, parse_tga_image_origin,
+    set_image_origin, splice_image_id, ExtensionAreaInput, ImageOrigin, TGA_HEADER_SIZE,
 };
 
 /// Tiny RGBA frame for the encoder so the header reader has a real file
@@ -139,4 +141,79 @@ fn origin_is_orthogonal_to_descriptor_storage_bits() {
     assert!(h.is_top_down(), "encoder writes top-down storage order");
     assert_eq!(h.image_origin(), ImageOrigin::new(50, 60));
     assert!(h.image_origin().is_offset());
+}
+
+// ---------------------------------------------------------------------------
+// Write side — set_image_origin
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_image_origin_round_trips() {
+    let mut bytes = encode_tga_uncompressed(2, 2, &small_rgba()).unwrap();
+    let want = ImageOrigin::new(800, 600);
+    set_image_origin(&mut bytes, want).unwrap();
+    assert_eq!(parse_tga_image_origin(&bytes).unwrap(), want);
+    assert_eq!(parse_header(&bytes).unwrap().image_origin(), want);
+}
+
+#[test]
+fn set_image_origin_does_not_change_length_or_pixels() {
+    let mut bytes = encode_tga_uncompressed(2, 2, &small_rgba()).unwrap();
+    let before_len = bytes.len();
+    let before_img = parse_tga(&bytes).unwrap();
+    set_image_origin(&mut bytes, ImageOrigin::new(1, 65535)).unwrap();
+    assert_eq!(bytes.len(), before_len, "origin is in the fixed header");
+    let after_img = parse_tga(&bytes).unwrap();
+    assert_eq!(before_img.data, after_img.data, "raster unchanged");
+    assert_eq!(
+        (before_img.width, before_img.height),
+        (after_img.width, after_img.height)
+    );
+}
+
+#[test]
+fn set_image_origin_to_screen_origin_is_a_noop_write() {
+    let mut bytes = encode_tga_uncompressed(2, 2, &small_rgba()).unwrap();
+    let original = bytes.clone();
+    set_image_origin(&mut bytes, ImageOrigin::ORIGIN).unwrap();
+    assert_eq!(
+        bytes, original,
+        "writing (0,0) over (0,0) is byte-identical"
+    );
+}
+
+#[test]
+fn set_image_origin_rejects_short_buffer() {
+    let mut short = vec![0u8; 17];
+    assert!(set_image_origin(&mut short, ImageOrigin::new(1, 2)).is_err());
+}
+
+#[test]
+fn set_image_origin_works_on_rle_files() {
+    let mut bytes = encode_tga_rle(2, 2, &small_rgba()).unwrap();
+    let want = ImageOrigin::new(320, 240);
+    set_image_origin(&mut bytes, want).unwrap();
+    assert_eq!(parse_tga_image_origin(&bytes).unwrap(), want);
+    // RLE pixels still decode.
+    assert_eq!(parse_tga(&bytes).unwrap().width, 2);
+}
+
+#[test]
+fn set_image_origin_composes_with_image_id_and_extension() {
+    // Order: base encoder -> set_image_origin -> splice_image_id ->
+    // encode_tga_with_extension. The origin lives in the fixed header,
+    // so it survives every later append / splice untouched.
+    let mut base = encode_tga_uncompressed(2, 2, &small_rgba()).unwrap();
+    let want = ImageOrigin::new(12, 34);
+    set_image_origin(&mut base, want).unwrap();
+    splice_image_id(&mut base, b"scene-7").unwrap();
+    let full = encode_tga_with_extension(&base, &ExtensionAreaInput::default()).unwrap();
+
+    // Origin recovered from the final extended file.
+    assert_eq!(parse_tga_image_origin(&full).unwrap(), want);
+    // Image ID and footer also intact.
+    assert_eq!(parse_tga_image_id(&full).unwrap(), b"scene-7");
+    assert!(parse_tga_footer(&full).is_some());
+    // And the picture still decodes.
+    assert_eq!(parse_tga(&full).unwrap().width, 2);
 }

@@ -35,6 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   origin round trip through the reader (decoded pixels unchanged), the
   truncated-header `None`, and the origin-vs-descriptor orthogonality.
   No on-disk wire-format or encoder change — strictly additive.
+- Round 366: §5.1 / §5.2 Image Origin **write side** —
+  `set_image_origin(base_tga, origin)`. The base encoders all write the
+  screen-origin default `(0, 0)`; this helper overwrites the fixed-header
+  X-origin (bytes 8-9) and Y-origin (bytes 10-11) fields in place with an
+  `ImageOrigin`'s little-endian coordinates so a file can record a
+  non-default on-screen placement. Unlike `splice_image_id`, the write
+  does **not** change the file length (both coordinates live in the fixed
+  18-byte header), so every downstream offset is untouched and the helper
+  composes freely with `splice_image_id` / `encode_tga_with_extension` in
+  any order. The write round-trips bit-exactly through
+  `parse_tga_image_origin` / `TgaHeader::image_origin`. Rejects a
+  sub-header buffer with `Invalid`. 6 new write-side tests in
+  `tests/round366.rs` (round trip, length-/pixel-invariance, `(0,0)`
+  no-op-write byte-identity, short-buffer rejection, RLE-file path, and
+  the base→`set_image_origin`→`splice_image_id`→`encode_tga_with_extension`
+  composition where the origin survives every later append/splice). Suite
+  468 → 474; standalone + default-feature builds both green.
 - Round 354: colour-map **entry-size matrix** on the encode side. The
   palette writers (`encode_tga_palette` / `encode_tga_palette_rle`)
   previously always emitted a 32-bit BGRA colour map; they now

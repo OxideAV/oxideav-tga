@@ -425,6 +425,14 @@ by the same number of bytes. The cap is the spec maximum of 255 bytes
 (`TGA_IMAGE_ID_MAX`); an empty input is a no-op; calling the helper twice
 on the same file is rejected so an existing ID is never overwritten.
 
+`set_image_origin(&mut base, origin)?` overwrites the §5.1 / §5.2 Image
+Origin (fixed-header X/Y coordinates at bytes 8-11) on a freshly-encoded
+base TGA — the base writers always emit the screen-origin default
+`(0, 0)`. Unlike `splice_image_id`, the write does **not** change the file
+length (both coordinates live in the fixed 18-byte header), so it composes
+freely with `splice_image_id` / `encode_tga_with_extension` in any order
+and the write round-trips bit-exactly through `parse_tga_image_origin`.
+
 `encode_tga_with_extension(base, &ExtensionAreaInput { … })` wraps
 any of the writers above and appends a TGA 2.0 footer + extension
 area body to the output. Optional companions on `ExtensionAreaInput`:

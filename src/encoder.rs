@@ -29,8 +29,8 @@
 use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
-    ColorMapEntrySize, ImageType, TgaColourCorrectionTable, TgaDeveloperTag, TgaScanLineTable,
-    TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
+    ColorMapEntrySize, ImageOrigin, ImageType, TgaColourCorrectionTable, TgaDeveloperTag,
+    TgaScanLineTable, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -1150,5 +1150,40 @@ pub fn splice_image_id(base_tga: &mut Vec<u8>, image_id: &[u8]) -> Result<()> {
     // range is the right primitive here: it shifts the existing tail
     // rightwards by image_id.len() bytes in one go.
     base_tga.splice(TGA_HEADER_SIZE..TGA_HEADER_SIZE, image_id.iter().copied());
+    Ok(())
+}
+
+/// Set the **§5.1 / §5.2 Image Origin** (fixed-header Fields 5.1 + 5.2,
+/// bytes 8-11) on a freshly encoded TGA byte stream.
+///
+/// The base encoders all write the screen-origin default `(0, 0)` — the
+/// lower-left corner of a TARGA display. This helper overwrites the
+/// X-origin (bytes 8-9) and Y-origin (bytes 10-11) header fields with the
+/// supplied [`ImageOrigin`]'s little-endian coordinates so a file can
+/// record a non-default on-screen placement of its lower-left corner.
+///
+/// Unlike [`splice_image_id`], setting the origin does **not** change the
+/// file length: both coordinates live in the fixed 18-byte header, so the
+/// helper writes them in place and every downstream offset (colour map /
+/// pixel data / extension area / footer) is untouched. It therefore
+/// composes freely with [`encode_tga_with_extension`] and
+/// [`splice_image_id`] in any order.
+///
+/// The write round-trips bit-exactly through
+/// [`crate::parse_tga_image_origin`] / [`crate::TgaHeader::image_origin`]:
+/// reading the origin back from the modified file reproduces the supplied
+/// [`ImageOrigin`]. The recorded origin is on-screen placement metadata
+/// only — it does not move the raster, and [`crate::parse_tga`] decodes
+/// the same pixels regardless of its value.
+///
+/// Returns [`crate::TgaError::Invalid`] if the base file is shorter than
+/// the 18-byte header.
+pub fn set_image_origin(base_tga: &mut [u8], origin: ImageOrigin) -> Result<()> {
+    if base_tga.len() < TGA_HEADER_SIZE {
+        return Err(Error::invalid(
+            "TGA encoder: base_tga too short to contain a header",
+        ));
+    }
+    base_tga[8..12].copy_from_slice(&origin.to_bytes());
     Ok(())
 }
