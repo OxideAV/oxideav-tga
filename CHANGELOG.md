@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 366: §5.1 / §5.2 **Image Origin** typed view — the last
+  fixed-header field without a typed surface. The X-origin (Field 5.1,
+  bytes 8-9) and Y-origin (Field 5.2, bytes 10-11) record "the absolute
+  horizontal / vertical coordinate for the lower left corner of the image
+  as it is positioned on a display device having an origin at the lower
+  left of the screen (e.g., the TARGA series)" — the on-screen placement
+  coordinate, orthogonal to the image-descriptor storage-order bits
+  (Field 5.6 bits 4-5). New `ImageOrigin` struct (`x` / `y`) with
+  `ORIGIN` (`(0, 0)` screen-origin sentinel == `Default`) / `new` /
+  `from_header` (reads bytes 8-11 of an 18-byte header) / `as_tuple` /
+  `from_tuple` / `is_origin` / `is_offset` / `to_bytes` (4-byte LE X-then-Y
+  on-disk layout), reachable via `TgaHeader::image_origin()` and the
+  one-call `parse_tga_image_origin(input)` reader — mirroring the
+  `AttributeBits` / `Interleaving` / `ColorMapType` surface. Like those,
+  the field lives in the fixed header so the view works on TGA 1.0 files
+  too. The decoder does not relocate pixels (it emits a single normalised
+  top-down, left-to-right raster regardless of declared screen placement);
+  the view lets a caller doing its own on-screen compositing read and
+  honour the coordinate. The `decode_tga` fuzz harness now drives
+  `parse_tga_image_origin`. New `tests/round366.rs` (9 tests) covers the
+  sentinel / constructors, the tuple round trip across the SHORT-domain
+  edges, the LE `to_bytes` layout, the `from_header` byte-8-11 read +
+  short-input rejection, the encoder's screen-origin default, a non-zero
+  origin round trip through the reader (decoded pixels unchanged), the
+  truncated-header `None`, and the origin-vs-descriptor orthogonality.
+  No on-disk wire-format or encoder change — strictly additive.
 - Round 354: colour-map **entry-size matrix** on the encode side. The
   palette writers (`encode_tga_palette` / `encode_tga_palette_rle`)
   previously always emitted a 32-bit BGRA colour map; they now

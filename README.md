@@ -54,6 +54,22 @@ text mirror of the same document are the only sources consulted.
   (`0xC0`) exposes the field's bit mask. This mirrors the surface-but-don't-
   guess approach already taken for the §C.2 attribute-bit count
   (`AttributeBits`).
+* The §5.1 / §5.2 **Image Origin** (fixed-header Fields 5.1 + 5.2, bytes
+  8-11) — the on-screen X/Y placement of the image's lower-left corner in
+  the TARGA framebuffer's lower-left-origin coordinate system — is surfaced
+  as a typed `ImageOrigin` view via `TgaHeader::image_origin()` / the
+  one-call `parse_tga_image_origin` reader (`x` / `y`, plus `ORIGIN`
+  `(0,0)` sentinel / `new` / `from_header` / `as_tuple` / `from_tuple` /
+  `is_origin` / `is_offset` / `to_bytes`). This is the screen-placement
+  coordinate, orthogonal to the image-descriptor storage-order bits
+  (`is_top_down` / `is_right_to_left`): a file can be stored top-down yet
+  declare a non-zero on-screen origin. The decoder does not relocate the
+  raster (it always emits a single normalised top-down, left-to-right
+  image); the view lets a caller doing its own on-screen compositing read
+  and honour the placement. Like the §C.2 attribute-bit count and
+  interleaving flag, the field lives in the fixed header so the view works
+  on TGA 1.0 files too. Mirrors the surface-but-classify approach of
+  `AttributeBits` / `Interleaving` / `ColorMapType`.
 * The optional 26-byte TGA 2.0 footer is recognised. Use
   `parse_tga_footer` for the extension/developer-area offsets — the
   returned `TgaFooter` carries typed accessors (`has_extension_area` /

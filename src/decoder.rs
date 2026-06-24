@@ -33,10 +33,10 @@ use crate::error::{Result, TgaError as Error};
 use crate::image::{TgaImage, TgaPixelFormat};
 use crate::types::{
     parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, ColorMapType,
-    GammaValue, ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio, PostageStamp,
-    SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable,
-    TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp,
-    TGA_HEADER_SIZE,
+    GammaValue, ImageOrigin, ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio,
+    PostageStamp, SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap,
+    TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader,
+    TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
 };
 
 #[cfg(feature = "registry")]
@@ -705,6 +705,31 @@ pub fn parse_tga_attribute_bits(input: &[u8]) -> Option<AttributeBits> {
 /// shorter than the 18-byte header.
 pub fn parse_tga_interleaving(input: &[u8]) -> Option<Interleaving> {
     parse_header(input).map(|h| h.interleaving())
+}
+
+/// Read the **§5.1 / §5.2 Image Origin** (fixed-header Fields 5.1 + 5.2,
+/// bytes 8-11) straight from a TGA file's 18-byte header as a typed
+/// [`ImageOrigin`] view.
+///
+/// The two fields record "the absolute horizontal / vertical coordinate
+/// for the lower left corner of the image as it is positioned on a display
+/// device having an origin at the lower left of the screen (e.g., the
+/// TARGA series)". Like the field-5.6 attribute-bit count and
+/// interleaving flag, this declaration lives in the fixed header and is
+/// present in **every** TGA file including TGA 1.0.
+///
+/// This is the on-screen placement coordinate, orthogonal to the
+/// image-descriptor origin bits (Field 5.6 bits 4-5) the decoder uses to
+/// normalise pixel storage order: a file can be stored top-down yet
+/// declare a non-zero screen origin. The decoder does not relocate pixels
+/// (it always emits a single normalised raster); this view lets a caller
+/// that does its own on-screen compositing read and honour the requested
+/// placement.
+///
+/// Returns the typed [`ImageOrigin`] view, or `None` when the input is
+/// shorter than the 18-byte header.
+pub fn parse_tga_image_origin(input: &[u8]) -> Option<ImageOrigin> {
+    parse_header(input).map(|h| h.image_origin())
 }
 
 /// Resolve a decoded RGBA image's alpha channel using only the

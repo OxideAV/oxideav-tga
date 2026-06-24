@@ -236,6 +236,19 @@ impl TgaHeader {
         ColorMapType::from_u8(self.cmap_type)
     }
 
+    /// Typed view of the §5.1 / §5.2 **Image Origin** (fixed-header Fields
+    /// 5.1 + 5.2, bytes 8-11) — the on-screen placement of the image's
+    /// lower-left corner in the TARGA framebuffer's lower-left-origin
+    /// coordinate system. Equivalent to
+    /// `ImageOrigin::new(self.x_origin, self.y_origin)`; the wrapper
+    /// carries the spec predicates ([`ImageOrigin::is_origin`] /
+    /// [`ImageOrigin::is_offset`]). Orthogonal to the descriptor origin
+    /// bits ([`Self::is_top_down`] / [`Self::is_right_to_left`]), which
+    /// describe pixel *storage* order rather than screen placement.
+    pub fn image_origin(&self) -> ImageOrigin {
+        ImageOrigin::new(self.x_origin, self.y_origin)
+    }
+
     /// `true` when bit 5 of the descriptor is set, i.e. the on-disk
     /// pixel rows are in top-to-bottom order. `false` (the most common
     /// case) means bottom-to-top, and the decoder will flip rows so the
@@ -1942,6 +1955,114 @@ impl ColorMapType {
     /// only for a non-conformant [`Self::Reserved`] value.
     pub fn has_map_data(self) -> bool {
         !self.is_absent()
+    }
+}
+
+/// Typed view of the **§5.1 / §5.2 Image Origin** (fixed-header Fields
+/// 5.1 + 5.2, bytes 8-11) — the on-screen placement of the image's
+/// lower-left corner.
+///
+/// The TGA 2.0 FFS describes the two fields as:
+///
+/// * **X-origin of Image** (Field 5.1, bytes 8-9, integer lo-hi):
+///   *"the absolute horizontal coordinate for the lower left corner of
+///   the image as it is positioned on a display device having an origin
+///   at the lower left of the screen (e.g., the TARGA series)."*
+/// * **Y-origin of Image** (Field 5.2, bytes 10-11, integer lo-hi):
+///   *"the absolute vertical coordinate for the lower left corner of the
+///   image as it is positioned on a display device having an origin at
+///   the lower left of the screen."*
+///
+/// Both are unsigned 16-bit screen coordinates in the TARGA framebuffer's
+/// **lower-left-origin** coordinate system — distinct from (and orthogonal
+/// to) the image-descriptor origin bits (Field 5.6 bits 4-5), which
+/// describe the *storage* order of the pixel rows/columns, not where the
+/// image lands on the display. A file can be stored top-down (descriptor
+/// bit 5 set) yet still declare a non-zero on-screen origin here.
+///
+/// Almost every file this crate writes (and most in the wild) leaves both
+/// coordinates `0` — the screen origin — which is the [`Self::ORIGIN`]
+/// sentinel / [`Self::is_origin`] case. The view surfaces the field and
+/// classifies it; the decoder does not relocate pixels (the crate emits a
+/// single normalised top-down, left-to-right raster regardless of where
+/// the source file placed it on a physical TARGA screen). A caller doing
+/// its own on-screen compositing can read the coordinate and honour it.
+///
+/// Reachable from a parsed header via [`TgaHeader::image_origin`]; the
+/// raw coordinates remain on [`TgaHeader::x_origin`] /
+/// [`TgaHeader::y_origin`]. Mirrors the surface-but-classify pattern of
+/// [`AttributeBits`] / [`Interleaving`] / [`ColorMapType`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ImageOrigin {
+    /// X-origin (Field 5.1): horizontal screen coordinate of the image's
+    /// lower-left corner, lower-left-origin coordinate system.
+    pub x: u16,
+    /// Y-origin (Field 5.2): vertical screen coordinate of the image's
+    /// lower-left corner, lower-left-origin coordinate system.
+    pub y: u16,
+}
+
+impl ImageOrigin {
+    /// The screen-origin sentinel `(0, 0)` — the lower-left corner of a
+    /// TARGA display, and the value every file this crate's encoder writes
+    /// stores by default. Equal to [`Self::default`].
+    pub const ORIGIN: Self = Self { x: 0, y: 0 };
+
+    /// Build from explicit `(x, y)` screen coordinates.
+    pub fn new(x: u16, y: u16) -> Self {
+        Self { x, y }
+    }
+
+    /// Extract the origin from a raw 18-byte image-descriptor header by
+    /// reading the little-endian Field 5.1 / 5.2 coordinates at bytes
+    /// 8-9 and 10-11. Returns the [`Self::ORIGIN`] sentinel-equivalent
+    /// `(0, 0)` for a header that declares the screen origin.
+    ///
+    /// `header` must be at least [`TGA_HEADER_SIZE`] (18) bytes; a shorter
+    /// slice returns `None`.
+    pub fn from_header(header: &[u8]) -> Option<Self> {
+        if header.len() < TGA_HEADER_SIZE {
+            return None;
+        }
+        Some(Self {
+            x: read_u16_le(header, 8),
+            y: read_u16_le(header, 10),
+        })
+    }
+
+    /// Returns the `(x, y)` coordinate pair, useful for destructuring
+    /// without reaching into the fields.
+    pub fn as_tuple(self) -> (u16, u16) {
+        (self.x, self.y)
+    }
+
+    /// Rebuild from the `(x, y)` tuple — the inverse of [`Self::as_tuple`].
+    pub fn from_tuple(t: (u16, u16)) -> Self {
+        Self { x: t.0, y: t.1 }
+    }
+
+    /// `true` when both coordinates are `0` — the image is placed at the
+    /// screen origin (lower-left), the overwhelmingly common case.
+    /// Equivalent to `self == ImageOrigin::ORIGIN`.
+    pub fn is_origin(self) -> bool {
+        self.x == 0 && self.y == 0
+    }
+
+    /// `true` when either coordinate is non-zero — the file requests a
+    /// non-default on-screen placement of its lower-left corner.
+    pub fn is_offset(self) -> bool {
+        !self.is_origin()
+    }
+
+    /// Serialise to the 4-byte on-disk layout (two little-endian `u16`s,
+    /// X then Y) the §5.1 / §5.2 header fields use at bytes 8-11. The
+    /// inverse of [`Self::from_header`]'s coordinate read; OR these bytes
+    /// into a header at offset 8.
+    pub fn to_bytes(self) -> [u8; 4] {
+        let mut out = [0u8; 4];
+        out[0..2].copy_from_slice(&self.x.to_le_bytes());
+        out[2..4].copy_from_slice(&self.y.to_le_bytes());
+        out
     }
 }
 
