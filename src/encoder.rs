@@ -511,7 +511,7 @@ pub fn encode_tga_palette_rle(width: u16, height: u16, rgba: &[u8]) -> Result<Ve
 ///
 /// `image_type` must be a colour-mapped type ([`ImageType::UncompressedColourMapped`]
 /// = 1 or [`ImageType::RleColourMapped`] = 9); any other type is rejected
-/// with [`crate::TgaError::Invalid`].
+/// with [`crate::TgaError::InvalidData`].
 ///
 /// The entry size controls how each palette colour is packed on disk
 /// (spec §C.2 "Each color map entry is 2, 3, or 4 bytes"):
@@ -1118,7 +1118,7 @@ pub const TGA_IMAGE_ID_MAX: usize = 255;
 /// "base encoder → `splice_image_id` → `encode_tga_with_extension`"
 /// produces a single well-formed file.
 ///
-/// Returns [`crate::TgaError::Invalid`] if the base file is shorter than
+/// Returns [`crate::TgaError::InvalidData`] if the base file is shorter than
 /// the 18-byte header, if byte 0 isn't already `0` (i.e. the file already
 /// carries an Image ID — the helper refuses to overwrite an existing one),
 /// or if `image_id.len() > 255` (the on-disk length field is a single
@@ -1176,7 +1176,7 @@ pub fn splice_image_id(base_tga: &mut Vec<u8>, image_id: &[u8]) -> Result<()> {
 /// only — it does not move the raster, and [`crate::parse_tga`] decodes
 /// the same pixels regardless of its value.
 ///
-/// Returns [`crate::TgaError::Invalid`] if the base file is shorter than
+/// Returns [`crate::TgaError::InvalidData`] if the base file is shorter than
 /// the 18-byte header.
 pub fn set_image_origin(base_tga: &mut [u8], origin: ImageOrigin) -> Result<()> {
     if base_tga.len() < TGA_HEADER_SIZE {
