@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 378: framework `Decoder` opt-in display finalization —
+  `decoder::make_decoder_with_display_options(TgaDisplayOptions)` builds a
+  registry `Decoder` that finalizes each frame through
+  `decode_tga_for_display` with the supplied options. The default
+  `make_decoder` factory is unchanged (raw `parse_tga` passthrough) so the
+  registered codec path stays a raw decode; the display-finalizing variant
+  is explicit and opt-in. The `Decoder` also now propagates the source
+  `Packet`'s `pts` into the produced `VideoFrame` (previously dropped — the
+  raw `parse_tga` path always set `pts = None`).
 - Round 378: **composed, spec-ordered metadata-application pipeline** —
   the long-missing counterpart to the raw `parse_tga` decoder. Every §C.6
   metadata apply-path already existed as an *isolated* opt-in helper

@@ -46,12 +46,43 @@ use oxideav_core::{CodecId, CodecParameters, Frame, Packet, VideoFrame, VideoPla
 
 /// Factory registered with the codec registry. Consumes one packet per
 /// whole TGA file and produces one frame.
+///
+/// The frame carries the **raw** decoded samples (the [`parse_tga`]
+/// contract): no §C.6 metadata is applied. A consumer that wants the
+/// file's own gamma / colour-correction / attributes-type / key-colour /
+/// pixel-aspect metadata applied should build the decoder with
+/// [`make_decoder_with_display_options`] (or run
+/// [`crate::decode_tga_for_display`] directly on the packet bytes).
 #[cfg(feature = "registry")]
 pub fn make_decoder(_params: &CodecParameters) -> oxideav_core::Result<Box<dyn Decoder>> {
     Ok(Box::new(TgaDecoder {
         codec_id: CodecId::new(crate::CODEC_ID_STR),
         pending: None,
         eof: false,
+        display: None,
+    }))
+}
+
+/// Factory variant that finalizes each frame through the composed
+/// [`crate::decode_tga_for_display`] pipeline using the supplied
+/// [`crate::TgaDisplayOptions`].
+///
+/// Use [`crate::TgaDisplayOptions::default`] for the spec-faithful "display
+/// this file" behaviour (alpha resolution → tone curve → key colour →
+/// pixel-aspect resample). Unlike the raw [`make_decoder`], the produced
+/// frame may differ in geometry (pixel-aspect resampling) and alpha from
+/// the on-disk samples; this is the intended display behaviour, kept
+/// behind an explicit factory so the default codec path stays a raw
+/// passthrough.
+#[cfg(feature = "registry")]
+pub fn make_decoder_with_display_options(
+    options: crate::display::TgaDisplayOptions,
+) -> oxideav_core::Result<Box<dyn Decoder>> {
+    Ok(Box::new(TgaDecoder {
+        codec_id: CodecId::new(crate::CODEC_ID_STR),
+        pending: None,
+        eof: false,
+        display: Some(options),
     }))
 }
 
@@ -60,6 +91,10 @@ struct TgaDecoder {
     codec_id: CodecId,
     pending: Option<VideoFrame>,
     eof: bool,
+    /// When `Some`, each decoded frame is finalized through
+    /// [`crate::decode_tga_for_display`] with these options; when `None`
+    /// the raw [`parse_tga`] samples are emitted.
+    display: Option<crate::display::TgaDisplayOptions>,
 }
 
 #[cfg(feature = "registry")]
@@ -68,7 +103,11 @@ impl Decoder for TgaDecoder {
         &self.codec_id
     }
     fn send_packet(&mut self, packet: &Packet) -> oxideav_core::Result<()> {
-        let image = parse_tga(&packet.data)?;
+        let mut image = match self.display {
+            Some(opts) => crate::display::decode_tga_for_display(&packet.data, &opts)?,
+            None => parse_tga(&packet.data)?,
+        };
+        image.pts = packet.pts;
         self.pending = Some(image_to_video_frame(image));
         Ok(())
     }
