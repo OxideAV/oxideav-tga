@@ -95,8 +95,8 @@ pub use decoder::{
     resolve_alpha_from_descriptor, resolve_alpha_with_targa32_fallback,
 };
 pub use display::{
-    decode_tga_for_display, decode_tga_for_display_reported, AlphaResolution, TgaDisplayOptions,
-    TgaDisplayReport, ToneApplied,
+    decode_tga_for_display, decode_tga_for_display_reported, decode_tga_frame, AlphaResolution,
+    TgaDecodedFrame, TgaDisplayOptions, TgaDisplayReport, ToneApplied,
 };
 pub use encoder::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,

@@ -19,9 +19,10 @@
 //! is byte-identical between `parse_tga` and the composed default path.
 
 use oxideav_tga::{
-    decode_tga_for_display, decode_tga_for_display_reported, encode_tga_grayscale,
-    encode_tga_uncompressed, encode_tga_uncompressed_rgb24, encode_tga_with_extension, parse_tga,
-    AlphaResolution, AttributesType, ExtensionAreaInput, GammaValue, TgaDisplayOptions,
+    decode_tga_for_display, decode_tga_for_display_reported, decode_tga_frame,
+    encode_tga_grayscale, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
+    encode_tga_with_extension, parse_tga, set_image_origin, AlphaResolution, AttributesType,
+    DeveloperTagInput, ExtensionAreaInput, GammaValue, ImageOrigin, TgaDisplayOptions,
     TgaPixelFormat, ToneApplied,
 };
 
@@ -490,4 +491,87 @@ fn gamma_unset_is_no_tone() {
     let (_disp, report) =
         decode_tga_for_display_reported(&file, &TgaDisplayOptions::default()).unwrap();
     assert!(matches!(report.tone, ToneApplied::None));
+}
+
+// ---------------------------------------------------------------------------
+// TgaDecodedFrame bundle: finalized pixels + placement / preview / dev tags
+// ---------------------------------------------------------------------------
+
+#[test]
+fn decoded_frame_bundles_image_matching_display_path() {
+    // The bundle's image must equal decode_tga_for_display for the same opts.
+    let pixel = [10u8, 20, 30, 0x40];
+    let base = encode_tga_uncompressed(1, 1, &pixel).unwrap();
+    let ext = ExtensionAreaInput {
+        attributes_type: 0, // force opaque under defaults
+        ..Default::default()
+    };
+    let file = encode_tga_with_extension(&base, &ext).unwrap();
+
+    let want = decode_tga_for_display(&file, &TgaDisplayOptions::default()).unwrap();
+    let frame = decode_tga_frame(&file, &TgaDisplayOptions::default()).unwrap();
+    assert_eq!(frame.image.data, want.data);
+    assert_eq!(frame.image.data[3], 0xFF); // resolved opaque
+                                           // No placement / stamp / dev tags in this file.
+    assert_eq!(frame.screen_origin, ImageOrigin::ORIGIN);
+    assert!(!frame.has_screen_offset());
+    assert!(!frame.has_postage_stamp());
+    assert!(frame.developer_area.is_none() || frame.developer_area.as_ref().unwrap().is_empty());
+}
+
+#[test]
+fn decoded_frame_surfaces_screen_origin() {
+    // Encode a base, then stamp a non-zero screen origin into the header.
+    let rgb: Vec<u8> = vec![1, 2, 3];
+    let mut base = encode_tga_uncompressed_rgb24(1, 1, &rgb).unwrap();
+    set_image_origin(&mut base, ImageOrigin::new(100, 200)).unwrap();
+    let frame = decode_tga_frame(&base, &TgaDisplayOptions::default()).unwrap();
+    assert_eq!(frame.screen_origin, ImageOrigin::new(100, 200));
+    assert!(frame.has_screen_offset());
+}
+
+#[test]
+fn decoded_frame_surfaces_postage_stamp_and_dev_tags() {
+    // 2×2 RGBA base + a tiny postage stamp + a developer tag.
+    let data: Vec<u8> = vec![9, 9, 9, 255, 8, 8, 8, 255, 7, 7, 7, 255, 6, 6, 6, 255];
+    let base = encode_tga_uncompressed(2, 2, &data).unwrap();
+    let stamp = parse_tga(&base).unwrap(); // reuse the decoded 2×2 as the thumbnail
+    let ext = ExtensionAreaInput {
+        attributes_type: 3,
+        postage_stamp: Some(stamp),
+        developer_tags: vec![DeveloperTagInput {
+            tag_id: 100,
+            payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
+        }],
+        ..Default::default()
+    };
+    let file = encode_tga_with_extension(&base, &ext).unwrap();
+
+    let frame = decode_tga_frame(&file, &TgaDisplayOptions::default()).unwrap();
+    assert!(frame.has_postage_stamp());
+    let ps = frame.postage_stamp.as_ref().unwrap();
+    assert_eq!((ps.width, ps.height), (2, 2));
+
+    let dev = frame
+        .developer_area
+        .as_ref()
+        .expect("developer area present");
+    assert!(dev.contains(100));
+    let payload = dev.payload_by_id(&file, 100).expect("tag 100 payload");
+    assert_eq!(payload, &[0xDE, 0xAD, 0xBE, 0xEF]);
+}
+
+#[test]
+fn decoded_frame_passthrough_options_match_raw() {
+    // NONE options → bundle image equals parse_tga.
+    let pixel = [10u8, 20, 30, 0x40];
+    let base = encode_tga_uncompressed(1, 1, &pixel).unwrap();
+    let ext = ExtensionAreaInput {
+        attributes_type: 0,
+        ..Default::default()
+    };
+    let file = encode_tga_with_extension(&base, &ext).unwrap();
+    let raw = parse_tga(&file).unwrap();
+    let frame = decode_tga_frame(&file, &TgaDisplayOptions::NONE).unwrap();
+    assert_eq!(frame.image.data, raw.data);
 }

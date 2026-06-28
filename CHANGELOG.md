@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 378: `TgaDecodedFrame` bundle + `decode_tga_frame(input, &options)`
+  — one decode call that returns the finalized display-ready frame **plus**
+  the file metadata the pipeline does not fold into the raster: the
+  §5.1/§5.2 on-screen `ImageOrigin` placement (`screen_origin` /
+  `has_screen_offset`), the §C.6.10 postage-stamp thumbnail decoded to the
+  main image's format (`postage_stamp` / `has_postage_stamp`), and the §C.7
+  developer-area tag directory (`developer_area`), alongside the
+  `TgaDisplayReport`. A malformed thumbnail in an otherwise-valid file is
+  non-fatal (surfaced as `postage_stamp: None`). Saves a caller doing its
+  own compositing / thumbnail-strip building from re-walking the file with
+  the individual `parse_tga_*` helpers. New round378 tests (now 21 total)
+  cover bundle/display-image equivalence, screen-origin surfacing,
+  postage-stamp + developer-tag surfacing, and `NONE`-options passthrough.
 - Round 378: the `decode_tga` fuzz harness now drives the composed display
   pipeline (`decode_tga_for_display` / `decode_tga_for_display_reported`).
   The colour-touching passes (alpha resolution + tone curve + key colour)

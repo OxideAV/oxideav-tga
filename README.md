@@ -428,6 +428,21 @@ relative to gamma) the choice is documented here as the crate's decision.
 `parse_tga`'s raw contract is unchanged; the pipeline is strictly additive
 and works in both the registry and standalone builds.
 
+`decode_tga_frame(input, &options)` returns a `TgaDecodedFrame` bundling the
+finalized pixels + `TgaDisplayReport` **with** the file metadata the
+pipeline does not fold into the raster: the §5.1/§5.2 on-screen `ImageOrigin`
+placement (`screen_origin` / `has_screen_offset`), the §C.6.10 postage-stamp
+thumbnail decoded to the main image's format (`postage_stamp` /
+`has_postage_stamp`), and the §C.7 developer-area directory
+(`developer_area`). One decode call replaces a re-walk with the individual
+`parse_tga_*` helpers for a caller doing its own on-screen compositing or
+building a thumbnail strip. A malformed thumbnail in an otherwise-valid file
+is non-fatal (`postage_stamp: None`).
+
+For the framework `Decoder` trait, the default `make_decoder` factory stays
+a raw `parse_tga` passthrough; `decoder::make_decoder_with_display_options`
+builds a decoder that finalizes each frame through this pipeline.
+
 ## Encode
 
 | Type | Compression  | Pixel input  | API                          |

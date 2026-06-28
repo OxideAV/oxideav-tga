@@ -74,13 +74,16 @@
 //! "display this file" behaviour.
 
 use crate::decoder::{
-    parse_tga, parse_tga_colour_correction_table, parse_tga_extension_area, parse_tga_gamma,
-    parse_tga_key_color, parse_tga_pixel_aspect_ratio, resolve_alpha_from_descriptor,
+    parse_tga, parse_tga_colour_correction_table, parse_tga_developer_area,
+    parse_tga_extension_area, parse_tga_gamma, parse_tga_image_origin, parse_tga_key_color,
+    parse_tga_pixel_aspect_ratio, parse_tga_postage_stamp, resolve_alpha_from_descriptor,
     resolve_alpha_with_targa32_fallback,
 };
 use crate::error::Result;
 use crate::image::TgaImage;
-use crate::types::{AttributeBits, AttributesType, GammaValue, PixelAspectRatio};
+use crate::types::{
+    AttributeBits, AttributesType, GammaValue, ImageOrigin, PixelAspectRatio, TgaDeveloperArea,
+};
 
 /// Which spec §C.6 metadata passes [`decode_tga_for_display`] should run
 /// after the raw decode, and how.
@@ -348,4 +351,89 @@ fn apply_tone(input: &[u8], image: &mut TgaImage) -> ToneApplied {
         }
     }
     ToneApplied::None
+}
+
+/// A decoded TGA frame bundled with the file metadata that the display
+/// pipeline does **not** fold into the raster.
+///
+/// [`decode_tga_for_display`] applies the per-pixel + geometry metadata
+/// (alpha / tone / key colour / pixel aspect) and discards the rest.
+/// Some §5 / §C.6 fields, though, describe how a frame should be *placed*
+/// or *previewed* rather than how its pixels look — a caller doing its own
+/// on-screen compositing or building a browser thumbnail strip needs those
+/// alongside the finalized pixels. [`decode_tga_frame`] returns them
+/// together so the caller makes a single decode call:
+///
+/// * [`Self::image`] — the finalized, display-ready frame (exactly what
+///   [`decode_tga_for_display`] produces for the same options).
+/// * [`Self::report`] — what each pipeline pass did (see
+///   [`TgaDisplayReport`]).
+/// * [`Self::screen_origin`] — the §5.1 / §5.2 on-screen lower-left
+///   placement coordinate (orthogonal to the storage-order normalisation
+///   the decoder already did). `(0, 0)` for a file that declares no
+///   placement.
+/// * [`Self::postage_stamp`] — the §C.6.10 embedded thumbnail, decoded to
+///   the same normalised format as the main image, if the file ships one.
+/// * [`Self::developer_area`] — the §C.7 application-extensible tag
+///   directory, if present, so a caller can pull vendor payloads without a
+///   second file walk.
+#[derive(Debug, Clone)]
+pub struct TgaDecodedFrame {
+    /// The finalized, display-ready frame.
+    pub image: TgaImage,
+    /// What each display pass did.
+    pub report: TgaDisplayReport,
+    /// §5.1 / §5.2 on-screen lower-left placement coordinate. `(0, 0)`
+    /// (the [`ImageOrigin::ORIGIN`] sentinel) when the file declares none.
+    pub screen_origin: ImageOrigin,
+    /// §C.6.10 embedded thumbnail, decoded to the same normalised format
+    /// as the main image; `None` when the file ships no postage stamp.
+    pub postage_stamp: Option<TgaImage>,
+    /// §C.7 developer-area tag directory; `None` when the file has none.
+    pub developer_area: Option<TgaDeveloperArea>,
+}
+
+impl TgaDecodedFrame {
+    /// `true` when the file declared a non-`(0, 0)` on-screen placement —
+    /// a caller compositing the frame onto a larger surface should honour
+    /// [`Self::screen_origin`].
+    pub fn has_screen_offset(&self) -> bool {
+        self.screen_origin.is_offset()
+    }
+
+    /// `true` when the file shipped an embedded postage-stamp thumbnail.
+    pub fn has_postage_stamp(&self) -> bool {
+        self.postage_stamp.is_some()
+    }
+}
+
+/// Decode a TGA to a display-ready frame **and** bundle the placement /
+/// preview / developer metadata the pipeline does not fold into the raster.
+///
+/// The pixels + [`TgaDisplayReport`] are exactly what
+/// [`decode_tga_for_display_reported`] produces for `options`; the bundle
+/// additionally carries the §5.1 / §5.2 screen-origin coordinate, the
+/// §C.6.10 postage-stamp thumbnail, and the §C.7 developer-area directory
+/// — read once, from the same input, so the caller makes a single decode
+/// call instead of re-walking the file with the individual `parse_tga_*`
+/// helpers.
+///
+/// The postage stamp is decoded with [`parse_tga_postage_stamp`]; a
+/// malformed thumbnail in an otherwise-valid file is **not** fatal — it is
+/// surfaced as `postage_stamp: None` rather than failing the whole decode
+/// (the main image is what the caller asked for). All other errors are the
+/// same as [`decode_tga_for_display`].
+pub fn decode_tga_frame(input: &[u8], options: &TgaDisplayOptions) -> Result<TgaDecodedFrame> {
+    let (image, report) = decode_tga_for_display_reported(input, options)?;
+    let screen_origin = parse_tga_image_origin(input).unwrap_or(ImageOrigin::ORIGIN);
+    // A broken thumbnail shouldn't sink the main decode the caller wanted.
+    let postage_stamp = parse_tga_postage_stamp(input).ok().flatten();
+    let developer_area = parse_tga_developer_area(input);
+    Ok(TgaDecodedFrame {
+        image,
+        report,
+        screen_origin,
+        postage_stamp,
+        developer_area,
+    })
 }
