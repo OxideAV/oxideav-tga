@@ -546,10 +546,17 @@ Drives the public decoder surface (`parse_tga` + every `parse_tga_*`
 helper for footer / extension area / postage stamp / colour-correction /
 scan-line / developer area / Image ID / attributes type / attribute bits /
 interleaving flag / color map / color-map-type / border-colour) with
-arbitrary bytes. The contract is panic-free regardless of how hostile the input
+arbitrary bytes, then drives the composed display pipeline
+(`decode_tga_for_display` / `decode_tga_for_display_reported`) across the
+option toggles. The contract is panic-free regardless of how hostile the input
 is. A 16-MiB declared-raster cap inside the harness mirrors what a real
 demuxer's sanity limits would enforce (`width × height × 4 ≤ 16 MiB`);
-the library itself keeps no policy cap. Encoder-produced seeds live in
+the library itself keeps no policy cap. The display pipeline's
+colour-touching passes (alpha resolution + tone curve + key colour) run on
+the capped raster unconditionally; its pixel-aspect geometry pass runs only
+when the file's declared aspect ratio keeps the corrected raster under the
+same cap (an arbitrary `u16/u16` ratio could otherwise request a ~65535×
+resample). Encoder-produced seeds live in
 `fuzz/corpus/decode_tga/`, including a sentinel reproducer for a
 previously-fixed postage-stamp depth-validation crash.
 

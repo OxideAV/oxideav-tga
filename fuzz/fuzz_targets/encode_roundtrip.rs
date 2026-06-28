@@ -54,8 +54,8 @@ use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
     encode_tga_palette_with_entry_size, encode_tga_rle, encode_tga_rle_rgb24,
-    encode_tga_uncompressed, encode_tga_uncompressed_rgb24, parse_tga, ColorMapEntrySize, ImageType,
-    TgaPixelFormat,
+    encode_tga_uncompressed, encode_tga_uncompressed_rgb24, parse_tga, ColorMapEntrySize,
+    ImageType, TgaPixelFormat,
 };
 
 /// Upper bound on the declared raster (16 MiB worth of RGBA = 4 M

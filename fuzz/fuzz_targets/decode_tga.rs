@@ -14,7 +14,11 @@
 //! `parse_tga_scan_line_table`, `parse_tga_developer_area`,
 //! `parse_tga_color_map`, `parse_tga_color_map_type`,
 //! `parse_tga_border_color`, `parse_tga_interleaving`, and
-//! `parse_tga_image_origin`.
+//! `parse_tga_image_origin`. Finally, drive the composed §C.6 display
+//! pipeline (`decode_tga_for_display` / `_reported`) across the option
+//! toggles — the colour-touching passes run unconditionally on the capped
+//! raster; the geometry (pixel-aspect resample) pass only when the
+//! file's declared aspect ratio keeps the corrected raster under the cap.
 //!
 //! The contract under test is purely that every call *returns*: a
 //! malformed stream yields `Err(TgaError::…)`, a well-formed one
@@ -42,12 +46,13 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    compute_tga_scan_line_table, parse_tga, parse_tga_attribute_bits, parse_tga_attributes_type,
-    parse_tga_border_color, parse_tga_color_map, parse_tga_color_map_type,
-    parse_tga_colour_correction_table, parse_tga_developer_area, parse_tga_extension_area,
-    parse_tga_footer, parse_tga_image_id, parse_tga_image_origin, parse_tga_interleaving,
+    compute_tga_scan_line_table, decode_tga_for_display, decode_tga_for_display_reported,
+    parse_tga, parse_tga_attribute_bits, parse_tga_attributes_type, parse_tga_border_color,
+    parse_tga_color_map, parse_tga_color_map_type, parse_tga_colour_correction_table,
+    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_image_id,
+    parse_tga_image_origin, parse_tga_interleaving, parse_tga_pixel_aspect_ratio,
     parse_tga_postage_stamp, parse_tga_scan_line, parse_tga_scan_line_table,
-    resolve_alpha_from_descriptor,
+    resolve_alpha_from_descriptor, TgaDisplayOptions,
 };
 use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 
@@ -114,5 +119,34 @@ fuzz_target!(|data: &[u8]| {
         // in place from the descriptor's attribute-bit count. Must stay
         // panic-free on any decodable input.
         let _ = resolve_alpha_from_descriptor(data, &mut image);
+
+        // Composed §C.6 display pipeline. The colour-touching passes
+        // (alpha resolution + tone curve + key colour) operate in place on
+        // the already-capped raster, so they are run with every selectable
+        // toggle. The geometry pass (pixel aspect) is gated off here: the
+        // file-supplied aspect numerator/denominator are arbitrary u16s, so
+        // the resampled width/height can be up to ~65535× the source axis —
+        // a resource request, not a logic path, exactly like the raster cap
+        // above. Driving it unconditionally would let the harness OOM on a
+        // legitimate-but-huge declared aspect ratio.
+        let no_geom = TgaDisplayOptions::ALL.with_apply_pixel_aspect(false);
+        let _ = decode_tga_for_display(data, &no_geom);
+        let _ = decode_tga_for_display_reported(data, &no_geom);
+        let _ = decode_tga_for_display(data, &TgaDisplayOptions::NONE);
+
+        // Only drive the pixel-aspect resample when the file's declared
+        // aspect ratio keeps the corrected raster under the same 16 MiB cap.
+        if let Some(par) = parse_tga_pixel_aspect_ratio(data) {
+            if let Some((dw, dh)) = par.corrected_display_dimensions(image.width, image.height) {
+                let bounded = (dw as u64)
+                    .checked_mul(dh as u64)
+                    .and_then(|wh| wh.checked_mul(4))
+                    .map(|n| n <= MAX_OUTPUT_BYTES)
+                    .unwrap_or(false);
+                if bounded {
+                    let _ = decode_tga_for_display(data, &TgaDisplayOptions::ALL);
+                }
+            }
+        }
     }
 });

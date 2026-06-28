@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 378: the `decode_tga` fuzz harness now drives the composed display
+  pipeline (`decode_tga_for_display` / `decode_tga_for_display_reported`).
+  The colour-touching passes (alpha resolution + tone curve + key colour)
+  run unconditionally on the already-capped raster; the pixel-aspect
+  geometry pass runs only when the file's declared aspect ratio keeps the
+  corrected raster under the same 16 MiB harness cap (an arbitrary u16/u16
+  ratio could otherwise request a ~65535× resample, an OOM resource path
+  rather than a logic bug). Panic-free contract unchanged.
 - Round 378: framework `Decoder` opt-in display finalization —
   `decoder::make_decoder_with_display_options(TgaDisplayOptions)` builds a
   registry `Decoder` that finalizes each frame through
