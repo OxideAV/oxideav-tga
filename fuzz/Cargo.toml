@@ -24,9 +24,9 @@ cargo-fuzz = true
 # packet decoder's "doesn't cross scanline boundary" rule, the
 # bottom-up vertical-flip, and all of the parse_tga_* helpers
 # (footer / extension / postage-stamp / CCT / scan-line / developer)
-# are all on the harness path. No external library oracle exists in
-# this codebase (the clean-room wall bars libtga / image-rs's tga
-# submodule / ffmpeg's targa.c), so the contract is purely panic-free:
+# are all on the harness path. No external oracle is used (the
+# clean-room wall bars third-party TGA implementations), so the
+# contract is purely panic-free:
 # every call returns `Ok(_)` or `Err(TgaError::…)`, never aborts,
 # integer-overflows in debug/ASAN, indexes out of bounds, or OOMs.
 [dependencies]
