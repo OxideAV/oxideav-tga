@@ -72,6 +72,7 @@
 #[cfg(feature = "registry")]
 pub mod container;
 pub mod decoder;
+pub mod display;
 pub mod encoder;
 pub mod error;
 pub mod image;
@@ -92,6 +93,10 @@ pub use decoder::{
     parse_tga_postage_stamp_dimensions, parse_tga_scan_line, parse_tga_scan_line_table,
     parse_tga_software_id, parse_tga_software_version, parse_tga_timestamp,
     resolve_alpha_from_descriptor, resolve_alpha_with_targa32_fallback,
+};
+pub use display::{
+    decode_tga_for_display, decode_tga_for_display_reported, AlphaResolution, TgaDisplayOptions,
+    TgaDisplayReport, ToneApplied,
 };
 pub use encoder::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,

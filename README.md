@@ -378,6 +378,56 @@ text mirror of the same document are the only sources consulted.
   exposes `all_alpha_zero(&self) -> bool` and `force_opaque(&mut self)`
   as standalone primitives.
 
+## Display pipeline (composed metadata application)
+
+`parse_tga` is deliberately a **raw** decoder: it expands the on-disk
+pixel array (palette lookup, BGR→RGBA swap, 5-5-5 expansion, RLE) and
+normalises the storage order, but applies **none** of the file's own §C.6
+metadata. Every apply-path above is an isolated opt-in helper. The
+composed counterpart, `decode_tga_for_display(input, &TgaDisplayOptions)`,
+decodes a TGA and then applies the file's own metadata in **spec-faithful
+order** to produce a display-ready frame:
+
+1. **Alpha resolution** — the §C.6.13 Attributes Type (Field 24) when a
+   TGA 2.0 extension area is present, otherwise the §C.2 header
+   attribute-bit count (Field 5.6, present in every file including TGA
+   1.0). The spec ties the two together (a Field-24 value of `0` says
+   "bits 3-0 of field 5.6 should also be set to zero"), so Field 24 is the
+   authoritative source and the header bits are the 1.0-compatible
+   fallback. Pre-multiplied alpha is un-multiplied here, recovering
+   straight colour **before** the tone curves run (the un-multiply is the
+   inverse of a linear alpha scale, so it belongs on the pre-curve
+   samples).
+2. **Tone reproduction** — the §C.6.8 colour-correction table **or** the
+   §C.6.6 gamma value, **never both**. The spec makes them mutually
+   exclusive: Field 21 (Color Correction Offset) says to zero the offset
+   "if … the Gamma Value setting is sufficient". When a correction table
+   is present the pipeline applies it and skips gamma; otherwise it applies
+   gamma. (Applying both would double-correct.)
+3. **Key colour** (§C.6.4, the "background / transparent colour the screen
+   would be cleared to") — a compositing decision made against the
+   *post-tone* colour, so it runs after the tone curves.
+4. **Pixel aspect ratio** (§C.6.5) — a geometry change (resample to square
+   display pixels). It runs **last** so the per-pixel colour passes above
+   operate on the stored raster, not an already-stretched one.
+
+Each pass is independently gated by the typed `TgaDisplayOptions` (`ALL` /
+`NONE` constants, `with_resolve_alpha` / `with_apply_tone` /
+`with_apply_key_color` / `with_apply_pixel_aspect` builders,
+`is_passthrough`). `TgaDisplayOptions::default()` enables all four passes;
+`TgaDisplayOptions::NONE` makes `decode_tga_for_display` byte-identical to
+`parse_tga`. `decode_tga_for_display_reported` additionally returns a
+`TgaDisplayReport` describing what each pass did (`AlphaResolution` /
+`ToneApplied` / keyed-pixel count / resampled flag, plus `applied_tone` /
+`applied_key_color` / `is_colour_geometry_noop` predicates) so a caller can
+audit which rule fired. The spec does not state a single canonical
+pipeline; the order above is derived from the per-field constraints and is
+the crate's defensible reading — where the spec is silent on a pass
+boundary (e.g. the exact placement of the pre-multiplied-alpha un-multiply
+relative to gamma) the choice is documented here as the crate's decision.
+`parse_tga`'s raw contract is unchanged; the pipeline is strictly additive
+and works in both the registry and standalone builds.
+
 ## Encode
 
 | Type | Compression  | Pixel input  | API                          |

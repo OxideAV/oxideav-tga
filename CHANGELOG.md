@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Round 378: **composed, spec-ordered metadata-application pipeline** —
+  the long-missing counterpart to the raw `parse_tga` decoder. Every §C.6
+  metadata apply-path already existed as an *isolated* opt-in helper
+  (`GammaValue::apply_to_image`, `KeyColor::key_out_image`,
+  `AttributesType::apply_to_image`,
+  `TgaColourCorrectionTable::apply_to_image`,
+  `PixelAspectRatio::apply_to_image`, `resolve_alpha_*`), but `parse_tga`
+  applies none of them — it returns the raw decoded samples. New
+  `decode_tga_for_display(input, &TgaDisplayOptions)` decodes a TGA then
+  applies the file's **own** metadata in spec-faithful order:
+  (1) **alpha resolution** — the §C.6.13 Attributes Type (Field 24) when a
+  TGA 2.0 extension area is present, else the §C.2 header attribute-bit
+  count (Field 5.6); pre-multiplied alpha is un-multiplied here, recovering
+  straight colour *before* the tone curves; (2) **tone reproduction** — the
+  §C.6.8 colour-correction table *or* the §C.6.6 gamma value, **never both**
+  (spec §C.6 Field 21 makes them alternatives: "if … the Gamma Value setting
+  is sufficient, set [the colour-correction offset] to zero"); (3) the
+  §C.6.4 **key colour** chroma-key, applied against the post-tone colour;
+  (4) the §C.6.5 **pixel aspect** resample, which changes geometry and so
+  runs last. Each pass is independently gated by the new typed
+  `TgaDisplayOptions` (`ALL` / `NONE` constants + `with_*` builders +
+  `is_passthrough`); `NONE` reproduces `parse_tga` byte-for-byte. New
+  `decode_tga_for_display_reported` additionally returns a
+  `TgaDisplayReport` (`AlphaResolution` / `ToneApplied` / keyed-pixel count
+  / resampled flag, plus `applied_tone` / `applied_key_color` /
+  `is_colour_geometry_noop` predicates) so a caller can audit exactly which
+  rule fired. `parse_tga`'s raw-decode contract is unchanged; the pipeline
+  is strictly additive and works in both the registry and standalone
+  (`default-features = false`) builds. New `tests/round378.rs` (17 tests):
+  raw/composed `NONE` equivalence, metadata-free-file default == raw,
+  each pass applying, observable **order-dependence** (pre-multiplied alpha
+  × gamma decodes differently under the wrong order), per-toggle gating,
+  spec-correct defaults, the colour-correction-wins-over-gamma alternative,
+  and the alpha-less-format no-ops.
 - Round 366: §5.1 / §5.2 **Image Origin** typed view — the last
   fixed-header field without a typed surface. The X-origin (Field 5.1,
   bytes 8-9) and Y-origin (Field 5.2, bytes 10-11) record "the absolute
