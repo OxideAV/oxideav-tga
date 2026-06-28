@@ -27,8 +27,8 @@
 //! regardless of how hostile the bytes are. The return values are
 //! intentionally discarded; a round-trip oracle would need a trusted
 //! decoder of the *same* arbitrary bytes, which doesn't exist in this
-//! codebase (the clean-room wall bars libtga / image-rs's tga
-//! submodule / ffmpeg's targa.c as a cross-decode oracle).
+//! codebase (the clean-room wall bars any third-party decoder as a
+//! cross-decode oracle).
 //!
 //! # Why the raster cap
 //!

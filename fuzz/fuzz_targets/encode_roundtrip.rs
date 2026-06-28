@@ -44,9 +44,8 @@
 //!
 //! # Why no encoder-side oracle
 //!
-//! The same clean-room wall that bars libtga / image-rs's tga
-//! submodule / ffmpeg's targa.c as a decode oracle in `decode_tga`
-//! applies here. We only have ourselves; the strongest assertion we
+//! The same clean-room wall that bars any third-party decoder as an
+//! oracle in `decode_tga` applies here. We only have ourselves; the strongest assertion we
 //! can make without an oracle is "encode-then-decode preserves frame
 //! shape," and that's what this target enforces.
 
