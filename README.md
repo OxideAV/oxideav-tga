@@ -1,5 +1,7 @@
 # oxideav-tga
 
+[![CI](https://github.com/OxideAV/oxideav-tga/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-tga/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/oxideav-tga.svg)](https://crates.io/crates/oxideav-tga) [![docs.rs](https://docs.rs/oxideav-tga/badge.svg)](https://docs.rs/oxideav-tga) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Pure-Rust Truevision TGA (TARGA) reader/writer for the
 [`oxideav`](https://github.com/OxideAV/oxideav) framework.
 
