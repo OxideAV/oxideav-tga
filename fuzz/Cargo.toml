@@ -83,3 +83,18 @@ name = "extension_roundtrip"
 path = "fuzz_targets/extension_roundtrip.rs"
 test = false
 doc = false
+
+# Bit-exact encode↔decode *identity* target for the lossless writers.
+# Where `encode_roundtrip` only asserts frame shape (because it drives the
+# lossy writers too), this target drives only the writers the decoder
+# recovers byte-for-byte (RGBA uncompressed/RLE, RGB24 uncompressed/RLE,
+# Gray8, the default palette writers, and the explicit Bits24/Bits32
+# colour-map entry sizes) and asserts the decoded raster equals a
+# locally-computed expected buffer. The lossy 15/16-bit colour-map entry
+# sizes are excluded (no clean-room-derivable expected output without
+# re-implementing the quantiser in the harness).
+[[bin]]
+name = "roundtrip_identity"
+path = "fuzz_targets/roundtrip_identity.rs"
+test = false
+doc = false
