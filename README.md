@@ -553,7 +553,7 @@ oxideav_tga::register(&mut codecs, &mut containers);
 
 ## Fuzzing
 
-Three cargo-fuzz harnesses live under `fuzz/`. `.github/workflows/fuzz.yml`
+Four cargo-fuzz harnesses live under `fuzz/`. `.github/workflows/fuzz.yml`
 runs them daily, sharing a 30-minute budget (the reusable workflow
 auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly).
 
@@ -629,10 +629,35 @@ logic under test is the offset arithmetic, not the pixel loop the other
 two targets already stress at size. Minimised seeds live in
 `fuzz/corpus/extension_roundtrip/`.
 
+### `roundtrip_identity`
+
+The **bit-exact** complement to `encode_roundtrip`. That target asserts
+only frame *shape* because it drives every writer, including the lossy ones
+(15/16-bit colour-map quantisation, the RGB24-input writers that always
+drop to 24 bpp). `roundtrip_identity` drives only the writers the decoder
+recovers **byte-for-byte** — `encode_tga_uncompressed` / `encode_tga_rle`
+(RGBA, lossless in both the 32-bpp and the all-opaque 24-bpp branch),
+`encode_tga_uncompressed_rgb24` / `encode_tga_rle_rgb24` (colour preserved,
+alpha forced to `0xFF`), `encode_tga_grayscale` / `encode_tga_grayscale_rle`,
+the default palette writers, and the explicit 24-bit / 32-bit colour-map
+entry sizes on both colour-mapped types — and asserts the decoded raster
+equals a locally-computed expected buffer. The lossy 15/16-bit colour-map
+entry sizes are excluded (there is no clean-room-derivable expected output
+without re-implementing the 5-bit quantiser in the harness). A `parse_tga`
+failure on a file the encoder just accepted trips the identity assertion —
+so the target also pins the "the encoder never emits a file it can't read
+back" contract. The same in-tree matrix runs deterministically in the CI
+`cargo test` suite (`tests/round403*.rs`): a seeded PRNG paints eleven
+dimension shapes through the lossless writers, hand-built files exercise the
+decode-only storage-order / 15-16-bit / colour-map-origin paths, and an
+exhaustive image-type × depth × colour-map × descriptor sweep pins the
+no-panic + typed-error contract.
+
 ```sh
 cargo +nightly fuzz run decode_tga -- -runs=10000
 cargo +nightly fuzz run encode_roundtrip -- -runs=10000
 cargo +nightly fuzz run extension_roundtrip -- -runs=10000
+cargo +nightly fuzz run roundtrip_identity -- -runs=10000
 ```
 
 ## Benchmarks
