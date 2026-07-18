@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `register_runtime` + the `oxideav_core::register!` entry point, so
+  `oxideav_meta::register_all` now dispatches this crate automatically;
+  the two-registry `register` remains the direct API.
+
+### Added
+
 - Round 378: `TgaDecodedFrame` bundle + `decode_tga_frame(input, &options)`
   — one decode call that returns the finalized display-ready frame **plus**
   the file metadata the pipeline does not fold into the raster: the
