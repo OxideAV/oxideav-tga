@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/OxideAV/oxideav-tga/compare/v0.0.2...v0.0.3) - 2026-07-18
+
+### Other
+
+- RuntimeContext entry point — register_runtime + the register! macro
+- Round 403: README — document the roundtrip_identity fuzz target + CI matrix
+- Round 403: new roundtrip_identity fuzz target — bit-exact encode/decode oracle
+- Round 403: §C.5 RLE packet-boundary stress + extension postage-stamp pixel round-trip
+- Round 403: in-tree hostile-input hardening — no-panic + typed-error contract
+- Round 403: decode-only paths — storage-order flips, 15/16-bit expansion, cmap origin
+- Round 403: deterministic bit-exact identity matrix across the writer/type set
+- add CI / crates.io / docs.rs / MIT-license badges
+- complete fuzz-harness external-impl denial scrub
+- Round 378: scrub external-impl names from fuzz harness doc comments
+- Round 378: TgaDecodedFrame bundle + decode_tga_frame
+- Round 378: fuzz the composed display pipeline in decode_tga
+- Round 378: framework Decoder opt-in display finalization + pts propagation
+- Round 378: composed spec-ordered metadata-application pipeline
+- Round 366: fix broken TgaError::Invalid intra-doc links in encoder.rs
+- Round 366: §5.1/§5.2 Image Origin write side — set_image_origin
+- Round 366: §5.1/§5.2 Image Origin typed view + parse_tga_image_origin
+- Round 354: full entry-size breadth matrix test + README fuzz note
+- Round 354: fuzz the explicit colour-map entry-size writer paths
+- Round 354: colour-map entry-size matrix on the encode side (§C.2)
+- Round 345: §C.2 Color Map Type typed view + TIPS border-colour feature
+- Round 337: §C.6.4 Key Color (Field 18) apply-path — chroma-keying
+- Round 332: one-call §C.7 developer-payload lookup by tag id
+- Round 327: generate §C.6.10 Postage Stamp Image (Field 26) from a decoded image
+- Round 323: apply §C.6.5 Pixel Aspect Ratio (Field 19) — resample to square display pixels
+- Round 319: fuzz extension-area writer + offset back-patch arithmetic
+- Round 316: §C.2 Image Descriptor interleaving flag (bits 7-6) typed view
+- refresh to current status, drop per-round changelog cruft
+
 ### Added
 
 - `register_runtime` + the `oxideav_core::register!` entry point, so
