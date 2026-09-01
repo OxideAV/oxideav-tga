@@ -3099,11 +3099,13 @@ impl TgaColorMap {
     }
 }
 
+#[doc(hidden)]
 #[inline]
 pub fn read_u16_le(buf: &[u8], off: usize) -> u16 {
     u16::from_le_bytes([buf[off], buf[off + 1]])
 }
 
+#[doc(hidden)]
 #[inline]
 pub fn read_u32_le(buf: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
