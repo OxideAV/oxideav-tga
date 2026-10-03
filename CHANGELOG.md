@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/OxideAV/oxideav-tga/compare/v0.0.3...v0.0.4) - 2026-10-03
+
+### Other
+
+- README in the contract's section order; CHANGELOG Changed / Deprecated for the contract
+- ci-standalone runs tests + clippy without the registry feature; fuzz workflow notes the contract targets
+- Image-crate contract: probe/info/decode/encode root API, native layouts, options, registry bridge
+- hide internal pub surface from rustdoc/semver (fleet rule 2026-09-01)
+
 ### Changed
 
 - **Image-crate contract (`IMAGE_CRATE_API`).** The crate root now
