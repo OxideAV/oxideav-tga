@@ -19,6 +19,9 @@
 //!   image type (there the map is the working palette, not a border
 //!   colour) and for a map-absent file.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_palette, encode_tga_uncompressed, parse_header, parse_tga_border_color,
     parse_tga_color_map, parse_tga_color_map_type, ColorMapType,

@@ -19,6 +19,9 @@
 //! 24-bit BGR, 32-bit BGRA), and the Color Map Origin is recorded so a
 //! caller can resolve logical palette indices via `TgaColorMap::get`.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{encode_tga_palette, parse_tga, parse_tga_color_map, TgaColorMap};
 
 /// Parameters for a minimal hand-built TGA header + color map. Lets us
@@ -127,7 +130,7 @@ fn reads_color_map_from_encoder_palette_file() {
     // entry the parser surfaced — the public color map agrees with the
     // decoder's internal palette.
     let img = parse_tga(&base).unwrap();
-    for px in img.data.chunks_exact(4) {
+    for px in img.data().chunks_exact(4) {
         let rgba = [px[0], px[1], px[2], px[3]];
         assert!(
             map.entries.contains(&rgba),
@@ -210,7 +213,7 @@ fn surfaces_nonzero_color_map_origin() {
     // The full decode of the same file agrees: pixels are red, green, red.
     let img = parse_tga(&file).unwrap();
     assert_eq!(
-        img.data,
+        img.data(),
         [[255, 0, 0, 255], [0, 255, 0, 255], [255, 0, 0, 255]].concat()
     );
 }

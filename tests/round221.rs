@@ -34,6 +34,9 @@
 //!   - Non-RGBA image → no-op (still surfaces declared attributes when
 //!     present).
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_grayscale, encode_tga_rle, encode_tga_uncompressed, encode_tga_with_extension,
     parse_tga, resolve_alpha_with_targa32_fallback, AttributesType, ExtensionAreaInput, TgaImage,
@@ -47,78 +50,57 @@ use oxideav_tga::{
 #[test]
 fn all_alpha_zero_true_for_rgba_with_every_alpha_byte_zero() {
     // 2 × 1 RGBA, both alphas 0.
-    let img = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x00],
-        pts: None,
-    };
+    let img = TgaImage::packed(
+        2,
+        1,
+        TgaPixelFormat::Rgba,
+        vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x00],
+    );
     assert!(img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_false_when_any_alpha_is_nonzero() {
-    let img = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x01],
-        pts: None,
-    };
+    let img = TgaImage::packed(
+        2,
+        1,
+        TgaPixelFormat::Rgba,
+        vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x01],
+    );
     assert!(!img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_false_for_rgb24() {
-    let img = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgb24,
-        data: vec![0xAA, 0xBB, 0xCC],
-        pts: None,
-    };
+    let img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0xAA, 0xBB, 0xCC]);
     assert!(!img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_false_for_gray8() {
-    let img = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: vec![0x42],
-        pts: None,
-    };
+    let img = TgaImage::packed(1, 1, TgaPixelFormat::Gray8, vec![0x42]);
     assert!(!img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_false_for_empty_rgba() {
-    let img = TgaImage {
-        width: 0,
-        height: 0,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![],
-        pts: None,
-    };
+    let img = TgaImage::packed(0, 0, TgaPixelFormat::Rgba, vec![]);
     assert!(!img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_true_for_fully_opaque_then_zeroed_alpha() {
     // RGB unchanged from a real decode; alpha bytes wiped to 0.
-    let img = TgaImage {
-        width: 3,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![
+    let img = TgaImage::packed(
+        3,
+        1,
+        TgaPixelFormat::Rgba,
+        vec![
             0xFF, 0x00, 0x00, 0x00, // red, A=0
             0x00, 0xFF, 0x00, 0x00, // green, A=0
             0x00, 0x00, 0xFF, 0x00, // blue, A=0
         ],
-        pts: None,
-    };
+    );
     assert!(img.all_alpha_zero());
 }
 
@@ -128,16 +110,15 @@ fn all_alpha_zero_true_for_fully_opaque_then_zeroed_alpha() {
 
 #[test]
 fn force_opaque_writes_ff_to_every_alpha_byte() {
-    let mut img = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x80],
-        pts: None,
-    };
+    let mut img = TgaImage::packed(
+        2,
+        1,
+        TgaPixelFormat::Rgba,
+        vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x80],
+    );
     img.force_opaque();
     assert_eq!(
-        img.data,
+        img.data(),
         vec![0xAA, 0xBB, 0xCC, 0xFF, 0x11, 0x22, 0x33, 0xFF],
         "colour channels untouched, alpha → 0xFF"
     );
@@ -145,41 +126,28 @@ fn force_opaque_writes_ff_to_every_alpha_byte() {
 
 #[test]
 fn force_opaque_is_noop_on_rgb24() {
-    let mut img = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgb24,
-        data: vec![0xAA, 0xBB, 0xCC],
-        pts: None,
-    };
-    let before = img.data.clone();
+    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0xAA, 0xBB, 0xCC]);
+    let before = img.data().to_vec();
     img.force_opaque();
-    assert_eq!(img.data, before);
+    assert_eq!(img.data(), before);
 }
 
 #[test]
 fn force_opaque_is_noop_on_gray8() {
-    let mut img = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: vec![0x42],
-        pts: None,
-    };
-    let before = img.data.clone();
+    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Gray8, vec![0x42]);
+    let before = img.data().to_vec();
     img.force_opaque();
-    assert_eq!(img.data, before);
+    assert_eq!(img.data(), before);
 }
 
 #[test]
 fn force_opaque_then_all_alpha_zero_is_false() {
-    let mut img = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![0x10, 0x20, 0x30, 0x00, 0x40, 0x50, 0x60, 0x00],
-        pts: None,
-    };
+    let mut img = TgaImage::packed(
+        2,
+        1,
+        TgaPixelFormat::Rgba,
+        vec![0x10, 0x20, 0x30, 0x00, 0x40, 0x50, 0x60, 0x00],
+    );
     assert!(img.all_alpha_zero());
     img.force_opaque();
     assert!(!img.all_alpha_zero());
@@ -212,7 +180,7 @@ fn resolver_no_extension_area_all_zero_alpha_forces_opaque() {
     let file = encode_tga_uncompressed(4, 4, &rgba).expect("encode");
 
     let mut img = parse_tga(&file).expect("decode");
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
     assert!(img.all_alpha_zero(), "decoded as all-zero alpha");
 
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
@@ -220,9 +188,9 @@ fn resolver_no_extension_area_all_zero_alpha_forces_opaque() {
         declared.is_none(),
         "file has no extension area → no declared AttributesType"
     );
-    assert!(img.data.chunks_exact(4).all(|p| p[3] == 0xFF));
+    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0xFF));
     // Colour channels unchanged.
-    for (idx, p) in img.data.chunks_exact(4).enumerate() {
+    for (idx, p) in img.data().chunks_exact(4).enumerate() {
         let x = (idx % 4) as u8;
         let y = (idx / 4) as u8;
         assert_eq!(p[0], x);
@@ -240,10 +208,10 @@ fn resolver_no_extension_area_some_nonzero_alpha_leaves_image_unchanged() {
     let file = encode_tga_uncompressed(2, 2, &rgba).expect("encode");
 
     let mut img = parse_tga(&file).expect("decode");
-    let snapshot = img.data.clone();
+    let snapshot = img.data().to_vec();
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert!(declared.is_none(), "no extension area → None");
-    assert_eq!(img.data, snapshot, "leave the image untouched");
+    assert_eq!(img.data(), snapshot, "leave the image untouched");
 }
 
 #[test]
@@ -268,7 +236,7 @@ fn resolver_declared_attributes_type_takes_precedence_over_fallback() {
 
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert_eq!(declared, Some(AttributesType::NoAlpha));
-    assert!(img.data.chunks_exact(4).all(|p| p[3] == 0xFF));
+    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0xFF));
 }
 
 #[test]
@@ -315,7 +283,7 @@ fn resolver_declared_premultiplied_unmultiplies_even_with_zero_alpha() {
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert_eq!(declared, Some(AttributesType::PremultipliedAlpha));
     assert!(
-        img.data.chunks_exact(4).all(|p| p == [0, 0, 0, 0]),
+        img.data().chunks_exact(4).all(|p| p == [0, 0, 0, 0]),
         "A=0 pixels become transparent black per spec",
     );
 }
@@ -325,19 +293,13 @@ fn resolver_rgb24_image_is_left_untouched_no_extension() {
     // RGB24 carries no alpha — the resolver is a strict no-op on the
     // pixels and surfaces whatever attributes the file declares.
     // Standalone (no extension area) → returns `None`.
-    let mut img = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgb24,
-        data: vec![0x10, 0x20, 0x30],
-        pts: None,
-    };
-    let before = img.data.clone();
+    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0x10, 0x20, 0x30]);
+    let before = img.data().to_vec();
     // We can pass any input bytes — the function returns early on the
     // pixel-format check before touching the buffer.
     let declared = resolve_alpha_with_targa32_fallback(&[], &mut img);
     assert!(declared.is_none());
-    assert_eq!(img.data, before);
+    assert_eq!(img.data(), before);
 }
 
 #[test]
@@ -356,11 +318,11 @@ fn resolver_gray8_image_with_declared_extension_surfaces_attributes() {
     )
     .expect("wrap");
     let mut img = parse_tga(&file).expect("decode");
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert_eq!(declared, Some(AttributesType::UndefinedRetain));
     // Gray8 buffer untouched.
-    assert_eq!(img.data, vec![0x10, 0x20, 0x30, 0x40]);
+    assert_eq!(img.data(), vec![0x10, 0x20, 0x30, 0x40]);
 }
 
 #[test]
@@ -374,5 +336,5 @@ fn resolver_rle_file_with_zero_alpha_force_opaque() {
     assert!(img.all_alpha_zero());
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert!(declared.is_none());
-    assert!(img.data.chunks_exact(4).all(|p| p[3] == 0xFF));
+    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0xFF));
 }

@@ -15,6 +15,9 @@
 //! * `KeyColor::key_out_image` — set alpha to 0 for every RGB-matching
 //!   pixel of an RGBA image, returning the count keyed out.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_extension_area,
     ExtensionAreaInput, KeyColor, TgaImage, TgaPixelFormat,
@@ -22,13 +25,7 @@ use oxideav_tga::{
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
     assert_eq!(data.len(), (width * height * 4) as usize);
-    TgaImage {
-        width,
-        height,
-        pixel_format: TgaPixelFormat::Rgba,
-        data,
-        pts: None,
-    }
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
 }
 
 #[test]
@@ -73,11 +70,11 @@ fn key_out_image_makes_matching_pixels_transparent() {
     assert_eq!(keyed, 2, "both magenta pixels keyed out");
 
     // Magenta pixels: alpha zeroed, colour bytes untouched.
-    assert_eq!(&img.data[0..4], &[0xFF, 0x00, 0xFF, 0x00]);
-    assert_eq!(&img.data[4..8], &[0xFF, 0x00, 0xFF, 0x00]);
+    assert_eq!(&img.data()[0..4], &[0xFF, 0x00, 0xFF, 0x00]);
+    assert_eq!(&img.data()[4..8], &[0xFF, 0x00, 0xFF, 0x00]);
     // Non-matching pixels: untouched.
-    assert_eq!(&img.data[8..12], &red);
-    assert_eq!(&img.data[12..16], &blue);
+    assert_eq!(&img.data()[8..12], &red);
+    assert_eq!(&img.data()[12..16], &blue);
 }
 
 #[test]
@@ -86,7 +83,7 @@ fn key_out_image_no_match_is_zero_and_unchanged() {
     let mut img = rgba_image(2, 1, data.clone());
     let key = KeyColor::from_argb([0x00, 0x77, 0x88, 0x99]);
     assert_eq!(key.key_out_image(&mut img), 0);
-    assert_eq!(img.data, data, "no pixel touched when nothing matches");
+    assert_eq!(img.data(), data, "no pixel touched when nothing matches");
 }
 
 #[test]
@@ -100,7 +97,7 @@ fn key_out_image_keys_all_pixels_for_solid_match() {
     let mut img = rgba_image(3, 2, data);
     let key = KeyColor::from_argb([0x00, key_rgb[0], key_rgb[1], key_rgb[2]]);
     assert_eq!(key.key_out_image(&mut img), 6);
-    assert!(img.data.chunks_exact(4).all(|p| p[3] == 0));
+    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0));
 }
 
 #[test]
@@ -132,14 +129,14 @@ fn carry_then_apply_roundtrip_through_extension_area() {
 
     // Decode the image and apply the recovered key.
     let mut img = parse_tga(&file).expect("decodes");
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
     let keyed = key.key_out_image(&mut img);
     assert_eq!(keyed, 2, "two green pixels keyed out");
 
     // The two green pixels are now transparent; red and blue are opaque.
-    let transparent: Vec<bool> = img.data.chunks_exact(4).map(|p| p[3] == 0).collect();
+    let transparent: Vec<bool> = img.data().chunks_exact(4).map(|p| p[3] == 0).collect();
     let green_match: Vec<bool> = img
-        .data
+        .data()
         .chunks_exact(4)
         .map(|p| p[0] == key_rgb[0] && p[1] == key_rgb[1] && p[2] == key_rgb[2])
         .collect();
@@ -151,26 +148,14 @@ fn carry_then_apply_roundtrip_through_extension_area() {
 #[test]
 fn key_out_image_noop_for_non_rgba_formats() {
     // Gray8 / Rgb24 carry no alpha channel; keying is a no-op (returns 0).
-    let mut gray = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: vec![0x10, 0x20],
-        pts: None,
-    };
+    let mut gray = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![0x10, 0x20]);
     let key = KeyColor::from_argb([0x00, 0x10, 0x10, 0x10]);
     assert_eq!(key.key_out_image(&mut gray), 0);
-    assert_eq!(gray.data, vec![0x10, 0x20], "gray data untouched");
+    assert_eq!(gray.data(), vec![0x10, 0x20], "gray data untouched");
 
-    let mut rgb = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgb24,
-        data: vec![0x10, 0x10, 0x10],
-        pts: None,
-    };
+    let mut rgb = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0x10, 0x10, 0x10]);
     assert_eq!(key.key_out_image(&mut rgb), 0);
-    assert_eq!(rgb.data, vec![0x10, 0x10, 0x10], "rgb24 data untouched");
+    assert_eq!(rgb.data(), vec![0x10, 0x10, 0x10], "rgb24 data untouched");
 }
 
 #[test]
@@ -183,6 +168,6 @@ fn unset_black_key_still_keys_black_pixels() {
     assert!(key.is_unset());
     let mut img = rgba_image(2, 1, vec![0x00, 0x00, 0x00, 0xFF, 0x01, 0x00, 0x00, 0xFF]);
     assert_eq!(key.key_out_image(&mut img), 1);
-    assert_eq!(&img.data[0..4], &[0x00, 0x00, 0x00, 0x00]);
-    assert_eq!(&img.data[4..8], &[0x01, 0x00, 0x00, 0xFF]);
+    assert_eq!(&img.data()[0..4], &[0x00, 0x00, 0x00, 0x00]);
+    assert_eq!(&img.data()[4..8], &[0x01, 0x00, 0x00, 0xFF]);
 }

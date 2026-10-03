@@ -27,6 +27,9 @@
 //! random-access row must be byte-identical to the corresponding row
 //! of the full raster, across all six writer-covered image types.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     compute_tga_scan_line_table, encode_tga_grayscale, encode_tga_grayscale_rle,
     encode_tga_palette, encode_tga_palette_rle, encode_tga_rle, encode_tga_uncompressed,
@@ -71,7 +74,7 @@ fn banded_rgba(w: u16, h: u16) -> Vec<u8> {
 /// whole-image decode. The crate's writers are top-down, so saved
 /// index == display row here.
 fn assert_rows_match(input: &[u8], table: &TgaScanLineTable, full: &TgaImage) {
-    let bpp = match full.pixel_format {
+    let bpp = match full.format {
         TgaPixelFormat::Gray8 => 1usize,
         _ => 4,
     };
@@ -81,10 +84,10 @@ fn assert_rows_match(input: &[u8], table: &TgaScanLineTable, full: &TgaImage) {
         let row = parse_tga_scan_line(input, table, y).expect("row decode");
         assert_eq!(row.width, full.width);
         assert_eq!(row.height, 1);
-        assert_eq!(row.pixel_format, full.pixel_format);
+        assert_eq!(row.format, full.format);
         assert_eq!(
-            row.data,
-            &full.data[y * stride..(y + 1) * stride],
+            row.data(),
+            &full.data()[y * stride..(y + 1) * stride],
             "row {y} mismatch"
         );
     }
@@ -158,7 +161,7 @@ fn grayscale_uncompressed_and_rle_rows_match() {
         let tga = encode(w, h, &gray).unwrap();
         let table = compute_tga_scan_line_table(&tga).unwrap();
         let full = parse_tga(&tga).unwrap();
-        assert_eq!(full.pixel_format, TgaPixelFormat::Gray8);
+        assert_eq!(full.format, TgaPixelFormat::Gray8);
         assert_rows_match(&tga, &table, &full);
     }
 }
@@ -192,14 +195,14 @@ fn bottom_up_file_table_is_in_saved_order() {
 
     // Saved index 0 = display bottom row (red, green).
     let saved0 = parse_tga_scan_line(&tga, &table, 0).unwrap();
-    assert_eq!(saved0.data, &full.data[8..16]);
+    assert_eq!(saved0.data(), &full.data()[8..16]);
     assert_eq!(
-        saved0.data,
+        saved0.data(),
         [255, 0, 0, 255, 0, 255, 0, 255] // red, green in RGBA
     );
     // Saved index 1 = display top row (blue, white).
     let saved1 = parse_tga_scan_line(&tga, &table, 1).unwrap();
-    assert_eq!(saved1.data, &full.data[0..8]);
+    assert_eq!(saved1.data(), &full.data()[0..8]);
 }
 
 /// Hand-built 3×1 uncompressed 24 bpp file with right-to-left columns
@@ -221,9 +224,9 @@ fn right_to_left_columns_are_mirrored() {
     let full = parse_tga(&tga).unwrap();
     let table = compute_tga_scan_line_table(&tga).unwrap();
     let row = parse_tga_scan_line(&tga, &table, 0).unwrap();
-    assert_eq!(row.data, full.data);
+    assert_eq!(row.data(), full.data());
     // Left-to-right after mirroring: blue, green, red.
-    assert_eq!(row.data, [0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255]);
+    assert_eq!(row.data(), [0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255]);
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +249,7 @@ fn rle_packet_spanning_rows_is_rejected_for_table_but_decodes_whole() {
     tga.extend_from_slice(&[0x83, 10, 20, 30]);
 
     let full = parse_tga(&tga).expect("whole-image decode accepts the file");
-    assert_eq!(full.data.len(), 2 * 2 * 4);
+    assert_eq!(full.data().len(), 2 * 2 * 4);
 
     let err = compute_tga_scan_line_table(&tga).unwrap_err();
     assert!(

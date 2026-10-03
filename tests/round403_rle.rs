@@ -11,6 +11,9 @@
 //! pixel-exact recovery — a stronger oracle than the fuzz harness's
 //! offset-arithmetic check.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::*;
 
 fn base_header(image_type: u8, w: u16, h: u16, depth: u8, desc: u8) -> Vec<u8> {
@@ -35,8 +38,8 @@ fn rle_run_longer_than_128_splits_and_recovers() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, w as u32);
     for i in 0..w as usize {
-        assert_eq!(&img.data[i * 4..i * 4 + 3], &[0x11, 0x22, 0x33], "px{i}");
-        assert_eq!(img.data[i * 4 + 3], 0xFF);
+        assert_eq!(&img.data()[i * 4..i * 4 + 3], &[0x11, 0x22, 0x33], "px{i}");
+        assert_eq!(img.data()[i * 4 + 3], 0xFF);
     }
 }
 
@@ -49,7 +52,7 @@ fn rle_exact_128_run_boundary() {
         let img = parse_tga(&bytes).unwrap();
         for i in 0..row_len as usize {
             assert_eq!(
-                &img.data[i * 4..i * 4 + 3],
+                &img.data()[i * 4..i * 4 + 3],
                 &[0x40, 0x50, 0x60],
                 "row_len {row_len} px{i}"
             );
@@ -70,7 +73,11 @@ fn rle_alternating_raw_packets_recover() {
     let bytes = encode_tga_rle_rgb24(w, 1, &rgb).unwrap();
     let img = parse_tga(&bytes).unwrap();
     for i in 0..w as usize {
-        assert_eq!(&img.data[i * 4..i * 4 + 3], &rgb[i * 3..i * 3 + 3], "px{i}");
+        assert_eq!(
+            &img.data()[i * 4..i * 4 + 3],
+            &rgb[i * 3..i * 3 + 3],
+            "px{i}"
+        );
     }
 }
 
@@ -84,9 +91,9 @@ fn rle_run_does_not_cross_scanline_in_encoder() {
     let rgb: Vec<u8> = [0xAAu8, 0xBB, 0xCC].repeat(w as usize * h as usize);
     let bytes = encode_tga_rle_rgb24(w, h, &rgb).unwrap();
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data.len(), w as usize * h as usize * 4);
+    assert_eq!(img.data().len(), w as usize * h as usize * 4);
     for i in 0..(w as usize * h as usize) {
-        assert_eq!(&img.data[i * 4..i * 4 + 3], &[0xAA, 0xBB, 0xCC]);
+        assert_eq!(&img.data()[i * 4..i * 4 + 3], &[0xAA, 0xBB, 0xCC]);
     }
 }
 
@@ -99,9 +106,9 @@ fn rle_decoder_lenient_about_hand_built_cross_scanline_run() {
     v.push(0x80 | (6 - 1)); // run packet, count = 6
     v.extend_from_slice(&[0xCC, 0xBB, 0xAA]); // BGR -> RGB (0xAA,0xBB,0xCC)
     let img = parse_tga(&v).unwrap();
-    assert_eq!(img.data.len(), 3 * 2 * 4);
+    assert_eq!(img.data().len(), 3 * 2 * 4);
     for i in 0..6 {
-        assert_eq!(&img.data[i * 4..i * 4 + 3], &[0xAA, 0xBB, 0xCC], "px{i}");
+        assert_eq!(&img.data()[i * 4..i * 4 + 3], &[0xAA, 0xBB, 0xCC], "px{i}");
     }
 }
 
@@ -124,13 +131,12 @@ fn extension_postage_stamp_pixel_roundtrip() {
         .collect();
     let mut stamp_rgba = stamp_rgba;
     stamp_rgba[3] = 0x20; // keep it 32bpp too
-    let stamp = TgaImage {
-        width: sw as u32,
-        height: sh as u32,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: stamp_rgba.clone(),
-        pts: None,
-    };
+    let stamp = TgaImage::packed(
+        sw as u32,
+        sh as u32,
+        TgaPixelFormat::Rgba,
+        stamp_rgba.clone(),
+    );
 
     let ext = ExtensionAreaInput {
         postage_stamp: Some(stamp),
@@ -140,7 +146,7 @@ fn extension_postage_stamp_pixel_roundtrip() {
 
     // main image round-trips
     let main = parse_tga(&file).unwrap();
-    assert_eq!(main.data, base_rgba, "main image");
+    assert_eq!(main.data(), base_rgba, "main image");
 
     // stamp round-trips pixel-exact
     let recovered = parse_tga_postage_stamp(&file)
@@ -148,5 +154,5 @@ fn extension_postage_stamp_pixel_roundtrip() {
         .expect("stamp present");
     assert_eq!(recovered.width, sw as u32);
     assert_eq!(recovered.height, sh as u32);
-    assert_eq!(recovered.data, stamp_rgba, "postage-stamp pixels");
+    assert_eq!(recovered.data(), stamp_rgba, "postage-stamp pixels");
 }

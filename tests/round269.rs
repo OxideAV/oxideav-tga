@@ -39,6 +39,9 @@
 //! `TgaDeveloperArea::parse` / `payload` / `parse_tga_developer_area`
 //! surface — strictly additive.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga_developer_area,
     DeveloperTagInput, ExtensionAreaInput, TgaDeveloperArea, TgaDeveloperTag,

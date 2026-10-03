@@ -3,6 +3,7 @@ name = "oxideav-tga-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
+rust-version = "1.80"
 
 [package.metadata]
 cargo-fuzz = true
@@ -96,5 +97,16 @@ doc = false
 [[bin]]
 name = "roundtrip_identity"
 path = "fuzz_targets/roundtrip_identity.rs"
+test = false
+doc = false
+
+# Contract-API identity target: `decode(encode(img)) == img` for every
+# native layout (`Rgba` / `Rgb24` / `Gray8` / `Pal8` + palette) across
+# the lossless `EncodeOptions` axes (rle, row_order, alpha_bits,
+# image_id, screen_origin, footer, metadata.gamma), plus `probe` /
+# `info` agreement on the encoder's own output.
+[[bin]]
+name = "contract_identity"
+path = "fuzz_targets/contract_identity.rs"
 test = false
 doc = false

@@ -30,6 +30,9 @@
 //! No content is asserted for lossy paths (15/16-bit colour-map entries):
 //! those are covered by the idempotence test in this file instead.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::*;
 
 /// Small deterministic xorshift64 PRNG — reproducible across hosts, no
@@ -88,16 +91,16 @@ fn identity_rgb24_matrix() {
             ("rle_rgb24", encode_tga_rle_rgb24(w, h, &rgb).unwrap()),
         ] {
             let img = parse_tga(&bytes).unwrap();
-            assert_eq!(img.pixel_format, TgaPixelFormat::Rgba, "{name} {w}x{h}");
+            assert_eq!(img.format, TgaPixelFormat::Rgba, "{name} {w}x{h}");
             assert_eq!(img.width, w as u32);
             assert_eq!(img.height, h as u32);
             for i in 0..px {
                 assert_eq!(
-                    &img.data[i * 4..i * 4 + 3],
+                    &img.data()[i * 4..i * 4 + 3],
                     &rgb[i * 3..i * 3 + 3],
                     "{name} rgb px{i} {w}x{h}"
                 );
-                assert_eq!(img.data[i * 4 + 3], 0xFF, "{name} alpha px{i} {w}x{h}");
+                assert_eq!(img.data()[i * 4 + 3], 0xFF, "{name} alpha px{i} {w}x{h}");
             }
         }
     }
@@ -120,8 +123,8 @@ fn identity_rgba32_matrix() {
             ("rle", encode_tga_rle(w, h, &rgba).unwrap()),
         ] {
             let img = parse_tga(&bytes).unwrap();
-            assert_eq!(img.pixel_format, TgaPixelFormat::Rgba, "{name} {w}x{h}");
-            assert_eq!(img.data, rgba, "{name} {w}x{h}");
+            assert_eq!(img.format, TgaPixelFormat::Rgba, "{name} {w}x{h}");
+            assert_eq!(img.data(), rgba, "{name} {w}x{h}");
         }
     }
 }
@@ -137,8 +140,8 @@ fn identity_gray_matrix() {
             ("grayscale_rle", encode_tga_grayscale_rle(w, h, &g).unwrap()),
         ] {
             let img = parse_tga(&bytes).unwrap();
-            assert_eq!(img.pixel_format, TgaPixelFormat::Gray8, "{name} {w}x{h}");
-            assert_eq!(img.data, g, "{name} {w}x{h}");
+            assert_eq!(img.format, TgaPixelFormat::Gray8, "{name} {w}x{h}");
+            assert_eq!(img.data(), g, "{name} {w}x{h}");
         }
     }
 }
@@ -178,7 +181,7 @@ fn identity_palette_default_writers() {
                 ("palette_rle", encode_tga_palette_rle(w, h, &rgba).unwrap()),
             ] {
                 let img = parse_tga(&bytes).unwrap();
-                assert_eq!(img.data, rgba, "{name} {w}x{h} alpha={with_alpha}");
+                assert_eq!(img.data(), rgba, "{name} {w}x{h} alpha={with_alpha}");
             }
         }
     }
@@ -201,17 +204,17 @@ fn identity_palette_explicit_lossless_entry_sizes() {
                     encode_tga_palette_with_entry_size(w, h, &rgba, image_type, entry).unwrap();
                 let img = parse_tga(&bytes).unwrap();
                 if entry == ColorMapEntrySize::Bits32 {
-                    assert_eq!(img.data, rgba, "type{image_type:?} Bits32 {w}x{h}");
+                    assert_eq!(img.data(), rgba, "type{image_type:?} Bits32 {w}x{h}");
                 } else {
                     // Bits24 drops alpha -> RGB preserved, alpha 0xFF.
                     for i in 0..px {
                         assert_eq!(
-                            &img.data[i * 4..i * 4 + 3],
+                            &img.data()[i * 4..i * 4 + 3],
                             &rgba[i * 4..i * 4 + 3],
                             "type{image_type:?} Bits24 rgb px{i} {w}x{h}"
                         );
                         assert_eq!(
-                            img.data[i * 4 + 3],
+                            img.data()[i * 4 + 3],
                             0xFF,
                             "type{image_type:?} Bits24 alpha px{i} {w}x{h}"
                         );
@@ -242,11 +245,12 @@ fn palette_lossy_entry_sizes_are_idempotent() {
                     encode_tga_palette_with_entry_size(w, h, &rgba, image_type, entry).unwrap();
                 let img1 = parse_tga(&b1).unwrap();
                 // Re-encode the decoded (already-quantised) pixels.
-                let b2 = encode_tga_palette_with_entry_size(w, h, &img1.data, image_type, entry)
+                let b2 = encode_tga_palette_with_entry_size(w, h, img1.data(), image_type, entry)
                     .unwrap();
                 let img2 = parse_tga(&b2).unwrap();
                 assert_eq!(
-                    img1.data, img2.data,
+                    img1.data(),
+                    img2.data(),
                     "type{image_type:?} {entry:?} not idempotent {w}x{h}"
                 );
             }

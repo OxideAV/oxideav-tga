@@ -187,7 +187,7 @@ impl ColorMapEntrySize {
 }
 
 /// Parsed TGA header fields. Sizes match the on-disk u8/u16 widths.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TgaHeader {
     pub id_length: u8,
     pub cmap_type: u8,
@@ -268,8 +268,17 @@ impl TgaHeader {
 }
 
 /// Parse the 18-byte TGA header. Returns `None` if the input is shorter
-/// than 18 bytes — caller turns that into a useful error message.
+/// than 18 bytes — the pre-contract shape; prefer [`crate::header`]
+/// (typed, `Result`) or [`crate::info`] (the contract's
+/// [`crate::ImageInfo`]).
+#[deprecated(note = "use oxideav_tga::header or oxideav_tga::info (IMAGE_CRATE_API)")]
 pub fn parse_header(input: &[u8]) -> Option<TgaHeader> {
+    read_header(input)
+}
+
+/// Parse the 18-byte TGA header. Returns `None` if the input is shorter
+/// than 18 bytes — caller turns that into a useful error message.
+pub(crate) fn read_header(input: &[u8]) -> Option<TgaHeader> {
     if input.len() < TGA_HEADER_SIZE {
         return None;
     }
@@ -609,9 +618,6 @@ impl AttributesType {
     /// [`Self::NoAlpha`] / [`Self::UndefinedIgnore`] force every pixel
     /// opaque; [`Self::PremultipliedAlpha`] un-premultiplies every pixel.
     pub fn apply_to_image(self, image: &mut crate::image::TgaImage) {
-        if image.pixel_format != crate::image::TgaPixelFormat::Rgba {
-            return;
-        }
         // Fast path: the no-op variants don't need to walk the buffer.
         if matches!(
             self,
@@ -619,9 +625,22 @@ impl AttributesType {
         ) {
             return;
         }
-        for px in image.data.chunks_exact_mut(4) {
-            let out = self.normalize_rgba8([px[0], px[1], px[2], px[3]]);
-            px.copy_from_slice(&out);
+        match image.format {
+            crate::image::TgaPixelFormat::Rgba => {
+                for px in image.data_mut().chunks_exact_mut(4) {
+                    let out = self.normalize_rgba8([px[0], px[1], px[2], px[3]]);
+                    px.copy_from_slice(&out);
+                }
+            }
+            // Indexed: the alpha lives in the palette entries.
+            crate::image::TgaPixelFormat::Pal8 => {
+                if let Some(p) = image.palette.as_mut() {
+                    for e in &mut p.entries {
+                        *e = self.normalize_rgba8(*e);
+                    }
+                }
+            }
+            crate::image::TgaPixelFormat::Rgb24 | crate::image::TgaPixelFormat::Gray8 => {}
         }
     }
 }
@@ -1069,17 +1088,43 @@ impl KeyColor {
     /// files). A caller wanting exact four-channel keying can filter with
     /// [`Self::matches_rgba`] directly.
     pub fn key_out_image(self, image: &mut crate::image::TgaImage) -> u32 {
-        if image.pixel_format != crate::image::TgaPixelFormat::Rgba {
-            return 0;
-        }
-        let mut keyed = 0u32;
-        for px in image.data.chunks_exact_mut(4) {
-            if self.r == px[0] && self.g == px[1] && self.b == px[2] {
-                px[3] = 0;
-                keyed += 1;
+        match image.format {
+            crate::image::TgaPixelFormat::Rgba => {
+                let mut keyed = 0u32;
+                for px in image.data_mut().chunks_exact_mut(4) {
+                    if self.r == px[0] && self.g == px[1] && self.b == px[2] {
+                        px[3] = 0;
+                        keyed += 1;
+                    }
+                }
+                keyed
             }
+            // Indexed: key out the matching palette entries and count
+            // the pixels that reference them.
+            crate::image::TgaPixelFormat::Pal8 => {
+                let Some(p) = image.palette.as_mut() else {
+                    return 0;
+                };
+                let mut hit = [false; 256];
+                for (i, e) in p.entries.iter_mut().enumerate().take(256) {
+                    if self.r == e[0] && self.g == e[1] && self.b == e[2] {
+                        e[3] = 0;
+                        hit[i] = true;
+                    }
+                }
+                let w = image.width as usize;
+                let stride = image.stride();
+                let data = image.data();
+                let mut keyed = 0u32;
+                for y in 0..image.height as usize {
+                    if let Some(row) = data.get(y * stride..y * stride + w) {
+                        keyed += row.iter().filter(|&&i| hit[usize::from(i)]).count() as u32;
+                    }
+                }
+                keyed
+            }
+            crate::image::TgaPixelFormat::Rgb24 | crate::image::TgaPixelFormat::Gray8 => 0,
         }
-        keyed
     }
 }
 
@@ -1232,30 +1277,7 @@ impl PixelAspectRatio {
         if dw == image.width && dh == image.height {
             return None;
         }
-        let bpp = image.bytes_per_pixel();
-        let src_stride = image.width as usize * bpp;
-        let dst_stride = dw as usize * bpp;
-        let mut data = vec![0u8; dst_stride * dh as usize];
-        for dy in 0..dh as usize {
-            // Nearest-neighbour source row.
-            let sy = (dy as u64 * image.height as u64 / dh as u64) as usize;
-            let sy = sy.min(image.height as usize - 1);
-            let src_row = &image.data[sy * src_stride..sy * src_stride + src_stride];
-            let dst_row = &mut data[dy * dst_stride..dy * dst_stride + dst_stride];
-            for dx in 0..dw as usize {
-                let sx = (dx as u64 * image.width as u64 / dw as u64) as usize;
-                let sx = sx.min(image.width as usize - 1);
-                dst_row[dx * bpp..dx * bpp + bpp]
-                    .copy_from_slice(&src_row[sx * bpp..sx * bpp + bpp]);
-            }
-        }
-        Some(crate::image::TgaImage {
-            width: dw,
-            height: dh,
-            pixel_format: image.pixel_format,
-            data,
-            pts: image.pts,
-        })
+        Some(nearest_resample(image, dw, dh))
     }
 
     /// In-place companion to [`Self::resampled`]: rewrite `image` to its
@@ -1395,21 +1417,24 @@ impl GammaValue {
             Some(g) if g.is_finite() && g > 0.0 => {}
             _ => return,
         }
-        match image.pixel_format {
+        match image.format {
             crate::image::TgaPixelFormat::Rgba => {
-                for px in image.data.chunks_exact_mut(4) {
+                for px in image.data_mut().chunks_exact_mut(4) {
                     let out = self.apply_to_rgba8([px[0], px[1], px[2], px[3]]);
                     px.copy_from_slice(&out);
                 }
             }
-            crate::image::TgaPixelFormat::Rgb24 => {
-                for c in image.data.iter_mut() {
+            crate::image::TgaPixelFormat::Rgb24 | crate::image::TgaPixelFormat::Gray8 => {
+                for c in image.data_mut().iter_mut() {
                     *c = self.apply_to_channel8(*c);
                 }
             }
-            crate::image::TgaPixelFormat::Gray8 => {
-                for c in image.data.iter_mut() {
-                    *c = self.apply_to_channel8(*c);
+            // Indexed: re-map the palette entries, indices untouched.
+            crate::image::TgaPixelFormat::Pal8 => {
+                if let Some(p) = image.palette.as_mut() {
+                    for e in &mut p.entries {
+                        *e = self.apply_to_rgba8(*e);
+                    }
                 }
             }
         }
@@ -1626,7 +1651,7 @@ impl PostageStamp {
     /// source pixels and so never averages two colours into a third —
     /// satisfying the spec's colour-mapped caveat for every decoded format
     /// (RGBA / Rgb24 / Gray8). The result keeps the source's
-    /// `pixel_format`, so it can be handed straight to
+    /// `format`, so it can be handed straight to
     /// `ExtensionAreaInput::postage_stamp` (the encoder serialises the
     /// stamp in the parent's on-disk format, uncompressed, as Field 26
     /// requires).
@@ -1647,30 +1672,44 @@ impl PostageStamp {
         if dw == image.width && dh == image.height {
             return None;
         }
-        let bpp = image.bytes_per_pixel();
-        let src_stride = image.width as usize * bpp;
-        let dst_stride = dw as usize * bpp;
-        let mut data = vec![0u8; dst_stride * dh as usize];
-        for dy in 0..dh as usize {
-            let sy = (dy as u64 * image.height as u64 / dh as u64) as usize;
-            let sy = sy.min(image.height as usize - 1);
-            let src_row = &image.data[sy * src_stride..sy * src_stride + src_stride];
-            let dst_row = &mut data[dy * dst_stride..dy * dst_stride + dst_stride];
-            for dx in 0..dw as usize {
-                let sx = (dx as u64 * image.width as u64 / dw as u64) as usize;
-                let sx = sx.min(image.width as usize - 1);
-                dst_row[dx * bpp..dx * bpp + bpp]
-                    .copy_from_slice(&src_row[sx * bpp..sx * bpp + bpp]);
+        Some(nearest_resample(image, dw, dh))
+    }
+}
+
+/// Nearest-neighbour resample of `image` to `dw × dh`, any layout (the
+/// palette / colour / metadata / extension record are carried over).
+/// Caller guarantees a non-empty source.
+fn nearest_resample(image: &crate::image::TgaImage, dw: u32, dh: u32) -> crate::image::TgaImage {
+    let bpp = image.bytes_per_pixel();
+    let src_stride = image.stride();
+    let src = image.data();
+    let row_bytes = image.width as usize * bpp;
+    let dst_stride = dw as usize * bpp;
+    let mut data = vec![0u8; dst_stride * dh as usize];
+    for dy in 0..dh as usize {
+        // Nearest-neighbour source row.
+        let sy = (dy as u64 * image.height as u64 / dh as u64) as usize;
+        let sy = sy.min(image.height as usize - 1);
+        let src_row = src
+            .get(sy * src_stride..sy * src_stride + row_bytes)
+            .unwrap_or(&[]);
+        let dst_row = &mut data[dy * dst_stride..dy * dst_stride + dst_stride];
+        for dx in 0..dw as usize {
+            let sx = (dx as u64 * image.width as u64 / dw as u64) as usize;
+            let sx = sx.min(image.width as usize - 1);
+            if let Some(px) = src_row.get(sx * bpp..sx * bpp + bpp) {
+                dst_row[dx * bpp..dx * bpp + bpp].copy_from_slice(px);
             }
         }
-        Some(crate::image::TgaImage {
-            width: dw,
-            height: dh,
-            pixel_format: image.pixel_format,
-            data,
-            pts: image.pts,
-        })
     }
+    let mut out = crate::image::TgaImage::from_rgba8(dw, dh, Vec::new());
+    out.format = image.format;
+    out.planes = vec![crate::image::Plane::new(dst_stride, data)];
+    out.color = image.color;
+    out.metadata = image.metadata.clone();
+    out.palette = image.palette.clone();
+    out.extension = image.extension.clone();
+    out
 }
 
 /// Widest attribute-bit count the §C.2 image-descriptor field (Field 5.6,
@@ -1874,7 +1913,7 @@ impl Interleaving {
 /// the palette; for an **un**mapped image type (2 / 3 / 10 / 11) a map
 /// *may still be present* — *"but since this is an unmapped image it is
 /// usually ignored. TIPS (a Targa paint system) will set the border
-/// color [to] the first map color if it is present."* That single-entry
+/// color \[to\] the first map color if it is present."* That single-entry
 /// (or first-entry) palette on an unmapped image is the file's
 /// *border / background* colour; [`crate::parse_tga_border_color`] reads
 /// it.
@@ -2521,23 +2560,31 @@ impl TgaColourCorrectionTable {
     /// sample values are rewritten. A default (identity) table leaves an
     /// 8-bit image bit-for-bit unchanged.
     pub fn apply_to_image(&self, image: &mut crate::image::TgaImage) {
-        match image.pixel_format {
+        match image.format {
             crate::image::TgaPixelFormat::Rgba => {
-                for px in image.data.chunks_exact_mut(4) {
+                for px in image.data_mut().chunks_exact_mut(4) {
                     let out = self.correct_rgba8([px[0], px[1], px[2], px[3]]);
                     px.copy_from_slice(&out);
                 }
             }
             crate::image::TgaPixelFormat::Rgb24 => {
-                for px in image.data.chunks_exact_mut(3) {
+                for px in image.data_mut().chunks_exact_mut(3) {
                     px[0] = (self.red[px[0] as usize] >> 8) as u8;
                     px[1] = (self.green[px[1] as usize] >> 8) as u8;
                     px[2] = (self.blue[px[2] as usize] >> 8) as u8;
                 }
             }
             crate::image::TgaPixelFormat::Gray8 => {
-                for b in image.data.iter_mut() {
+                for b in image.data_mut().iter_mut() {
                     *b = self.correct_gray8(*b);
+                }
+            }
+            // Indexed: correct the palette entries, indices untouched.
+            crate::image::TgaPixelFormat::Pal8 => {
+                if let Some(p) = image.palette.as_mut() {
+                    for e in &mut p.entries {
+                        *e = self.correct_rgba8(*e);
+                    }
                 }
             }
         }

@@ -22,6 +22,9 @@
 //! shaped inputs that exercise the previously-unreachable arms
 //! through the public API only.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     parse_tga, parse_tga_attributes_type, parse_tga_colour_correction_table,
     parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_postage_stamp,

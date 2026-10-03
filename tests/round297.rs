@@ -18,6 +18,9 @@
 //! * `TGA_POSTAGE_STAMP_RECOMMENDED_MAX` (64) and `TGA_POSTAGE_STAMP_MAX`
 //!   (255) constants.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_rle, encode_tga_with_extension, parse_tga_postage_stamp,
     parse_tga_postage_stamp_dimensions, ExtensionAreaInput, PostageStamp, TgaImage, TgaPixelFormat,
@@ -143,13 +146,12 @@ fn dimensions_match_embedded_stamp_and_skip_decode() {
     let base = encode_tga_rle(8, 4, &rgba_diag(8, 4)).unwrap();
     let ext = ExtensionAreaInput {
         attributes_type: 3,
-        postage_stamp: Some(TgaImage {
-            width: 4,
-            height: 2,
-            pixel_format: TgaPixelFormat::Rgba,
-            data: rgba_diag(4, 2),
-            pts: None,
-        }),
+        postage_stamp: Some(TgaImage::packed(
+            4,
+            2,
+            TgaPixelFormat::Rgba,
+            rgba_diag(4, 2),
+        )),
         ..Default::default()
     };
     let full = encode_tga_with_extension(&base, &ext).unwrap();
@@ -176,13 +178,12 @@ fn dimensions_flag_oversized_stamp_per_recommendation() {
     let base = encode_tga_rle(128, 96, &rgba_diag(128, 96)).unwrap();
     let ext = ExtensionAreaInput {
         attributes_type: 3,
-        postage_stamp: Some(TgaImage {
-            width: 100,
-            height: 70,
-            pixel_format: TgaPixelFormat::Rgba,
-            data: rgba_diag(100, 70),
-            pts: None,
-        }),
+        postage_stamp: Some(TgaImage::packed(
+            100,
+            70,
+            TgaPixelFormat::Rgba,
+            rgba_diag(100, 70),
+        )),
         ..Default::default()
     };
     let full = encode_tga_with_extension(&base, &ext).unwrap();

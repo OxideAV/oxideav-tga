@@ -18,6 +18,9 @@
 //! `TgaHeader::attribute_bits()`, the public `parse_tga_attribute_bits`
 //! reader, and the `resolve_alpha_from_descriptor` apply-side resolver.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     parse_tga, parse_tga_attribute_bits, resolve_alpha_from_descriptor, AttributeBits,
     TgaPixelFormat, TGA_ATTRIBUTE_BITS_MAX,
@@ -118,14 +121,18 @@ fn resolver_forces_opaque_when_no_attribute_bits() {
     // it opaque because the header declares no meaningful alpha.
     let file = build_bgra_1px(0x20, [0x10, 0x20, 0x30, 0x00]);
     let mut img = parse_tga(&file).expect("decode");
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
-    assert_eq!(img.data[3], 0x00, "raw decode preserves the on-disk alpha");
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
+    assert_eq!(
+        img.data()[3],
+        0x00,
+        "raw decode preserves the on-disk alpha"
+    );
 
     let bits = resolve_alpha_from_descriptor(&file, &mut img).expect("header");
     assert!(bits.is_none());
-    assert_eq!(img.data[3], 0xFF, "no attribute bits => forced opaque");
+    assert_eq!(img.data()[3], 0xFF, "no attribute bits => forced opaque");
     // Colour channels (BGR -> RGB) untouched: B=0x10 G=0x20 R=0x30.
-    assert_eq!(&img.data[0..3], &[0x30, 0x20, 0x10]);
+    assert_eq!(&img.data()[0..3], &[0x30, 0x20, 0x10]);
 }
 
 #[test]
@@ -137,7 +144,7 @@ fn resolver_honours_declared_alpha() {
     let bits = resolve_alpha_from_descriptor(&file, &mut img).expect("header");
     assert_eq!(bits.count, 8);
     assert!(bits.has_alpha());
-    assert_eq!(img.data[3], 0x40, "declared alpha is preserved");
+    assert_eq!(img.data()[3], 0x40, "declared alpha is preserved");
 }
 
 #[test]
@@ -148,17 +155,17 @@ fn resolver_acts_even_when_alpha_not_all_zero() {
     // forces opaque (the heuristic would not have fired).
     let file = build_bgra_1px(0x20, [0x10, 0x20, 0x30, 0x7F]);
     let mut img = parse_tga(&file).expect("decode");
-    assert_eq!(img.data[3], 0x7F);
+    assert_eq!(img.data()[3], 0x7F);
     let bits = resolve_alpha_from_descriptor(&file, &mut img).expect("header");
     assert!(bits.is_none());
-    assert_eq!(img.data[3], 0xFF);
+    assert_eq!(img.data()[3], 0xFF);
 }
 
 #[test]
 fn resolver_noop_on_truncated_header() {
     let mut img = parse_tga(&build_bgra_1px(0x20, [1, 2, 3, 0])).expect("decode");
-    img.data[3] = 0x00; // sentinel
-                        // A buffer too short to hold a header yields None and no mutation.
+    img.data_mut()[3] = 0x00; // sentinel
+                              // A buffer too short to hold a header yields None and no mutation.
     assert!(resolve_alpha_from_descriptor(&[0u8; 4], &mut img).is_none());
-    assert_eq!(img.data[3], 0x00, "no-op when header can't be read");
+    assert_eq!(img.data()[3], 0x00, "no-op when header can't be read");
 }

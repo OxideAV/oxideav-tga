@@ -18,6 +18,9 @@
 //! Each test hand-builds its byte stream or independently round-trips
 //! so a bug in one path can't mask the same bug on the other.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
     encode_tga_rle, encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
@@ -156,9 +159,9 @@ fn rgb24_uncompressed_roundtrips_through_rgba_decoder() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 8);
     assert_eq!(img.height, 6);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
     // Promoted to alpha=0xFF.
-    for (rgb_pix, rgba_pix) in rgb.chunks_exact(3).zip(img.data.chunks_exact(4)) {
+    for (rgb_pix, rgba_pix) in rgb.chunks_exact(3).zip(img.data().chunks_exact(4)) {
         assert_eq!(rgb_pix[0], rgba_pix[0]);
         assert_eq!(rgb_pix[1], rgba_pix[1]);
         assert_eq!(rgb_pix[2], rgba_pix[2]);
@@ -175,8 +178,8 @@ fn rgb24_rle_roundtrips_through_rgba_decoder() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 16);
     assert_eq!(img.height, 8);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
-    for (rgb_pix, rgba_pix) in rgb.chunks_exact(3).zip(img.data.chunks_exact(4)) {
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
+    for (rgb_pix, rgba_pix) in rgb.chunks_exact(3).zip(img.data().chunks_exact(4)) {
         assert_eq!(rgb_pix[0], rgba_pix[0]);
         assert_eq!(rgb_pix[1], rgba_pix[1]);
         assert_eq!(rgb_pix[2], rgba_pix[2]);
@@ -200,7 +203,7 @@ fn rgb24_rle_runs_compress() {
         raw.len()
     );
     let img = parse_tga(&rle).unwrap();
-    for px in img.data.chunks_exact(4) {
+    for px in img.data().chunks_exact(4) {
         assert_eq!(px, &[12, 34, 56, 0xFF]);
     }
 }
@@ -234,7 +237,7 @@ fn extension_area_roundtrip_type1_palette() {
     let parsed = parse_tga_extension_area(&full).unwrap();
     assert_extension_round_trip(&ext_in, &parsed);
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -246,7 +249,7 @@ fn extension_area_roundtrip_type2_uncompressed() {
     let parsed = parse_tga_extension_area(&full).unwrap();
     assert_extension_round_trip(&ext_in, &parsed);
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -258,8 +261,8 @@ fn extension_area_roundtrip_type3_grayscale() {
     let parsed = parse_tga_extension_area(&full).unwrap();
     assert_extension_round_trip(&ext_in, &parsed);
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, gray);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), gray);
 }
 
 #[test]
@@ -271,7 +274,7 @@ fn extension_area_roundtrip_type9_palette_rle() {
     let parsed = parse_tga_extension_area(&full).unwrap();
     assert_extension_round_trip(&ext_in, &parsed);
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -283,7 +286,7 @@ fn extension_area_roundtrip_type10_rle() {
     let parsed = parse_tga_extension_area(&full).unwrap();
     assert_extension_round_trip(&ext_in, &parsed);
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -295,8 +298,8 @@ fn extension_area_roundtrip_type11_grayscale_rle() {
     let parsed = parse_tga_extension_area(&full).unwrap();
     assert_extension_round_trip(&ext_in, &parsed);
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, gray);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), gray);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,13 +349,7 @@ fn postage_stamp_with_24bit_parent_no_alpha() {
     // 24-bit parent ⇒ postage stamp on disk is BGR (no alpha byte per pixel).
     let main_rgba = opaque_checker_rgba(16, 16);
     let stamp_rgba = opaque_checker_rgba(4, 4);
-    let stamp = TgaImage {
-        width: 4,
-        height: 4,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: stamp_rgba.clone(),
-        pts: None,
-    };
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone());
     let base = encode_tga_uncompressed(16, 16, &main_rgba).unwrap();
     // Parent is 24 bpp (no alpha in main_rgba).
     assert_eq!(base[16], 24);
@@ -366,9 +363,9 @@ fn postage_stamp_with_24bit_parent_no_alpha() {
         .expect("postage stamp should decode");
     assert_eq!(stamp_back.width, 4);
     assert_eq!(stamp_back.height, 4);
-    assert_eq!(stamp_back.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(stamp_back.format, TgaPixelFormat::Rgba);
     // On a 24-bit parent the stamp doesn't carry alpha; decoder fills α=0xFF.
-    assert_eq!(stamp_back.data, stamp_rgba);
+    assert_eq!(stamp_back.data(), stamp_rgba);
 }
 
 #[test]
@@ -376,13 +373,7 @@ fn postage_stamp_with_32bit_parent_carries_alpha() {
     // 32-bit parent (alpha-bearing main image) ⇒ stamp carries alpha.
     let main_rgba = alpha_checker_rgba(16, 16);
     let stamp_rgba = alpha_checker_rgba(4, 4);
-    let stamp = TgaImage {
-        width: 4,
-        height: 4,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: stamp_rgba.clone(),
-        pts: None,
-    };
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone());
     let base = encode_tga_uncompressed(16, 16, &main_rgba).unwrap();
     assert_eq!(base[16], 32);
     let ext_in = ExtensionAreaInput {
@@ -395,9 +386,9 @@ fn postage_stamp_with_32bit_parent_carries_alpha() {
         .expect("postage stamp should decode");
     assert_eq!(stamp_back.width, 4);
     assert_eq!(stamp_back.height, 4);
-    assert_eq!(stamp_back.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(stamp_back.format, TgaPixelFormat::Rgba);
     // Full alpha preservation through encode → on-disk BGRA → decode.
-    assert_eq!(stamp_back.data, stamp_rgba);
+    assert_eq!(stamp_back.data(), stamp_rgba);
 }
 
 #[test]
@@ -414,13 +405,7 @@ fn postage_stamp_with_palette_parent_using_gray8_indices() {
     // Build a 4×4 thumbnail of palette indices. The main image used
     // a 4-colour checker so palette[0..4] is well-defined.
     let stamp_indices: Vec<u8> = (0..16).map(|i| (i % 4) as u8).collect();
-    let stamp = TgaImage {
-        width: 4,
-        height: 4,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: stamp_indices.clone(),
-        pts: None,
-    };
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Gray8, stamp_indices.clone());
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
         ..ExtensionAreaInput::default()
@@ -432,8 +417,8 @@ fn postage_stamp_with_palette_parent_using_gray8_indices() {
     assert_eq!(stamp_back.width, 4);
     assert_eq!(stamp_back.height, 4);
     // Decoded via the parent palette; output format is Rgba.
-    assert_eq!(stamp_back.pixel_format, TgaPixelFormat::Rgba);
-    assert_eq!(stamp_back.data.len(), 16 * 4);
+    assert_eq!(stamp_back.format, TgaPixelFormat::Rgba);
+    assert_eq!(stamp_back.data().len(), 16 * 4);
     // Walk the indices manually and reproduce the expected RGBA pixels
     // from the parent palette (which was built in palette-encode order).
     // Palette order matches first-occurrence in the input scan, which
@@ -445,7 +430,7 @@ fn postage_stamp_with_palette_parent_using_gray8_indices() {
         [255, 255, 255, 255],
     ];
     for (i, idx) in stamp_indices.iter().enumerate() {
-        let p = &stamp_back.data[i * 4..i * 4 + 4];
+        let p = &stamp_back.data()[i * 4..i * 4 + 4];
         assert_eq!(p, &want_rgba[*idx as usize], "stamp pixel {i}");
     }
 }
@@ -457,15 +442,14 @@ fn postage_stamp_rgba_with_palette_parent_is_unsupported() {
     // The encoder refuses rather than producing wrong output.
     let main_rgba = opaque_checker_rgba(8, 8);
     let base = encode_tga_palette(8, 8, &main_rgba).unwrap();
-    let stamp = TgaImage {
-        width: 2,
-        height: 2,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![
+    let stamp = TgaImage::packed(
+        2,
+        2,
+        TgaPixelFormat::Rgba,
+        vec![
             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
         ],
-        pts: None,
-    };
+    );
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
         ..ExtensionAreaInput::default()
@@ -492,7 +476,7 @@ fn rle_exact_128_pixel_run() {
     // Header (18) + 1 packet header + 3 BGR bytes = 22.
     assert_eq!(bytes.len(), 18 + 1 + 3);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -506,7 +490,7 @@ fn rle_129_pixel_row_splits_packets() {
     // counts as a run of 1 — which the encoder represents as a raw
     // packet of length 1, since runs ≥ 2 pick the run path).
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
     // Byte-size: 18 header + 1 + 3 (first packet) + 1 + 3 (second) = 26
     assert_eq!(bytes.len(), 18 + 4 + 4);
 }
@@ -522,7 +506,7 @@ fn rle_long_row_splits_at_128() {
     }
     let bytes = encode_tga_rle(w, h, &rgba).unwrap();
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -541,7 +525,7 @@ fn rle_alternating_pixels_all_raw_packets() {
     }
     let bytes = encode_tga_rle(w, h, &rgba).unwrap();
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -588,30 +572,30 @@ fn one_by_one_every_writer() {
     let rgb24 = vec![123, 45, 67];
 
     let t1 = encode_tga_palette(1, 1, &rgba_opaque).unwrap();
-    assert_eq!(parse_tga(&t1).unwrap().data, rgba_opaque);
+    assert_eq!(parse_tga(&t1).unwrap().data(), rgba_opaque);
 
     let t2_24 = encode_tga_uncompressed(1, 1, &rgba_opaque).unwrap();
-    assert_eq!(parse_tga(&t2_24).unwrap().data, rgba_opaque);
+    assert_eq!(parse_tga(&t2_24).unwrap().data(), rgba_opaque);
 
     let t2_32 = encode_tga_uncompressed(1, 1, &rgba_alpha).unwrap();
-    assert_eq!(parse_tga(&t2_32).unwrap().data, rgba_alpha);
+    assert_eq!(parse_tga(&t2_32).unwrap().data(), rgba_alpha);
 
     let t2_rgb24 = encode_tga_uncompressed_rgb24(1, 1, &rgb24).unwrap();
     let img = parse_tga(&t2_rgb24).unwrap();
-    assert_eq!(img.data, [123, 45, 67, 255]);
+    assert_eq!(img.data(), [123, 45, 67, 255]);
 
     let t3 = encode_tga_grayscale(1, 1, &gray).unwrap();
-    assert_eq!(parse_tga(&t3).unwrap().data, gray);
+    assert_eq!(parse_tga(&t3).unwrap().data(), gray);
 
     let t9 = encode_tga_palette_rle(1, 1, &rgba_opaque).unwrap();
-    assert_eq!(parse_tga(&t9).unwrap().data, rgba_opaque);
+    assert_eq!(parse_tga(&t9).unwrap().data(), rgba_opaque);
 
     let t10 = encode_tga_rle(1, 1, &rgba_opaque).unwrap();
-    assert_eq!(parse_tga(&t10).unwrap().data, rgba_opaque);
+    assert_eq!(parse_tga(&t10).unwrap().data(), rgba_opaque);
 
     let t10_rgb24 = encode_tga_rle_rgb24(1, 1, &rgb24).unwrap();
-    assert_eq!(parse_tga(&t10_rgb24).unwrap().data, [123, 45, 67, 255]);
+    assert_eq!(parse_tga(&t10_rgb24).unwrap().data(), [123, 45, 67, 255]);
 
     let t11 = encode_tga_grayscale_rle(1, 1, &gray).unwrap();
-    assert_eq!(parse_tga(&t11).unwrap().data, gray);
+    assert_eq!(parse_tga(&t11).unwrap().data(), gray);
 }

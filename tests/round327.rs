@@ -24,6 +24,9 @@
 //! pixels and never averages, satisfying the colour-mapped caveat for
 //! every format.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga_postage_stamp,
     ExtensionAreaInput, PostageStamp, TgaImage, TgaPixelFormat, TGA_POSTAGE_STAMP_RECOMMENDED_MAX,
@@ -31,13 +34,7 @@ use oxideav_tga::{
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
     assert_eq!(data.len(), width as usize * height as usize * 4);
-    TgaImage {
-        width,
-        height,
-        pixel_format: TgaPixelFormat::Rgba,
-        data,
-        pts: None,
-    }
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
 }
 
 #[test]
@@ -129,14 +126,14 @@ fn subsample_downscales_to_recommended_size_and_format() {
     let img = rgba_image(128, 128, data);
     let stamp = PostageStamp::subsample(&img).expect("downscale");
     assert_eq!((stamp.width, stamp.height), (64, 64));
-    assert_eq!(stamp.pixel_format, TgaPixelFormat::Rgba);
-    assert_eq!(stamp.data.len(), 64 * 64 * 4);
+    assert_eq!(stamp.format, TgaPixelFormat::Rgba);
+    assert_eq!(stamp.data().len(), 64 * 64 * 4);
 
     // Nearest-neighbour: thumbnail pixel (dx,dy) samples source
     // (dx*128/64, dy*128/64) = (2*dx, 2*dy).
     let tpx = |x: usize, y: usize| {
         let i = (y * 64 + x) * 4;
-        &stamp.data[i..i + 4]
+        &stamp.data()[i..i + 4]
     };
     assert_eq!(tpx(0, 0), &[0, 0, 0, 255]);
     assert_eq!(tpx(1, 0), &[2, 0, 0, 255]);
@@ -160,7 +157,7 @@ fn subsample_only_copies_source_colours_never_averages() {
     let img = rgba_image(200, 100, data);
     let stamp = PostageStamp::subsample(&img).expect("downscale");
     assert_eq!((stamp.width, stamp.height), (64, 32));
-    for px in stamp.data.chunks_exact(4) {
+    for px in stamp.data().chunks_exact(4) {
         assert!(
             px == a || px == b,
             "thumbnail pixel {px:?} is not one of the two source colours"
@@ -169,26 +166,19 @@ fn subsample_only_copies_source_colours_never_averages() {
 }
 
 #[test]
-fn subsample_preserves_gray8_and_pts() {
+fn subsample_preserves_gray8() {
     let mut data = Vec::with_capacity(130 * 10);
     for y in 0..10u32 {
         for x in 0..130u32 {
             data.push((x ^ y) as u8);
         }
     }
-    let img = TgaImage {
-        width: 130,
-        height: 10,
-        pixel_format: TgaPixelFormat::Gray8,
-        data,
-        pts: Some(42),
-    };
+    let img = TgaImage::packed(130, 10, TgaPixelFormat::Gray8, data);
     let stamp = PostageStamp::subsample(&img).expect("downscale gray");
-    assert_eq!(stamp.pixel_format, TgaPixelFormat::Gray8);
+    assert_eq!(stamp.format, TgaPixelFormat::Gray8);
     // 130 x 10: longer edge 130 → 64; height 10*64/130 = 4.
     assert_eq!((stamp.width, stamp.height), (64, 4));
-    assert_eq!(stamp.data.len(), 64 * 4);
-    assert_eq!(stamp.pts, Some(42));
+    assert_eq!(stamp.data().len(), 64 * 4);
 }
 
 #[test]
@@ -221,14 +211,14 @@ fn generated_stamp_round_trips_through_extension_writer() {
     // 100 x 80: longer edge 100 → 64; height 80 * 64 / 100 = 51.
     assert_eq!((recovered.width, recovered.height), (64, 51));
     assert_eq!((expected.width, expected.height), (64, 51));
-    assert_eq!(recovered.pixel_format, expected.pixel_format);
+    assert_eq!(recovered.format, expected.format);
     // The base image's RGBA carried only opaque pixels, so the writer
     // auto-selected 24 bpp; the recovered thumbnail therefore comes back
     // with alpha forced to 0xFF. Compare the colour channels exactly.
     for (got, want) in recovered
-        .data
+        .data()
         .chunks_exact(4)
-        .zip(expected.data.chunks_exact(4))
+        .zip(expected.data().chunks_exact(4))
     {
         assert_eq!(&got[0..3], &want[0..3]);
     }

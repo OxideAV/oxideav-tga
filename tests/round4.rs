@@ -10,6 +10,9 @@
 //! is verified, plus targeted parser tests on hand-crafted byte
 //! buffers to nail truncation behaviour.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga_colour_correction_table,
     parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer,

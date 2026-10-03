@@ -1,157 +1,67 @@
-//! TGA decode. Always normalises to top-left origin and produces
-//! either [`TgaPixelFormat::Rgba`] (types 1 / 2 / 9 / 10) or
-//! [`TgaPixelFormat::Gray8`] (types 3 / 11) — palette lookup, BGR→RGB
-//! swapping, and 5-5-5 expansion all happen at decode time so consumers
-//! don't have to know the on-disk quirks.
+//! TGA decode: the native-layout `decode_image` behind
+//! [`crate::decode`] / [`crate::decode_with`], the header walk behind
+//! [`crate::info`], and the depth helpers that read the TGA 2.0
+//! footer / extension area / developer area / postage stamp / tables.
 //!
 //! Supported (clean-room from TGA 2.0 spec §C):
 //!
 //! * Type 1 — uncompressed colour-mapped (palette indices, 8 bpp).
-//!   Palette entry size 15 / 16 / 24 / 32 bits.
+//!   Palette entry size 15 / 16 / 24 / 32 bits. → `Pal8` + palette.
 //! * Type 2 — uncompressed true-colour, 15 / 16 / 24 / 32 bpp.
-//! * Type 3 — uncompressed grayscale, 8 bpp.
-//! * Type 9 — RLE colour-mapped (RLE on 8-bit indices).
-//! * Type 10 — RLE true-colour, 15 / 16 / 24 / 32 bpp.
-//! * Type 11 — RLE grayscale, 8 bpp.
+//!   → `Rgb24` (24) / `Rgba` (32, and the 15 / 16-bit expansion).
+//! * Type 3 — uncompressed grayscale, 8 bpp. → `Gray8`.
+//! * Type 9 / 10 / 11 — the §C.5 RLE variants of the above.
 //!
-//! Optional 26-byte TGA 2.0 footer is recognised. The extension area
-//! (gamma, software ID + version, postage-stamp thumbnail, attributes
-//! type, …) is parsed by [`parse_tga_extension_area`]; the embedded
-//! thumbnail is decoded by [`parse_tga_postage_stamp`].
-//!
-//! Both image-descriptor ordering bits are honoured per the TGA 2.0 FFS
+//! The on-disk BGR(A) byte order is swizzled to RGB(A). Both
+//! image-descriptor ordering bits are honoured per the TGA 2.0 FFS
 //! image-descriptor field (Table 2 - Image Origin): bit 5 selects
 //! top-to-bottom vs bottom-to-top row order and bit 4 selects
 //! left-to-right vs right-to-left column order. The decoder normalises
 //! every combination to a top-down, left-to-right output, flipping rows
 //! and/or mirroring columns as the descriptor dictates.
 //!
-//! With the default `registry` feature on, the gated `TgaDecoder` trait
-//! impl wraps [`parse_tga`] for the `oxideav_core::Decoder` surface.
+//! The optional 26-byte TGA 2.0 footer is recognised; when it points at
+//! an extension area the typed record lands on
+//! [`TgaImage::extension`] and its gamma on `metadata.gamma`. The
+//! embedded thumbnail is decoded by [`parse_tga_postage_stamp`].
+//!
+//! `decode_legacy` is the pre-contract shape (everything but `Gray8`
+//! expanded to `Rgba`) that the deprecated [`parse_tga`] and the
+//! display pipeline keep returning, byte for byte.
 
 use crate::error::{Result, TgaError as Error};
-use crate::image::{TgaImage, TgaPixelFormat};
+use crate::image::{ImageInfo, Palette, TgaImage, TgaPixelFormat};
+use crate::options::DecodeOptions;
 use crate::types::{
-    parse_extension_area, parse_footer, parse_header, AttributeBits, AttributesType, ColorMapType,
+    parse_extension_area, parse_footer, read_header, AttributeBits, AttributesType, ColorMapType,
     GammaValue, ImageOrigin, ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio,
     PostageStamp, SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap,
     TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader,
     TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
 };
 
+/// The framework factories moved to [`crate::registry`]; these paths stay
+/// so `oxideav_tga::decoder::make_decoder` keeps resolving.
 #[cfg(feature = "registry")]
-use oxideav_core::Decoder;
-#[cfg(feature = "registry")]
-use oxideav_core::{CodecId, CodecParameters, Frame, Packet, VideoFrame, VideoPlane};
-
-/// Factory registered with the codec registry. Consumes one packet per
-/// whole TGA file and produces one frame.
-///
-/// The frame carries the **raw** decoded samples (the [`parse_tga`]
-/// contract): no §C.6 metadata is applied. A consumer that wants the
-/// file's own gamma / colour-correction / attributes-type / key-colour /
-/// pixel-aspect metadata applied should build the decoder with
-/// [`make_decoder_with_display_options`] (or run
-/// [`crate::decode_tga_for_display`] directly on the packet bytes).
-#[cfg(feature = "registry")]
-pub fn make_decoder(_params: &CodecParameters) -> oxideav_core::Result<Box<dyn Decoder>> {
-    Ok(Box::new(TgaDecoder {
-        codec_id: CodecId::new(crate::CODEC_ID_STR),
-        pending: None,
-        eof: false,
-        display: None,
-    }))
-}
-
-/// Factory variant that finalizes each frame through the composed
-/// [`crate::decode_tga_for_display`] pipeline using the supplied
-/// [`crate::TgaDisplayOptions`].
-///
-/// Use [`crate::TgaDisplayOptions::default`] for the spec-faithful "display
-/// this file" behaviour (alpha resolution → tone curve → key colour →
-/// pixel-aspect resample). Unlike the raw [`make_decoder`], the produced
-/// frame may differ in geometry (pixel-aspect resampling) and alpha from
-/// the on-disk samples; this is the intended display behaviour, kept
-/// behind an explicit factory so the default codec path stays a raw
-/// passthrough.
-#[cfg(feature = "registry")]
-pub fn make_decoder_with_display_options(
-    options: crate::display::TgaDisplayOptions,
-) -> oxideav_core::Result<Box<dyn Decoder>> {
-    Ok(Box::new(TgaDecoder {
-        codec_id: CodecId::new(crate::CODEC_ID_STR),
-        pending: None,
-        eof: false,
-        display: Some(options),
-    }))
-}
-
-#[cfg(feature = "registry")]
-struct TgaDecoder {
-    codec_id: CodecId,
-    pending: Option<VideoFrame>,
-    eof: bool,
-    /// When `Some`, each decoded frame is finalized through
-    /// [`crate::decode_tga_for_display`] with these options; when `None`
-    /// the raw [`parse_tga`] samples are emitted.
-    display: Option<crate::display::TgaDisplayOptions>,
-}
-
-#[cfg(feature = "registry")]
-impl Decoder for TgaDecoder {
-    fn codec_id(&self) -> &CodecId {
-        &self.codec_id
-    }
-    fn send_packet(&mut self, packet: &Packet) -> oxideav_core::Result<()> {
-        let mut image = match self.display {
-            Some(opts) => crate::display::decode_tga_for_display(&packet.data, &opts)?,
-            None => parse_tga(&packet.data)?,
-        };
-        image.pts = packet.pts;
-        self.pending = Some(image_to_video_frame(image));
-        Ok(())
-    }
-    fn receive_frame(&mut self) -> oxideav_core::Result<Frame> {
-        match self.pending.take() {
-            Some(f) => Ok(Frame::Video(f)),
-            None => {
-                if self.eof {
-                    Err(oxideav_core::Error::Eof)
-                } else {
-                    Err(oxideav_core::Error::NeedMore)
-                }
-            }
-        }
-    }
-    fn flush(&mut self) -> oxideav_core::Result<()> {
-        self.eof = true;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "registry")]
-fn image_to_video_frame(image: TgaImage) -> VideoFrame {
-    let stride = image.stride();
-    VideoFrame {
-        pts: image.pts,
-        planes: vec![VideoPlane {
-            stride,
-            data: image.data,
-        }],
-    }
-}
+pub use crate::registry::{make_decoder, make_decoder_with_display_options};
 
 // ---------------------------------------------------------------------------
-// Public standalone API
+// Header walk shared by `info` and `decode`
 // ---------------------------------------------------------------------------
 
-/// Decode a complete TGA file into a [`TgaImage`].
-///
-/// Always produces a top-down image; bottom-up files (the common case)
-/// are flipped at decode time. Output pixel format is `Rgba` for types
-/// 1/2/9/10 and `Gray8` for types 3/11.
-pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
-    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+/// The validated header facts every decode path needs: the parsed
+/// header, its image type, and the native layout it decodes to.
+pub(crate) struct Validated {
+    pub(crate) header: TgaHeader,
+    pub(crate) image_type: ImageType,
+    pub(crate) format: TgaPixelFormat,
+}
+
+/// Parse + validate the 18-byte header: known image type, non-zero
+/// geometry, a depth the type allows, and (`strict`) a zero §C.2
+/// interleaving flag. No allocation.
+pub(crate) fn validate_header(input: &[u8], strict: bool) -> Result<Validated> {
+    let header = read_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
     let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
         Error::unsupported(format!(
             "TGA: image type {} not supported",
@@ -161,29 +71,122 @@ pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
     if image_type == ImageType::None {
         return Err(Error::invalid("TGA: image_type == 0 (no image data)"));
     }
-
     if header.width == 0 || header.height == 0 {
         return Err(Error::invalid("TGA: zero dimension"));
     }
-
-    // Skip optional Image ID, then read the colour map if present.
-    let (palette, cursor) = read_palette(input, &header, image_type)?;
-
-    // Validate pixel depth for the chosen image type.
     validate_depth(image_type, header.depth)?;
+    if strict && !header.interleaving().is_tga2_compliant() {
+        return Err(Error::invalid(format!(
+            "TGA: strict mode rejects a non-zero interleaving flag (descriptor bits 7-6 = {:#04b})",
+            header.interleaving().raw()
+        )));
+    }
+    let format = native_format(image_type, header.depth);
+    Ok(Validated {
+        header,
+        image_type,
+        format,
+    })
+}
 
-    // Decode the pixel array.
-    let pixels = if image_type.is_rle() {
-        decode_rle_pixels(&header, image_type, &input[cursor..], palette.as_deref())?
-    } else {
-        decode_raw_pixels(&header, image_type, &input[cursor..], palette.as_deref())?
-    };
-
-    // Decide output pixel format.
-    let pixel_format = if image_type.is_grayscale() {
+/// The native layout a (validated) image type / depth decodes to.
+pub(crate) fn native_format(image_type: ImageType, depth: u8) -> TgaPixelFormat {
+    if image_type.is_grayscale() {
         TgaPixelFormat::Gray8
+    } else if image_type.is_colour_mapped() {
+        TgaPixelFormat::Pal8
+    } else if depth == 24 {
+        TgaPixelFormat::Rgb24
     } else {
         TgaPixelFormat::Rgba
+    }
+}
+
+/// Header-only description for [`crate::info`]: dimensions, native
+/// layout, alpha, and which TGA 2.0 structures the footer points at.
+pub(crate) fn header_info(input: &[u8]) -> Result<ImageInfo> {
+    let v = validate_header(input, false)?;
+    let h = &v.header;
+    let mut info = ImageInfo::new(h.width as u32, h.height as u32, v.format);
+    info.image_type = v.image_type;
+    info.depth = h.depth;
+    info.attribute_bits = h.alpha_bits();
+    info.top_down = h.is_top_down();
+    info.right_to_left = h.is_right_to_left();
+    info.color_map_length = if h.cmap_type == 1 { h.cmap_length } else { 0 };
+    info.color_map_entry_size = if h.cmap_type == 1 {
+        h.cmap_entry_size
+    } else {
+        0
+    };
+    info.image_id_length = h.id_length;
+    info.has_alpha = match v.format {
+        // 15-bit files expand to `Rgba` with a constant opaque alpha.
+        TgaPixelFormat::Rgba => matches!(h.depth, 16 | 32),
+        TgaPixelFormat::Pal8 => matches!(h.cmap_entry_size, 16 | 32),
+        TgaPixelFormat::Rgb24 | TgaPixelFormat::Gray8 => false,
+    };
+    if let Some(footer) = parse_footer(input) {
+        info.has_footer = true;
+        info.has_extension_area =
+            parse_extension_area(input, footer.extension_area_offset).is_some();
+        info.has_developer_area = footer.has_developer_area();
+    }
+    Ok(info)
+}
+
+/// Header plausibility for [`crate::probe`]: no allocation, total.
+/// Strong signal: the TGA 2.0 footer magic at the tail. Weaker: an
+/// 18-byte header with a known image type, a depth that type allows
+/// and non-zero geometry (TGA has no leading magic).
+pub(crate) fn probe_bytes(input: &[u8]) -> bool {
+    if parse_footer(input).is_some() {
+        return true;
+    }
+    validate_header(input, false).is_ok()
+}
+
+// ---------------------------------------------------------------------------
+// Native-layout decode
+// ---------------------------------------------------------------------------
+
+/// Decode a complete TGA file into its native layout under `opts`.
+///
+/// Limits are checked against the header before the pixel plane is
+/// allocated. The result is always top-down / left-to-right; `color`
+/// is [`crate::ColorInfo::tga_default`]; `metadata.gamma` and
+/// `extension` are filled from the TGA 2.0 extension area when present.
+pub(crate) fn decode_image(input: &[u8], opts: &DecodeOptions) -> Result<TgaImage> {
+    let v = validate_header(input, opts.strict)?;
+    let header = &v.header;
+    let width = header.width as usize;
+    let height = header.height as usize;
+    let bpp = v.format.bytes_per_pixel();
+    let stride = width * bpp;
+    opts.check(
+        header.width as u32,
+        header.height as u32,
+        (stride as u64) * (height as u64),
+    )?;
+
+    // Skip optional Image ID, then read the colour map if present.
+    let (palette, cursor) = read_palette(input, header, v.image_type)?;
+
+    // Decode the pixel array in the native layout.
+    let pixels = if v.image_type.is_rle() {
+        decode_rle_pixels(header, v.image_type, &input[cursor..], opts.strict)?
+    } else {
+        decode_raw_pixels(header, v.image_type, &input[cursor..])?
+    };
+    debug_assert_eq!(pixels.len(), stride * height);
+
+    // Palette indices are rebased so index 0 is the first stored entry
+    // (the header's Color Map Origin is folded in); every index is
+    // range-checked here so `to_rgb8` is exact on the result.
+    let pixels = if let (TgaPixelFormat::Pal8, Some(pal)) = (v.format, palette.as_ref()) {
+        rebase_indices(pixels, header.cmap_first, pal.len())?
+    } else {
+        pixels
     };
 
     // Normalise to a top-left origin. Per the TGA 2.0 FFS image-descriptor
@@ -192,44 +195,99 @@ pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
     // top-down, left-to-right, flipping rows when bit 5 is clear (the common
     // bottom-up case) and mirroring columns when bit 4 is set (rare, but
     // spec-legal — some Truevision tooling wrote right-to-left files).
-    let bpp = match pixel_format {
-        TgaPixelFormat::Rgba => 4,
-        TgaPixelFormat::Gray8 => 1,
-        TgaPixelFormat::Rgb24 => 3,
-    };
-    let width = header.width as usize;
-    let height = header.height as usize;
+    let data = normalise_origin(pixels, width, height, bpp, header);
+
+    let mut image = TgaImage::packed(header.width as u32, header.height as u32, v.format, data);
+    if v.format == TgaPixelFormat::Pal8 {
+        image.palette = palette.map(Palette::new);
+    }
+    stamp_extension(&mut image, input);
+    Ok(image)
+}
+
+/// Flip rows / mirror columns as the descriptor dictates.
+pub(crate) fn normalise_origin(
+    pixels: Vec<u8>,
+    width: usize,
+    height: usize,
+    bpp: usize,
+    header: &TgaHeader,
+) -> Vec<u8> {
     let stride = width * bpp;
     let flip_rows = !header.is_top_down();
     let mirror_cols = header.is_right_to_left();
-    let data = if !flip_rows && !mirror_cols {
-        pixels
-    } else {
-        let mut out = vec![0u8; pixels.len()];
-        for y in 0..height {
-            let src_y = if flip_rows { height - 1 - y } else { y };
-            let src_row = &pixels[src_y * stride..][..stride];
-            let dst_row = &mut out[y * stride..][..stride];
-            if mirror_cols {
-                for x in 0..width {
-                    let src_px = &src_row[x * bpp..][..bpp];
-                    let dst_px = &mut dst_row[(width - 1 - x) * bpp..][..bpp];
-                    dst_px.copy_from_slice(src_px);
-                }
-            } else {
-                dst_row.copy_from_slice(src_row);
+    if !flip_rows && !mirror_cols {
+        return pixels;
+    }
+    let mut out = vec![0u8; pixels.len()];
+    for y in 0..height {
+        let src_y = if flip_rows { height - 1 - y } else { y };
+        let src_row = &pixels[src_y * stride..][..stride];
+        let dst_row = &mut out[y * stride..][..stride];
+        if mirror_cols {
+            for x in 0..width {
+                let src_px = &src_row[x * bpp..][..bpp];
+                let dst_px = &mut dst_row[(width - 1 - x) * bpp..][..bpp];
+                dst_px.copy_from_slice(src_px);
             }
+        } else {
+            dst_row.copy_from_slice(src_row);
         }
-        out
-    };
+    }
+    out
+}
 
-    Ok(TgaImage {
-        width: header.width as u32,
-        height: header.height as u32,
-        pixel_format,
-        data,
-        pts: None,
-    })
+/// Subtract the Color Map Origin from every index and range-check the
+/// result against the stored palette length.
+fn rebase_indices(mut indices: Vec<u8>, cmap_first: u16, palette_len: usize) -> Result<Vec<u8>> {
+    for idx in indices.iter_mut() {
+        let i = usize::from(*idx);
+        let entry = i.checked_sub(usize::from(cmap_first)).ok_or_else(|| {
+            Error::invalid(format!(
+                "TGA: palette index {i} below colour-map origin {cmap_first}"
+            ))
+        })?;
+        if entry >= palette_len {
+            return Err(Error::invalid(format!(
+                "TGA: palette index {i} out of range"
+            )));
+        }
+        *idx = entry as u8;
+    }
+    Ok(indices)
+}
+
+/// Fill `metadata.gamma` + `extension` from the TGA 2.0 extension area.
+fn stamp_extension(image: &mut TgaImage, input: &[u8]) {
+    if let Some(ext) = parse_tga_extension_area(input) {
+        image.metadata.gamma = ext.gamma_typed().as_f32();
+        image.extension = Some(ext);
+    }
+}
+
+/// The pre-contract decode shape: [`decode_image`] with default limits,
+/// then [`TgaImage::into_legacy_layout`] (`Gray8` stays, everything
+/// else becomes packed `Rgba`). Byte-identical to what `parse_tga`
+/// has always returned.
+pub(crate) fn decode_legacy(input: &[u8]) -> Result<TgaImage> {
+    Ok(decode_image(input, &DecodeOptions::default())?.into_legacy_layout())
+}
+
+// ---------------------------------------------------------------------------
+// Pre-contract whole-image entry point
+// ---------------------------------------------------------------------------
+
+/// Decode a complete TGA file into a [`TgaImage`] in the pre-contract
+/// layout: `Rgba` for types 1 / 2 / 9 / 10 (palette expanded, 24-bit
+/// widened with opaque alpha, 15 / 16-bit expanded) and `Gray8` for
+/// types 3 / 11. Always top-down.
+///
+/// The contract entry point [`crate::decode`] returns the *native*
+/// layout instead (`Pal8` + palette, `Rgb24`, …); use
+/// [`TgaImage::to_rgba8`] / [`crate::decode_rgba8`] for packed RGBA.
+#[deprecated(note = "use oxideav_tga::decode (IMAGE_CRATE_API)")]
+pub fn parse_tga(input: &[u8]) -> Result<TgaImage> {
+    decode_legacy(input)
 }
 
 /// Recognise + parse the optional TGA 2.0 footer. Returns `None` for
@@ -258,7 +316,7 @@ pub fn parse_tga_footer(input: &[u8]) -> Option<TgaFooter> {
 /// * `None` when the input is shorter than the 18-byte header, or
 ///   truncated before the Image ID's full length.
 pub fn parse_tga_image_id(input: &[u8]) -> Option<&[u8]> {
-    let header = parse_header(input)?;
+    let header = read_header(input)?;
     let n = header.id_length as usize;
     let end = TGA_HEADER_SIZE + n;
     if input.len() < end {
@@ -304,7 +362,7 @@ pub fn parse_tga_colour_correction_table(input: &[u8]) -> Option<TgaColourCorrec
 pub fn parse_tga_scan_line_table(input: &[u8]) -> Option<TgaScanLineTable> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
-    let header = parse_header(input)?;
+    let header = read_header(input)?;
     TgaScanLineTable::parse(input, ext.scan_line_offset, header.height)
 }
 
@@ -345,23 +403,12 @@ pub fn parse_tga_scan_line_table(input: &[u8]) -> Option<TgaScanLineTable> {
 ///   random access of individual lines" — is what makes the table
 ///   well-defined; a file that breaks the rule has rows that don't
 ///   start on packet boundaries, so no table can describe it. (The
-///   whole-image decoder [`parse_tga`] still accepts such files.)
+///   whole-image decoder [`crate::decode`] still accepts such files.)
 pub fn compute_tga_scan_line_table(input: &[u8]) -> Result<TgaScanLineTable> {
-    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
-    let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
-        Error::unsupported(format!(
-            "TGA: image type {} not supported",
-            header.image_type_raw
-        ))
-    })?;
-    if image_type == ImageType::None {
-        return Err(Error::invalid("TGA: image_type == 0 (no image data)"));
-    }
-    if header.width == 0 || header.height == 0 {
-        return Err(Error::invalid("TGA: zero dimension"));
-    }
-    let (_palette, pixel_start) = read_palette(input, &header, image_type)?;
-    validate_depth(image_type, header.depth)?;
+    let v = validate_header(input, false)?;
+    let header = &v.header;
+    let image_type = v.image_type;
+    let (_palette, pixel_start) = read_palette(input, header, image_type)?;
 
     let width = header.width as usize;
     let height = header.height as usize;
@@ -445,21 +492,10 @@ pub fn parse_tga_scan_line(
     table: &TgaScanLineTable,
     index: usize,
 ) -> Result<TgaImage> {
-    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
-    let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
-        Error::unsupported(format!(
-            "TGA: image type {} not supported",
-            header.image_type_raw
-        ))
-    })?;
-    if image_type == ImageType::None {
-        return Err(Error::invalid("TGA: image_type == 0 (no image data)"));
-    }
-    if header.width == 0 || header.height == 0 {
-        return Err(Error::invalid("TGA: zero dimension"));
-    }
-    let (palette, _pixel_start) = read_palette(input, &header, image_type)?;
-    validate_depth(image_type, header.depth)?;
+    let v = validate_header(input, false)?;
+    let header = &v.header;
+    let image_type = v.image_type;
+    let (palette, _pixel_start) = read_palette(input, header, image_type)?;
 
     let offset = table.get(index).ok_or_else(|| {
         Error::invalid(format!(
@@ -475,46 +511,34 @@ pub fn parse_tga_scan_line(
 
     // Decode exactly one row's worth of pixels starting at the
     // recorded offset, reusing the §C.5 packet / raw-pixel machinery
-    // with a synthetic single-row header.
+    // with a synthetic single-row header. Row order (bit 5) needs no
+    // per-row work — the caller's `index` already addresses the saved
+    // order — so the synthetic header is marked top-down and only the
+    // column order (bit 4) is normalised, same as `decode`.
     let row_header = TgaHeader {
         height: 1,
-        ..header
+        descriptor: header.descriptor | 0x20,
+        ..*header
     };
     let row_input = &input[offset..];
-    let mut pixels = if image_type.is_rle() {
-        decode_rle_pixels(&row_header, image_type, row_input, palette.as_deref())?
+    let pixels = if image_type.is_rle() {
+        decode_rle_pixels(&row_header, image_type, row_input, false)?
     } else {
-        decode_raw_pixels(&row_header, image_type, row_input, palette.as_deref())?
+        decode_raw_pixels(&row_header, image_type, row_input)?
     };
+    let pixels = if let (TgaPixelFormat::Pal8, Some(pal)) = (v.format, palette.as_ref()) {
+        rebase_indices(pixels, header.cmap_first, pal.len())?
+    } else {
+        pixels
+    };
+    let bpp = v.format.bytes_per_pixel();
+    let data = normalise_origin(pixels, header.width as usize, 1, bpp, &row_header);
 
-    let pixel_format = if image_type.is_grayscale() {
-        TgaPixelFormat::Gray8
-    } else {
-        TgaPixelFormat::Rgba
-    };
-    // Normalise column order (descriptor bit 4), same as parse_tga.
-    // Row order (bit 5) needs no per-row work — the caller's `index`
-    // already addresses the saved order.
-    if header.is_right_to_left() {
-        let bpp = match pixel_format {
-            TgaPixelFormat::Gray8 => 1,
-            _ => 4,
-        };
-        let w = header.width as usize;
-        for x in 0..w / 2 {
-            for b in 0..bpp {
-                pixels.swap(x * bpp + b, (w - 1 - x) * bpp + b);
-            }
-        }
+    let mut row = TgaImage::packed(header.width as u32, 1, v.format, data);
+    if v.format == TgaPixelFormat::Pal8 {
+        row.palette = palette.map(Palette::new);
     }
-
-    Ok(TgaImage {
-        width: header.width as u32,
-        height: 1,
-        pixel_format,
-        data: pixels,
-        pts: None,
-    })
+    Ok(row.into_legacy_layout())
 }
 
 /// Parse the TGA 2.0 developer-area tag directory if the file has one
@@ -545,6 +569,9 @@ pub fn parse_tga_developer_area(input: &[u8]) -> Option<TgaDeveloperArea> {
 /// decoded RGBA image to straight alpha: a `PremultipliedAlpha` file is
 /// un-premultiplied, a `NoAlpha` / `UndefinedIgnore` file is forced
 /// opaque, and the remaining types pass through unchanged.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.attributes()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_attributes_type(input: &[u8]) -> Option<AttributesType> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -555,6 +582,9 @@ pub fn parse_tga_attributes_type(input: &[u8]) -> Option<AttributesType> {
 /// extension area without separately parsing the footer + extension
 /// area body. Returns `None` when the file has no TGA 2.0 footer or no
 /// extension area.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.key_color_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_key_color(input: &[u8]) -> Option<KeyColor> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -564,6 +594,9 @@ pub fn parse_tga_key_color(input: &[u8]) -> Option<KeyColor> {
 /// Convenience helper: read the §C.6.5 [`PixelAspectRatio`] straight
 /// from the extension area. Returns `None` when the file has no TGA 2.0
 /// footer or no extension area.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.pixel_aspect_ratio_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_pixel_aspect_ratio(input: &[u8]) -> Option<PixelAspectRatio> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -573,6 +606,9 @@ pub fn parse_tga_pixel_aspect_ratio(input: &[u8]) -> Option<PixelAspectRatio> {
 /// Convenience helper: read the §C.6.6 [`GammaValue`] straight from the
 /// extension area. Returns `None` when the file has no TGA 2.0 footer
 /// or no extension area.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.gamma_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_gamma(input: &[u8]) -> Option<GammaValue> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -582,6 +618,9 @@ pub fn parse_tga_gamma(input: &[u8]) -> Option<GammaValue> {
 /// Convenience helper: read the §C.6.7 [`SoftwareVersion`] straight
 /// from the extension area. Returns `None` when the file has no TGA 2.0
 /// footer or no extension area.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.software_version_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_software_version(input: &[u8]) -> Option<SoftwareVersion> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -597,6 +636,9 @@ pub fn parse_tga_software_version(input: &[u8]) -> Option<SoftwareVersion> {
 /// from "valid datetime" — `parse_tga_timestamp` itself does no
 /// validity filtering so a caller can preserve every byte the writer
 /// laid down.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.timestamp_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_timestamp(input: &[u8]) -> Option<TgaTimestamp> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -610,6 +652,9 @@ pub fn parse_tga_timestamp(input: &[u8]) -> Option<TgaTimestamp> {
 /// The returned struct still needs [`JobTime::is_unset`] /
 /// [`JobTime::is_valid`] to distinguish the spec sentinel from a
 /// recorded zero-elapsed job; the parser does no validity filtering.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.job_time_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_job_time(input: &[u8]) -> Option<JobTime> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -624,6 +669,9 @@ pub fn parse_tga_job_time(input: &[u8]) -> Option<JobTime> {
 /// [`TgaAsciiField::is_valid_ascii`] to distinguish the spec
 /// "blanks-terminated-by-null" sentinel from a meaningful payload —
 /// the parser does no validity filtering.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.author_name_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_author_name(input: &[u8]) -> Option<TgaAsciiField> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -634,6 +682,9 @@ pub fn parse_tga_author_name(input: &[u8]) -> Option<TgaAsciiField> {
 /// (four-line author-comment block) straight from the extension area.
 /// Returns `None` when the file has no TGA 2.0 footer or no extension
 /// area.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.author_comments_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_author_comments(input: &[u8]) -> Option<TgaAuthorComments> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -643,6 +694,9 @@ pub fn parse_tga_author_comments(input: &[u8]) -> Option<TgaAuthorComments> {
 /// Convenience helper: read the Field 14 [`TgaAsciiField`] (Job
 /// Name/ID) straight from the extension area. Returns `None` when the
 /// file has no TGA 2.0 footer or no extension area.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.job_name_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_job_name(input: &[u8]) -> Option<TgaAsciiField> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -652,6 +706,9 @@ pub fn parse_tga_job_name(input: &[u8]) -> Option<TgaAsciiField> {
 /// Convenience helper: read the Field 16 [`TgaAsciiField`] (Software
 /// ID) straight from the extension area. Returns `None` when the file
 /// has no TGA 2.0 footer or no extension area.
+#[deprecated(
+    note = "use oxideav_tga::parse_tga_extension_area(..).map(|e| e.software_id_typed()) or oxideav_tga::decode(..).extension (IMAGE_CRATE_API)"
+)]
 pub fn parse_tga_software_id(input: &[u8]) -> Option<TgaAsciiField> {
     let footer = parse_footer(input)?;
     let ext = parse_extension_area(input, footer.extension_area_offset)?;
@@ -678,7 +735,7 @@ pub fn parse_tga_software_id(input: &[u8]) -> Option<TgaAsciiField> {
 ///    decoder would render them as fully-transparent black even though the
 ///    intended interpretation is opaque.
 ///
-/// `image.pixel_format != Rgba` is a no-op: neither
+/// `image.format != Rgba` is a no-op: neither
 /// [`TgaPixelFormat::Rgb24`] nor [`TgaPixelFormat::Gray8`] carries an alpha
 /// channel to interpret.
 ///
@@ -688,10 +745,11 @@ pub fn resolve_alpha_with_targa32_fallback(
     input: &[u8],
     image: &mut TgaImage,
 ) -> Option<AttributesType> {
-    if image.pixel_format != TgaPixelFormat::Rgba {
-        return parse_tga_attributes_type(input);
+    let declared = parse_tga_extension_area(input).map(|e| e.attributes());
+    if image.format != TgaPixelFormat::Rgba {
+        return declared;
     }
-    if let Some(attrs) = parse_tga_attributes_type(input) {
+    if let Some(attrs) = declared {
         attrs.apply_to_image(image);
         return Some(attrs);
     }
@@ -707,7 +765,7 @@ pub fn resolve_alpha_with_targa32_fallback(
 /// "These bits specify the number of attribute bits per pixel … these
 /// bits indicate the number of bits per pixel which are designated as
 /// Alpha Channel bits." Unlike the extension-area
-/// [`AttributesType`](crate::AttributesType) (Field 24, TGA 2.0 only),
+/// [`AttributesType`] (Field 24, TGA 2.0 only),
 /// this declaration lives in the fixed header, so it is present in
 /// **every** TGA file including TGA 1.0 — making it the header-local way
 /// to learn whether a 32-bpp pixel's fourth byte (or a 16-bpp pixel's top
@@ -715,8 +773,9 @@ pub fn resolve_alpha_with_targa32_fallback(
 ///
 /// Returns the typed [`AttributeBits`] view, or `None` when the input is
 /// shorter than the 18-byte header.
+#[deprecated(note = "use oxideav_tga::header(..).map(|h| h.attribute_bits()) (IMAGE_CRATE_API)")]
 pub fn parse_tga_attribute_bits(input: &[u8]) -> Option<AttributeBits> {
-    parse_header(input).map(|h| h.attribute_bits())
+    read_header(input).map(|h| h.attribute_bits())
 }
 
 /// Read the **§C.2 Image Descriptor** data-storage interleaving flag
@@ -725,7 +784,7 @@ pub fn parse_tga_attribute_bits(input: &[u8]) -> Option<AttributeBits> {
 /// The TGA 2.0 FFS requires this field to be zero "to insure future
 /// compatibility" — TGA 2.0 abandoned the earlier interleaving scheme —
 /// so a conformant 2.0 file reports
-/// [`Interleaving::NonInterleaved`](crate::Interleaving::NonInterleaved).
+/// [`Interleaving::NonInterleaved`].
 /// The earlier Truevision layout defined the field as a data-storage
 /// interleaving flag (`00` non-interleaved, `01` two-way even/odd, `10`
 /// four-way, `11` reserved); a legacy file that set a non-zero value is
@@ -742,8 +801,9 @@ pub fn parse_tga_attribute_bits(input: &[u8]) -> Option<AttributeBits> {
 ///
 /// Returns the typed [`Interleaving`] view, or `None` when the input is
 /// shorter than the 18-byte header.
+#[deprecated(note = "use oxideav_tga::header(..).map(|h| h.interleaving()) (IMAGE_CRATE_API)")]
 pub fn parse_tga_interleaving(input: &[u8]) -> Option<Interleaving> {
-    parse_header(input).map(|h| h.interleaving())
+    read_header(input).map(|h| h.interleaving())
 }
 
 /// Read the **§5.1 / §5.2 Image Origin** (fixed-header Fields 5.1 + 5.2,
@@ -767,8 +827,9 @@ pub fn parse_tga_interleaving(input: &[u8]) -> Option<Interleaving> {
 ///
 /// Returns the typed [`ImageOrigin`] view, or `None` when the input is
 /// shorter than the 18-byte header.
+#[deprecated(note = "use oxideav_tga::header(..).map(|h| h.image_origin()) (IMAGE_CRATE_API)")]
 pub fn parse_tga_image_origin(input: &[u8]) -> Option<ImageOrigin> {
-    parse_header(input).map(|h| h.image_origin())
+    read_header(input).map(|h| h.image_origin())
 }
 
 /// Resolve a decoded RGBA image's alpha channel using only the
@@ -795,13 +856,13 @@ pub fn parse_tga_image_origin(input: &[u8]) -> Option<ImageOrigin> {
 /// win can run this first; one wanting the extension area to win runs the
 /// other.
 ///
-/// `image.pixel_format != Rgba` is a no-op (no alpha channel to resolve).
+/// `image.format != Rgba` is a no-op (no alpha channel to resolve).
 /// Returns the [`AttributeBits`] read from the header (`None` only when
 /// the input is shorter than the 18-byte header), so the caller can tell
 /// which branch ran.
 pub fn resolve_alpha_from_descriptor(input: &[u8], image: &mut TgaImage) -> Option<AttributeBits> {
-    let bits = parse_tga_attribute_bits(input)?;
-    if image.pixel_format == TgaPixelFormat::Rgba && bits.is_none() {
+    let bits = read_header(input)?.attribute_bits();
+    if image.format == TgaPixelFormat::Rgba && bits.is_none() {
         image.force_opaque();
     }
     Some(bits)
@@ -833,7 +894,7 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
     // Re-parse the main header so we know the original pixel format
     // and (if applicable) the colour map. The postage stamp shares
     // both with the main image.
-    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let header = read_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
     let image_type = ImageType::from_u8(header.image_type_raw).ok_or_else(|| {
         Error::unsupported(format!(
             "TGA: image type {} not supported (postage stamp)",
@@ -891,36 +952,25 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
     // off the wire (the §C.2 header allows any value), and an extension
     // area can be authored with a `postage_stamp_offset` even when the
     // parent depth is nonsensical (e.g. `8` for type 2 / 10, `0` for type
-    // 3 / 11). Without this guard a hostile file reaches `emit_pixel`'s
-    // depth `match` with an unsupported value and trips the internal
-    // `unreachable!()` — a panic, not a returned `Err`. The main-image
-    // path (`parse_tga`) already calls `validate_depth` for the same
-    // reason; mirror that here so every public decoder surface returns
+    // 3 / 11). Every public decoder surface returns
     // `Err(TgaError::Unsupported)` for a malformed depth rather than
     // aborting the process.
     validate_depth(stamp_image_type, stamp_header.depth)?;
 
     let pixels_in = &input[pp_off + 2..];
-    let pixels = decode_raw_pixels(
-        &stamp_header,
-        stamp_image_type,
-        pixels_in,
-        palette.as_deref(),
-    )?;
-
-    let pixel_format = if stamp_image_type.is_grayscale() {
-        TgaPixelFormat::Gray8
+    let pixels = decode_raw_pixels(&stamp_header, stamp_image_type, pixels_in)?;
+    let format = native_format(stamp_image_type, stamp_header.depth);
+    let pixels = if let (TgaPixelFormat::Pal8, Some(pal)) = (format, palette.as_ref()) {
+        rebase_indices(pixels, header.cmap_first, pal.len())?
     } else {
-        TgaPixelFormat::Rgba
+        pixels
     };
 
-    Ok(Some(TgaImage {
-        width: stamp_w as u32,
-        height: stamp_h as u32,
-        pixel_format,
-        data: pixels,
-        pts: None,
-    }))
+    let mut stamp = TgaImage::packed(stamp_w as u32, stamp_h as u32, format, pixels);
+    if format == TgaPixelFormat::Pal8 {
+        stamp.palette = palette.map(Palette::new);
+    }
+    Ok(Some(stamp.into_legacy_layout()))
 }
 
 /// Read just the **Field 26 (Postage Stamp Image)** dimension header
@@ -1031,7 +1081,7 @@ fn read_palette(
 /// The color-map block sits after the Image Identification Field, so the
 /// header's `id_length` is honoured when locating it.
 pub fn parse_tga_color_map(input: &[u8]) -> Result<Option<TgaColorMap>> {
-    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let header = read_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
     if header.cmap_type != 1 {
         return Ok(None);
     }
@@ -1059,7 +1109,7 @@ pub fn parse_tga_color_map(input: &[u8]) -> Result<Option<TgaColorMap>> {
 /// map entry of a file whose header declares a Color Map Type of `1`
 /// (spec, Color Map Type byte: *"1 means a color map is included, but
 /// since this is an unmapped image it is usually ignored. TIPS (a Targa
-/// paint system) will set the border color [to] the first map color if
+/// paint system) will set the border color \[to\] the first map color if
 /// it is present"*).
 ///
 /// This is the meaningful interpretation of the vestigial colour map an
@@ -1084,7 +1134,7 @@ pub fn parse_tga_color_map(input: &[u8]) -> Result<Option<TgaColorMap>> {
 /// `cmap_type == 1` map of length 0), so a successful return always
 /// carries a colour.
 pub fn parse_tga_border_color(input: &[u8]) -> Result<Option<[u8; 4]>> {
-    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let header = read_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
     // Only an *unmapped* image type with a present map carries a TIPS
     // border colour; for a colour-mapped type the map is the palette.
     if let Some(image_type) = ImageType::from_u8(header.image_type_raw) {
@@ -1106,8 +1156,9 @@ pub fn parse_tga_border_color(input: &[u8]) -> Result<Option<[u8; 4]>> {
 /// header; every byte value `0..=255` otherwise classifies
 /// ([`ColorMapType::Absent`] / [`ColorMapType::Present`] /
 /// [`ColorMapType::Reserved`]).
+#[deprecated(note = "use oxideav_tga::header(..).map(|h| h.color_map_type()) (IMAGE_CRATE_API)")]
 pub fn parse_tga_color_map_type(input: &[u8]) -> Result<ColorMapType> {
-    let header = parse_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let header = read_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
     Ok(header.color_map_type())
 }
 
@@ -1191,33 +1242,21 @@ fn expand5(v: u8) -> u8 {
     (v << 3) | (v >> 2)
 }
 
-fn decode_raw_pixels(
-    header: &TgaHeader,
-    image_type: ImageType,
-    input: &[u8],
-    palette: Option<&[[u8; 4]]>,
-) -> Result<Vec<u8>> {
+/// Native-layout output size per source pixel.
+fn out_bpp(image_type: ImageType, depth: u8) -> usize {
+    native_format(image_type, depth).bytes_per_pixel()
+}
+
+fn decode_raw_pixels(header: &TgaHeader, image_type: ImageType, input: &[u8]) -> Result<Vec<u8>> {
     let pixel_count = header.width as usize * header.height as usize;
     let in_bpp = header.depth.div_ceil(8) as usize;
     if input.len() < pixel_count * in_bpp {
         return Err(Error::invalid("TGA: pixel data truncated"));
     }
-    let mut out = match image_type {
-        ImageType::UncompressedGrayscale | ImageType::RleGrayscale => {
-            Vec::with_capacity(pixel_count)
-        }
-        _ => Vec::with_capacity(pixel_count * 4),
-    };
+    let mut out = Vec::with_capacity(pixel_count * out_bpp(image_type, header.depth));
     for i in 0..pixel_count {
         let src = &input[i * in_bpp..i * in_bpp + in_bpp];
-        emit_pixel(
-            image_type,
-            header.depth,
-            header.cmap_first,
-            src,
-            palette,
-            &mut out,
-        )?;
+        emit_pixel(image_type, header.depth, src, &mut out)?;
     }
     Ok(out)
 }
@@ -1226,14 +1265,12 @@ fn decode_rle_pixels(
     header: &TgaHeader,
     image_type: ImageType,
     input: &[u8],
-    palette: Option<&[[u8; 4]]>,
+    strict: bool,
 ) -> Result<Vec<u8>> {
-    let pixel_count = header.width as usize * header.height as usize;
+    let width = header.width as usize;
+    let pixel_count = width * header.height as usize;
     let in_bpp = header.depth.div_ceil(8) as usize;
-    let mut out = match image_type {
-        ImageType::RleGrayscale => Vec::with_capacity(pixel_count),
-        _ => Vec::with_capacity(pixel_count * 4),
-    };
+    let mut out = Vec::with_capacity(pixel_count * out_bpp(image_type, header.depth));
     let mut cursor = 0usize;
     let mut produced = 0usize;
     while produced < pixel_count {
@@ -1249,6 +1286,13 @@ fn decode_rle_pixels(
                 "TGA: RLE packet overruns pixel array (produced={produced}, packet count={count}, total={pixel_count})"
             )));
         }
+        if strict && count > width - produced % width {
+            return Err(Error::invalid(format!(
+                "TGA: strict mode rejects an RLE packet spanning a scan-line boundary \
+                 (row has {} pixel(s) left, packet encodes {count})",
+                width - produced % width
+            )));
+        }
         if is_run {
             // Run-length packet: 1 pixel × `count`. Every output pixel
             // in the run is byte-identical, so expand the source pixel
@@ -1262,14 +1306,7 @@ fn decode_rle_pixels(
             }
             let src = &input[cursor..cursor + in_bpp];
             let before = out.len();
-            emit_pixel(
-                image_type,
-                header.depth,
-                header.cmap_first,
-                src,
-                palette,
-                &mut out,
-            )?;
+            emit_pixel(image_type, header.depth, src, &mut out)?;
             let unit = out.len() - before;
             // Replicate the just-emitted pixel's bytes `count - 1` more
             // times by doubling the freshly-written tail in place.
@@ -1289,14 +1326,7 @@ fn decode_rle_pixels(
             }
             for i in 0..count {
                 let src = &input[cursor + i * in_bpp..cursor + i * in_bpp + in_bpp];
-                emit_pixel(
-                    image_type,
-                    header.depth,
-                    header.cmap_first,
-                    src,
-                    palette,
-                    &mut out,
-                )?;
+                emit_pixel(image_type, header.depth, src, &mut out)?;
             }
             cursor += count * in_bpp;
         }
@@ -1305,32 +1335,14 @@ fn decode_rle_pixels(
     Ok(out)
 }
 
-fn emit_pixel(
-    image_type: ImageType,
-    depth: u8,
-    cmap_first: u16,
-    src: &[u8],
-    palette: Option<&[[u8; 4]]>,
-    out: &mut Vec<u8>,
-) -> Result<()> {
+/// Append one source pixel in the native layout: the raw 8-bit index
+/// for colour-mapped types (rebased + range-checked by the caller),
+/// RGB for 24-bit true colour, RGBA for 32-bit and the 15 / 16-bit
+/// expansion, the luma byte for grayscale.
+fn emit_pixel(image_type: ImageType, depth: u8, src: &[u8], out: &mut Vec<u8>) -> Result<()> {
     match image_type {
         ImageType::UncompressedColourMapped | ImageType::RleColourMapped => {
-            // 8-bit palette index. The colour map on disk stores entries
-            // starting at the Color Map Origin (the §C.2 "index of first
-            // color map entry", header bytes 3-4). An image index `idx`
-            // therefore addresses on-disk entry `idx - cmap_first`; indices
-            // below the origin (or past the stored length) are out of range.
-            let idx = src[0] as usize;
-            let p = palette.ok_or_else(|| Error::invalid("TGA: colour-mapped without palette"))?;
-            let entry = idx.checked_sub(cmap_first as usize).ok_or_else(|| {
-                Error::invalid(format!(
-                    "TGA: palette index {idx} below colour-map origin {cmap_first}"
-                ))
-            })?;
-            let rgba = *p
-                .get(entry)
-                .ok_or_else(|| Error::invalid(format!("TGA: palette index {idx} out of range")))?;
-            out.extend_from_slice(&rgba);
+            out.push(src[0]);
         }
         ImageType::UncompressedTrueColour | ImageType::RleTrueColour => match depth {
             15 | 16 => {
@@ -1339,14 +1351,14 @@ fn emit_pixel(
                 out.extend_from_slice(&rgba);
             }
             24 => {
-                // BGR on disk → RGBA in memory.
-                out.extend_from_slice(&[src[2], src[1], src[0], 0xFF]);
+                // BGR on disk → RGB in memory.
+                out.extend_from_slice(&[src[2], src[1], src[0]]);
             }
             32 => {
                 // BGRA on disk → RGBA in memory.
                 out.extend_from_slice(&[src[2], src[1], src[0], src[3]]);
             }
-            // Defensive: every caller now runs `validate_depth` before
+            // Defensive: every caller runs `validate_depth` before
             // driving this routine, but a returned `Err` is the
             // documented contract for an unsupported depth — never a
             // panic — so a future caller that forgets the validation
@@ -1361,7 +1373,7 @@ fn emit_pixel(
             // 8 bpp luma, single byte.
             out.push(src[0]);
         }
-        // Defensive: `parse_tga` already rejects `image_type == 0`,
+        // Defensive: `validate_header` already rejects `image_type == 0`,
         // but as with the depth `match` above the contract is
         // returned-error, not panic.
         ImageType::None => {

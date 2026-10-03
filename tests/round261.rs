@@ -33,6 +33,9 @@
 //! `TgaScanLineTable::parse` / `to_bytes` / `parse_tga_scan_line_table`
 //! surface — strictly additive.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{TgaScanLineTable, TGA_SCAN_LINE_OFFSET_BYTES};
 
 // ---------------------------------------------------------------------------

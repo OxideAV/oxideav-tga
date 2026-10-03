@@ -15,6 +15,9 @@
 //! expands each run pixel-by-pixel — independent of the optimized
 //! code path under test.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::parse_tga;
 
 /// Build a minimal TGA header (18 bytes) for the given parameters.
@@ -130,7 +133,7 @@ fn rle_truecolour_24_bit_identical() {
 
     let img = parse_tga(&file).unwrap();
     let expected = naive_expand(&packets, in_bpp, |px| vec![px[2], px[1], px[0], 0xFF]);
-    assert_eq!(img.data, expected);
+    assert_eq!(img.data(), expected);
 }
 
 #[test]
@@ -160,7 +163,7 @@ fn rle_truecolour_32_bit_identical() {
 
     let img = parse_tga(&file).unwrap();
     let expected = naive_expand(&packets, in_bpp, |px| vec![px[2], px[1], px[0], px[3]]);
-    assert_eq!(img.data, expected);
+    assert_eq!(img.data(), expected);
 }
 
 #[test]
@@ -199,7 +202,7 @@ fn rle_truecolour_16_bit_identical() {
         let a = if (v & 0x8000) != 0 { 0xFF } else { 0x00 };
         vec![r, g, b, a]
     });
-    assert_eq!(img.data, expected);
+    assert_eq!(img.data(), expected);
 }
 
 #[test]
@@ -229,7 +232,7 @@ fn rle_grayscale_bit_identical() {
 
     let img = parse_tga(&file).unwrap();
     let expected = naive_expand(&packets, in_bpp, |px| vec![px[0]]);
-    assert_eq!(img.data, expected);
+    assert_eq!(img.data(), expected);
 }
 
 #[test]
@@ -275,7 +278,7 @@ fn rle_colour_mapped_bit_identical() {
         let bgr = palette_bgr[px[0] as usize];
         vec![bgr[2], bgr[1], bgr[0], 0xFF]
     });
-    assert_eq!(img.data, expected);
+    assert_eq!(img.data(), expected);
 }
 
 #[test]
@@ -323,5 +326,5 @@ fn rle_run_then_raw_alternating_24() {
 
     let img = parse_tga(&file).unwrap();
     let expected = naive_expand(&packets, in_bpp, |px| vec![px[2], px[1], px[0], 0xFF]);
-    assert_eq!(img.data, expected);
+    assert_eq!(img.data(), expected);
 }

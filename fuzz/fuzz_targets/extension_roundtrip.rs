@@ -16,7 +16,7 @@
 //! arithmetic surface and the least test coverage. This target attacks
 //! it: from arbitrary fuzz bytes it builds
 //!
-//! * a small base TGA (via [`encode_tga_uncompressed`]), and
+//! * a small base TGA (via `encode_rgba8`, uncompressed), and
 //! * an [`ExtensionAreaInput`] carrying every optional block — gamma
 //!   (Field 20), key colour (Field 18), pixel aspect ratio (Field 19),
 //!   software version (Field 17), attributes type (Field 24), a
@@ -58,11 +58,10 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga_colour_correction_table,
-    parse_tga_extension_area, parse_tga_footer, parse_tga_gamma, parse_tga_key_color,
-    parse_tga_pixel_aspect_ratio, parse_tga_scan_line_table, parse_tga_software_version,
-    DeveloperTagInput, ExtensionAreaInput, TgaColourCorrectionTable, TgaImage, TgaPixelFormat,
-    TgaScanLineTable, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
+    encode_tga_with_extension, parse_tga_colour_correction_table, parse_tga_extension_area,
+    parse_tga_footer, parse_tga_scan_line_table, DeveloperTagInput, ExtensionAreaInput,
+    TgaColourCorrectionTable, TgaImage, TgaPixelFormat, TgaScanLineTable,
+    TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
 };
 
 /// Maximum side length for the base image. Keeps the raster tiny — the
@@ -127,7 +126,12 @@ fuzz_target!(|data: &[u8]| {
     let w = (cur.next_u16() % MAX_SIDE).max(1);
     let h = (cur.next_u16() % MAX_SIDE).max(1);
     let pixels = tile(cur.rest(), w as usize * h as usize * 4);
-    let base = match encode_tga_uncompressed(w, h, &pixels) {
+    let base = match oxideav_tga::encode_rgba8(
+        w as u32,
+        h as u32,
+        &pixels,
+        &oxideav_tga::EncodeOptions::default().with_rle(false),
+    ) {
         Ok(b) => b,
         Err(_) => return,
     };
@@ -180,13 +184,12 @@ fuzz_target!(|data: &[u8]| {
         let sw = (cur.next_u8() % MAX_STAMP_SIDE).max(1);
         let sh = (cur.next_u8() % MAX_STAMP_SIDE).max(1);
         let data = tile(cur.rest(), sw as usize * sh as usize * 4);
-        Some(TgaImage {
-            width: sw as u32,
-            height: sh as u32,
-            pixel_format: TgaPixelFormat::Rgba,
+        Some(TgaImage::packed(
+            sw as u32,
+            sh as u32,
+            TgaPixelFormat::Rgba,
             data,
-            pts: None,
-        })
+        ))
     } else {
         None
     };
@@ -234,16 +237,17 @@ fuzz_target!(|data: &[u8]| {
     );
 
     // Verbatim SHORT-pair fields round-trip exactly.
-    let g = parse_tga_gamma(&bytes).expect("gamma present");
+    let area = parse_tga_extension_area(&bytes).expect("extension area present");
+    let g = area.gamma_typed();
     assert_eq!(g.as_tuple(), gamma, "gamma round-trip mismatch");
 
-    let kc = parse_tga_key_color(&bytes).expect("key colour present");
+    let kc = area.key_color_typed();
     assert_eq!(kc.to_argb(), key_color, "key colour round-trip mismatch");
 
-    let ar = parse_tga_pixel_aspect_ratio(&bytes).expect("aspect present");
+    let ar = area.pixel_aspect_ratio_typed();
     assert_eq!(ar.as_tuple(), aspect, "aspect-ratio round-trip mismatch");
 
-    let sv = parse_tga_software_version(&bytes).expect("software version present");
+    let sv = area.software_version_typed();
     assert_eq!(
         sv.as_tuple(),
         (sw_version_num, sw_version_letter),

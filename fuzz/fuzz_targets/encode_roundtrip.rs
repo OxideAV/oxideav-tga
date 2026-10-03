@@ -1,4 +1,7 @@
 #![no_main]
+// Pins the pre-contract writers (deprecated for one release) through
+// the decoder; the contract API has its own `contract_identity` target.
+#![allow(deprecated)]
 
 //! Encode-then-decode round-trip target for every public TGA writer.
 //!
@@ -233,13 +236,13 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(img.width, w as u32, "round-trip width mismatch");
     assert_eq!(img.height, h as u32, "round-trip height mismatch");
     assert_eq!(
-        img.pixel_format,
+        img.format,
         writer.decoded_format(),
         "round-trip pixel format mismatch"
     );
     let expected_len = img.width as usize * img.height as usize * img.bytes_per_pixel();
     assert_eq!(
-        img.data.len(),
+        img.data().len(),
         expected_len,
         "round-trip payload length doesn't match w×h×bpp"
     );

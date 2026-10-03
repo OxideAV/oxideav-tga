@@ -35,6 +35,9 @@
 //!   from a freshly-encoded extension-bearing file, and `None` when no
 //!   extension area is present.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_extension_area,
     parse_tga_gamma, parse_tga_key_color, parse_tga_pixel_aspect_ratio, parse_tga_software_version,
@@ -281,62 +284,43 @@ fn gamma_apply_to_rgba8_preserves_alpha() {
 #[test]
 fn gamma_apply_to_image_rgba_walks_every_pixel() {
     let g = GammaValue::new(2, 1);
-    let mut image = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![128, 128, 128, 200, 64, 64, 64, 100],
-        pts: None,
-    };
+    let mut image = TgaImage::packed(
+        2,
+        1,
+        TgaPixelFormat::Rgba,
+        vec![128, 128, 128, 200, 64, 64, 64, 100],
+    );
     g.apply_to_image(&mut image);
     // First pixel: 128 → 64; alpha preserved.
-    assert_eq!(&image.data[..4], &[64, 64, 64, 200]);
+    assert_eq!(&image.data()[..4], &[64, 64, 64, 200]);
     // Second pixel: 64/255 = 0.251; squared = 0.063; ×255 = 16.04 → 16.
-    assert_eq!(&image.data[4..], &[16, 16, 16, 100]);
+    assert_eq!(&image.data()[4..], &[16, 16, 16, 100]);
 }
 
 #[test]
 fn gamma_apply_to_image_gray8_walks_every_byte() {
     let g = GammaValue::new(2, 1);
-    let mut image = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: vec![128, 255],
-        pts: None,
-    };
+    let mut image = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![128, 255]);
     g.apply_to_image(&mut image);
-    assert_eq!(image.data, vec![64, 255]);
+    assert_eq!(image.data(), vec![64, 255]);
 }
 
 #[test]
 fn gamma_apply_to_image_rgb24_walks_every_byte() {
     // Rgb24 has no alpha, so every byte is a colour channel.
     let g = GammaValue::new(2, 1);
-    let mut image = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgb24,
-        data: vec![128, 128, 128],
-        pts: None,
-    };
+    let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![128, 128, 128]);
     g.apply_to_image(&mut image);
-    assert_eq!(image.data, vec![64, 64, 64]);
+    assert_eq!(image.data(), vec![64, 64, 64]);
 }
 
 #[test]
 fn gamma_apply_to_image_unset_and_identity_are_noops() {
     let original = vec![10u8, 20, 30, 200];
     for g in [GammaValue::UNSET, GammaValue::ONE, GammaValue::new(99, 99)] {
-        let mut image = TgaImage {
-            width: 1,
-            height: 1,
-            pixel_format: TgaPixelFormat::Rgba,
-            data: original.clone(),
-            pts: None,
-        };
+        let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgba, original.clone());
         g.apply_to_image(&mut image);
-        assert_eq!(image.data, original, "{g:?} must be a no-op");
+        assert_eq!(image.data(), original, "{g:?} must be a no-op");
     }
 }
 
@@ -346,16 +330,10 @@ fn gamma_apply_to_image_malformed_is_noop() {
     // representation, but huge / overflow combinations can — both
     // sides should be a no-op so a hostile file never blows up.
     let original = vec![10u8, 20, 30, 200];
-    let mut image = TgaImage {
-        width: 1,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: original.clone(),
-        pts: None,
-    };
+    let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgba, original.clone());
     // denominator == 0 → unset → no-op.
     GammaValue::new(65535, 0).apply_to_image(&mut image);
-    assert_eq!(image.data, original);
+    assert_eq!(image.data(), original);
 }
 
 #[test]
@@ -461,5 +439,5 @@ fn parser_helpers_round_trip_against_full_extension_area() {
     let image = parse_tga(&bytes).unwrap();
     assert_eq!(image.width, 1);
     assert_eq!(image.height, 1);
-    assert_eq!(image.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(image.format, TgaPixelFormat::Rgba);
 }

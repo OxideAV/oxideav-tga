@@ -33,6 +33,9 @@
 //!   `parse_tga_image_id` (panic-free contract — same as every other
 //!   `parse_tga_*` helper).
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
     encode_tga_rle, encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
@@ -122,8 +125,8 @@ fn image_id_roundtrip_uncompressed_truecolor() {
     let img = parse_tga(&base).unwrap();
     assert_eq!(img.width, 8);
     assert_eq!(img.height, 4);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -136,8 +139,8 @@ fn image_id_roundtrip_uncompressed_rgb24() {
     assert_eq!(img.width, 6);
     assert_eq!(img.height, 3);
     // RGB24 input is decoded as RGBA (alpha forced to 0xFF).
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
-    for (i, px) in img.data.chunks_exact(4).enumerate() {
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
+    for (i, px) in img.data().chunks_exact(4).enumerate() {
         let src = &rgb[i * 3..i * 3 + 3];
         assert_eq!(&px[..3], src);
         assert_eq!(px[3], 0xFF);
@@ -151,7 +154,7 @@ fn image_id_roundtrip_rle_truecolor() {
     splice_image_id(&mut base, SAMPLE_ID).unwrap();
     assert_image_id_round_trip(&base, SAMPLE_ID);
     let img = parse_tga(&base).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -161,7 +164,7 @@ fn image_id_roundtrip_rle_rgb24() {
     splice_image_id(&mut base, SAMPLE_ID).unwrap();
     assert_image_id_round_trip(&base, SAMPLE_ID);
     let img = parse_tga(&base).unwrap();
-    for (i, px) in img.data.chunks_exact(4).enumerate() {
+    for (i, px) in img.data().chunks_exact(4).enumerate() {
         let src = &rgb[i * 3..i * 3 + 3];
         assert_eq!(&px[..3], src);
         assert_eq!(px[3], 0xFF);
@@ -175,7 +178,7 @@ fn image_id_roundtrip_palette_uncompressed() {
     splice_image_id(&mut base, SAMPLE_ID).unwrap();
     assert_image_id_round_trip(&base, SAMPLE_ID);
     let img = parse_tga(&base).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -185,7 +188,7 @@ fn image_id_roundtrip_palette_rle() {
     splice_image_id(&mut base, SAMPLE_ID).unwrap();
     assert_image_id_round_trip(&base, SAMPLE_ID);
     let img = parse_tga(&base).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -195,8 +198,8 @@ fn image_id_roundtrip_grayscale_uncompressed() {
     splice_image_id(&mut base, SAMPLE_ID).unwrap();
     assert_image_id_round_trip(&base, SAMPLE_ID);
     let img = parse_tga(&base).unwrap();
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, gray);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), gray);
 }
 
 #[test]
@@ -206,8 +209,8 @@ fn image_id_roundtrip_grayscale_rle() {
     splice_image_id(&mut base, SAMPLE_ID).unwrap();
     assert_image_id_round_trip(&base, SAMPLE_ID);
     let img = parse_tga(&base).unwrap();
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, gray);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), gray);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,13 +228,12 @@ fn splice_then_extension_area_preserves_both() {
         software_id: "round8".to_string(),
         software_version: (100, 'a'),
         attributes_type: 3,
-        postage_stamp: Some(TgaImage {
-            width: 4,
-            height: 2,
-            pixel_format: TgaPixelFormat::Rgba,
-            data: rgba_diag(4, 2),
-            pts: None,
-        }),
+        postage_stamp: Some(TgaImage::packed(
+            4,
+            2,
+            TgaPixelFormat::Rgba,
+            rgba_diag(4, 2),
+        )),
         ..Default::default()
     };
     let full = encode_tga_with_extension(&base, &ext_input).unwrap();
@@ -250,10 +252,10 @@ fn splice_then_extension_area_preserves_both() {
     let stamp = parse_tga_postage_stamp(&full).unwrap().expect("stamp");
     assert_eq!(stamp.width, 4);
     assert_eq!(stamp.height, 2);
-    assert_eq!(stamp.data, rgba_diag(4, 2));
+    assert_eq!(stamp.data(), rgba_diag(4, 2));
     // Main image still decodes pixel-exact.
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +287,7 @@ fn maximum_length_image_id_is_accepted() {
     assert_eq!(id.len(), TGA_IMAGE_ID_MAX);
     assert!(id.iter().all(|&b| b == 0xAA));
     let img = parse_tga(&base).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]

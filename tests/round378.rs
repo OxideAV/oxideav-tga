@@ -18,6 +18,9 @@
 //! correctly where they carry no alpha, (g) a metadata-free TGA 1.0 file
 //! is byte-identical between `parse_tga` and the composed default path.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     decode_tga_for_display, decode_tga_for_display_reported, decode_tga_frame,
     encode_tga_grayscale, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
@@ -52,10 +55,14 @@ fn passthrough_options_equal_parse_tga() {
 
     let raw = parse_tga(&file).unwrap();
     let pass = decode_tga_for_display(&file, &TgaDisplayOptions::NONE).unwrap();
-    assert_eq!(raw.data, pass.data, "NONE options must not touch pixels");
+    assert_eq!(
+        raw.data(),
+        pass.data(),
+        "NONE options must not touch pixels"
+    );
     assert_eq!(raw.width, pass.width);
     assert_eq!(raw.height, pass.height);
-    assert_eq!(raw.pixel_format, pass.pixel_format);
+    assert_eq!(raw.format, pass.format);
 }
 
 #[test]
@@ -78,7 +85,7 @@ fn metadata_free_file_default_equals_raw() {
     let file = encode_tga_uncompressed_rgb24(3, 3, &rgb).unwrap();
     let raw = parse_tga(&file).unwrap();
     let disp = decode_tga_for_display(&file, &TgaDisplayOptions::default()).unwrap();
-    assert_eq!(raw.data, disp.data);
+    assert_eq!(raw.data(), disp.data());
     assert_eq!((raw.width, raw.height), (disp.width, disp.height));
 
     let (_, report) =
@@ -112,9 +119,9 @@ fn tone_pass_applies_gamma() {
         decode_tga_for_display_reported(&file, &TgaDisplayOptions::default()).unwrap();
 
     // RGB24 input is decoded to RGBA (alpha forced 0xFF), so each pixel is 4 bytes.
-    assert_eq!(disp.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(disp.format, TgaPixelFormat::Rgba);
     assert!(matches!(report.tone, ToneApplied::Gamma(_)));
-    for (r, d) in raw.data.chunks_exact(4).zip(disp.data.chunks_exact(4)) {
+    for (r, d) in raw.data().chunks_exact(4).zip(disp.data().chunks_exact(4)) {
         assert_eq!(d[0], gamma_channel(r[0], 0.5));
         assert_eq!(d[1], gamma_channel(r[1], 0.5));
         assert_eq!(d[2], gamma_channel(r[2], 0.5));
@@ -150,11 +157,11 @@ fn key_color_pass_keys_out_matching_pixels() {
     assert_eq!(report.keyed_pixels, 2);
     assert!(report.applied_key_color());
     // Magenta pixels now transparent; colour bytes untouched.
-    assert_eq!(&disp.data[0..4], &[0xFF, 0x00, 0xFF, 0x00]);
-    assert_eq!(&disp.data[4..8], &[0xFF, 0x00, 0xFF, 0x00]);
+    assert_eq!(&disp.data()[0..4], &[0xFF, 0x00, 0xFF, 0x00]);
+    assert_eq!(&disp.data()[4..8], &[0xFF, 0x00, 0xFF, 0x00]);
     // Red / blue keep alpha 0xFF.
-    assert_eq!(disp.data[11], 0xFF);
-    assert_eq!(disp.data[15], 0xFF);
+    assert_eq!(disp.data()[11], 0xFF);
+    assert_eq!(disp.data()[15], 0xFF);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +240,7 @@ fn premultiplied_then_gamma_order_is_observable() {
     let rev_order = AttributesType::PremultipliedAlpha.normalize_rgba8(gamma_first);
 
     assert_eq!(
-        &disp.data[0..4],
+        &disp.data()[0..4],
         &spec_order,
         "pipeline must follow spec order (un-premultiply then gamma)"
     );
@@ -276,9 +283,9 @@ fn colour_correction_takes_precedence_over_gamma() {
         report.tone
     );
     // Red inverted (255-40 = 215), green/blue identity (high byte of dup).
-    assert_eq!(disp.data[0], 215);
-    assert_eq!(disp.data[1], 80);
-    assert_eq!(disp.data[2], 120);
+    assert_eq!(disp.data()[0], 215);
+    assert_eq!(disp.data()[1], 80);
+    assert_eq!(disp.data()[2], 120);
 }
 
 // ---------------------------------------------------------------------------
@@ -300,13 +307,13 @@ fn tone_toggle_gates_gamma() {
     let opts = TgaDisplayOptions::NONE.with_resolve_alpha(true);
     let (disp, report) = decode_tga_for_display_reported(&file, &opts).unwrap();
     assert!(matches!(report.tone, ToneApplied::None));
-    assert_eq!(disp.data, raw.data);
+    assert_eq!(disp.data(), raw.data());
 
     // tone ON: gamma applies.
     let opts2 = opts.with_apply_tone(true);
     let (disp2, report2) = decode_tga_for_display_reported(&file, &opts2).unwrap();
     assert!(matches!(report2.tone, ToneApplied::Gamma(_)));
-    assert_ne!(disp2.data, raw.data);
+    assert_ne!(disp2.data(), raw.data());
 }
 
 #[test]
@@ -324,13 +331,13 @@ fn key_color_toggle_gates_keying() {
     let opts = TgaDisplayOptions::NONE;
     let (disp, report) = decode_tga_for_display_reported(&file, &opts).unwrap();
     assert_eq!(report.keyed_pixels, 0);
-    assert_eq!(disp.data[3], 0xFF);
+    assert_eq!(disp.data()[3], 0xFF);
 
     // key ON
     let opts2 = TgaDisplayOptions::NONE.with_apply_key_color(true);
     let (disp2, report2) = decode_tga_for_display_reported(&file, &opts2).unwrap();
     assert_eq!(report2.keyed_pixels, 1);
-    assert_eq!(disp2.data[3], 0x00);
+    assert_eq!(disp2.data()[3], 0x00);
 }
 
 #[test]
@@ -374,7 +381,7 @@ fn alpha_toggle_gates_resolution() {
     let opts = TgaDisplayOptions::NONE;
     let (disp, report) = decode_tga_for_display_reported(&file, &opts).unwrap();
     assert!(matches!(report.alpha, AlphaResolution::Skipped));
-    assert_eq!(disp.data[3], 0x40);
+    assert_eq!(disp.data()[3], 0x40);
 
     // alpha ON: forced opaque.
     let opts2 = TgaDisplayOptions::NONE.with_resolve_alpha(true);
@@ -383,7 +390,7 @@ fn alpha_toggle_gates_resolution() {
         report2.alpha,
         AlphaResolution::AttributesType(AttributesType::NoAlpha)
     ));
-    assert_eq!(disp2.data[3], 0xFF);
+    assert_eq!(disp2.data()[3], 0xFF);
 }
 
 // ---------------------------------------------------------------------------
@@ -402,7 +409,7 @@ fn grayscale_key_color_is_noop() {
     let file = encode_tga_with_extension(&base, &ext).unwrap();
     let (disp, report) =
         decode_tga_for_display_reported(&file, &TgaDisplayOptions::default()).unwrap();
-    assert_eq!(disp.pixel_format, TgaPixelFormat::Gray8);
+    assert_eq!(disp.format, TgaPixelFormat::Gray8);
     assert_eq!(report.keyed_pixels, 0);
 }
 
@@ -420,7 +427,7 @@ fn grayscale_gamma_still_applies() {
     let (disp, report) =
         decode_tga_for_display_reported(&file, &TgaDisplayOptions::default()).unwrap();
     assert!(matches!(report.tone, ToneApplied::Gamma(_)));
-    for (r, d) in raw.data.iter().zip(disp.data.iter()) {
+    for (r, d) in raw.data().iter().zip(disp.data().iter()) {
         assert_eq!(*d, gamma_channel(*r, 0.5));
     }
 }
@@ -510,9 +517,9 @@ fn decoded_frame_bundles_image_matching_display_path() {
 
     let want = decode_tga_for_display(&file, &TgaDisplayOptions::default()).unwrap();
     let frame = decode_tga_frame(&file, &TgaDisplayOptions::default()).unwrap();
-    assert_eq!(frame.image.data, want.data);
-    assert_eq!(frame.image.data[3], 0xFF); // resolved opaque
-                                           // No placement / stamp / dev tags in this file.
+    assert_eq!(frame.image.data(), want.data());
+    assert_eq!(frame.image.data()[3], 0xFF); // resolved opaque
+                                             // No placement / stamp / dev tags in this file.
     assert_eq!(frame.screen_origin, ImageOrigin::ORIGIN);
     assert!(!frame.has_screen_offset());
     assert!(!frame.has_postage_stamp());
@@ -573,5 +580,5 @@ fn decoded_frame_passthrough_options_match_raw() {
     let file = encode_tga_with_extension(&base, &ext).unwrap();
     let raw = parse_tga(&file).unwrap();
     let frame = decode_tga_frame(&file, &TgaDisplayOptions::NONE).unwrap();
-    assert_eq!(frame.image.data, raw.data);
+    assert_eq!(frame.image.data(), raw.data());
 }

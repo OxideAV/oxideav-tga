@@ -1,7 +1,7 @@
 #![no_main]
 
 //! Decode arbitrary fuzz-supplied bytes through the full TGA decode
-//! chain: `parse_header` (the 18-byte fixed header — id_length,
+//! chain: `probe` / `info` / `header` (the 18-byte fixed header — id_length,
 //! cmap_type, image_type 1/2/3/9/10/11, cmap origin/length/entry_size,
 //! width / height / pixel_depth / image_descriptor), the optional
 //! Image-ID + colour-map blocks, the raw-or-§C.5-RLE body (15/16-bit
@@ -12,9 +12,9 @@
 //! `parse_tga_footer`, `parse_tga_extension_area`,
 //! `parse_tga_postage_stamp`, `parse_tga_colour_correction_table`,
 //! `parse_tga_scan_line_table`, `parse_tga_developer_area`,
-//! `parse_tga_color_map`, `parse_tga_color_map_type`,
-//! `parse_tga_border_color`, `parse_tga_interleaving`, and
-//! `parse_tga_image_origin`. Finally, drive the composed §C.6 display
+//! `parse_tga_color_map`, `parse_tga_border_color`; `decode` /
+//! `decode_with` (limits + strict) / `decode_rgb8` / `decode_rgba8`.
+//! Finally, drive the composed §C.6 display
 //! pipeline (`decode_tga_for_display` / `_reported`) across the option
 //! toggles — the colour-touching passes run unconditionally on the capped
 //! raster; the geometry (pixel-aspect resample) pass only when the
@@ -32,29 +32,27 @@
 //!
 //! # Why the raster cap
 //!
-//! `parse_tga` allocates a `width * height * (1 or 4)` byte output
+//! `decode` allocates a `width * height * (1, 3 or 4)` byte output
 //! buffer up front; `width` and `height` are arbitrary `u16` fields
 //! straight off the wire, so the worst case is 65535 × 65535 × 4 ≈
-//! 16 GiB. Letting the allocator OOM on a legitimate (parseable but
-//! oversized) header is a false-positive that masks the real logic
-//! bugs this harness is built to find. We therefore reject declared
-//! frames whose total raster exceeds a 16 MiB harness cap (mirroring
-//! what a real demuxer's sanity limits would do) before driving the
-//! pixel decoder. The library itself keeps no policy raster cap —
-//! the cap lives in the fuzz target only. Every parse / table /
-//! footer / extension path is still exercised at sizes up to the cap.
+//! 16 GiB — within `DecodeOptions::default()`'s 1 GiB `max_bytes`
+//! but far past what a fuzz worker can commit. Letting the allocator
+//! OOM on a legitimate (parseable but oversized) header is a
+//! false-positive that masks the real logic bugs this harness is built
+//! to find. We therefore reject declared frames whose total raster
+//! exceeds a 16 MiB harness cap before driving the unlimited `decode`,
+//! and drive `decode_with` under the same cap on every input to prove
+//! the limit check itself fails closed before allocating.
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    compute_tga_scan_line_table, decode_tga_for_display, decode_tga_for_display_reported,
-    parse_tga, parse_tga_attribute_bits, parse_tga_attributes_type, parse_tga_border_color,
-    parse_tga_color_map, parse_tga_color_map_type, parse_tga_colour_correction_table,
-    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_image_id,
-    parse_tga_image_origin, parse_tga_interleaving, parse_tga_pixel_aspect_ratio,
-    parse_tga_postage_stamp, parse_tga_scan_line, parse_tga_scan_line_table,
-    resolve_alpha_from_descriptor, TgaDisplayOptions,
+    compute_tga_scan_line_table, decode, decode_rgb8, decode_rgba8, decode_tga_for_display,
+    decode_tga_for_display_reported, decode_with, header, info, parse_tga_border_color,
+    parse_tga_color_map, parse_tga_colour_correction_table, parse_tga_developer_area,
+    parse_tga_extension_area, parse_tga_footer, parse_tga_image_id, parse_tga_postage_stamp,
+    parse_tga_scan_line, parse_tga_scan_line_table, probe, resolve_alpha_from_descriptor,
+    DecodeOptions, TgaDisplayOptions,
 };
-use oxideav_tga::{parse_header, TGA_HEADER_SIZE};
 
 /// Upper bound on the declared output raster (16 MiB). Anything
 /// larger is a resource request, not a logic path, so the harness
@@ -66,19 +64,32 @@ fuzz_target!(|data: &[u8]| {
     // The cheap helpers run on every input regardless of declared
     // raster: they each parse a small fixed-size region and exercise
     // a different decoder code path.
+    // The contract's allocation-free entry points: `probe` is total,
+    // `info` / `header` validate the header without touching pixels.
+    let _ = probe(data);
+    let _ = info(data);
+    let _ = header(data);
     let _ = parse_tga_footer(data);
     let _ = parse_tga_extension_area(data);
     let _ = parse_tga_postage_stamp(data);
     let _ = parse_tga_colour_correction_table(data);
     let _ = parse_tga_developer_area(data);
-    let _ = parse_tga_attributes_type(data);
     let _ = parse_tga_image_id(data);
     let _ = parse_tga_color_map(data);
-    let _ = parse_tga_color_map_type(data);
     let _ = parse_tga_border_color(data);
-    let _ = parse_tga_attribute_bits(data);
-    let _ = parse_tga_interleaving(data);
-    let _ = parse_tga_image_origin(data);
+
+    // `decode_with` under a tight byte limit must fail closed (never
+    // allocate) on an oversized header, whatever the rest of the file.
+    let _ = decode_with(
+        data,
+        &DecodeOptions::default().with_max_bytes(MAX_OUTPUT_BYTES),
+    );
+    let _ = decode_with(
+        data,
+        &DecodeOptions::default()
+            .with_strict(true)
+            .with_max_bytes(MAX_OUTPUT_BYTES),
+    );
 
     // §C.6.9 random access: derive a scan-line table from the bytes
     // (an O(input) walk; the table itself is at most height × 4 ≈
@@ -99,22 +110,27 @@ fuzz_target!(|data: &[u8]| {
     // doesn't even parse is still a perfectly good exercise of the
     // parse-rejection paths, so fall through to `parse_tga` in that
     // case — it will return the same `Err` cheaply.
-    if data.len() >= TGA_HEADER_SIZE {
-        if let Some(hdr) = parse_header(&data[..TGA_HEADER_SIZE]) {
-            // Worst-case container size per pixel is 4 bytes (RGBA);
-            // a width=0 / height=0 file is rejected by the decoder
-            // itself so we don't need to special-case zero here.
-            let total = (hdr.width as u64)
-                .checked_mul(hdr.height as u64)
-                .and_then(|wh| wh.checked_mul(4));
-            match total {
-                Some(n) if n <= MAX_OUTPUT_BYTES => {}
-                _ => return,
-            }
+    if let Ok(hdr) = header(data) {
+        // Worst-case container size per pixel is 4 bytes (RGBA).
+        let total = (hdr.width as u64)
+            .checked_mul(hdr.height as u64)
+            .and_then(|wh| wh.checked_mul(4));
+        match total {
+            Some(n) if n <= MAX_OUTPUT_BYTES => {}
+            _ => return,
         }
     }
 
-    if let Ok(mut image) = parse_tga(data) {
+    // Native decode + the raw paths: `to_rgb8` / `to_rgba8` are
+    // infallible on anything the decoder produced.
+    if let Ok(native) = decode(data) {
+        let _ = native.to_rgb8();
+        let _ = native.to_rgba8();
+        let _ = decode_rgb8(data);
+        let _ = decode_rgba8(data);
+    }
+
+    if let Ok(mut image) = decode(data).map(|img| img.into_legacy_layout()) {
         // §C.2 header-local alpha resolver: mutates a decoded RGBA frame
         // in place from the descriptor's attribute-bit count. Must stay
         // panic-free on any decodable input.
@@ -136,7 +152,7 @@ fuzz_target!(|data: &[u8]| {
 
         // Only drive the pixel-aspect resample when the file's declared
         // aspect ratio keeps the corrected raster under the same 16 MiB cap.
-        if let Some(par) = parse_tga_pixel_aspect_ratio(data) {
+        if let Some(par) = parse_tga_extension_area(data).map(|e| e.pixel_aspect_ratio_typed()) {
             if let Some((dw, dh)) = par.corrected_display_dimensions(image.width, image.height) {
                 let bounded = (dw as u64)
                     .checked_mul(dh as u64)

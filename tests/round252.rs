@@ -54,6 +54,9 @@
 //!   round-trip through `encode_tga_with_extension`, and return
 //!   `None` on a file that has no extension area.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga_author_comments,
     parse_tga_author_name, parse_tga_job_name, parse_tga_software_id, ExtensionAreaInput,

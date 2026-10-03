@@ -7,6 +7,9 @@
 //! the returned error: a malformed header returns `TgaError` (either
 //! `InvalidData` or `Unsupported`), never a silently-wrong `Ok`.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 

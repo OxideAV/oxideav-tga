@@ -6,6 +6,9 @@
 //! TGA 2.0 spec rather than re-using the encoder for both sides; that
 //! way a bug in the encoder can't mask the same bug in the decoder.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_rle, encode_tga_uncompressed, parse_tga, parse_tga_footer, TgaPixelFormat,
 };
@@ -66,8 +69,8 @@ fn roundtrip_type2_24bpp_uncompressed() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 8);
     assert_eq!(img.height, 6);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -78,7 +81,7 @@ fn roundtrip_type2_32bpp_uncompressed() {
     assert_eq!(bytes[16], 32, "depth (alpha present → 32bpp)");
     assert_eq!(bytes[17] & 0x0F, 8, "alpha bits");
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +95,7 @@ fn roundtrip_type10_24bpp_rle() {
     assert_eq!(bytes[2], 10);
     assert_eq!(bytes[16], 24);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba, "RLE roundtrip");
+    assert_eq!(img.data(), rgba, "RLE roundtrip");
     // 2×2 checker has no per-row runs ≥ 2 so RLE doesn't help — but a
     // banded fixture should compress easily. Verify the encoder picks
     // runs when they're available.
@@ -113,7 +116,7 @@ fn roundtrip_type10_24bpp_rle() {
         raw.len()
     );
     let back = parse_tga(&rle).unwrap();
-    assert_eq!(back.data, banded);
+    assert_eq!(back.data(), banded);
 }
 
 #[test]
@@ -123,7 +126,7 @@ fn roundtrip_type10_32bpp_rle() {
     assert_eq!(bytes[2], 10);
     assert_eq!(bytes[16], 32);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -137,7 +140,7 @@ fn roundtrip_type10_solid_color_compresses_hard() {
     }
     let bytes = encode_tga_rle(100, 100, &rgba).unwrap();
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
     // Sanity: way smaller than 100*100*3 + header.
     assert!(bytes.len() < 100 * 100 * 3 / 4);
 }
@@ -157,7 +160,7 @@ fn roundtrip_type10_random_uncompressible_data() {
     }
     let bytes = encode_tga_rle(w, h, &rgba).unwrap();
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +194,7 @@ fn parse_type1_uncompressed_colour_mapped_24bit_palette() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 4);
     assert_eq!(img.height, 2);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
     let want: Vec<u8> = [
         [255, 0, 0, 255],
         [0, 255, 0, 255],
@@ -203,7 +206,7 @@ fn parse_type1_uncompressed_colour_mapped_24bit_palette() {
         [255, 0, 0, 255],
     ]
     .concat();
-    assert_eq!(img.data, want);
+    assert_eq!(img.data(), want);
 }
 
 // ---------------------------------------------------------------------------
@@ -232,8 +235,8 @@ fn parse_type3_uncompressed_grayscale() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 4);
     assert_eq!(img.height, 3);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, raw.to_vec());
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), raw.to_vec());
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +271,7 @@ fn parse_type9_rle_colour_mapped() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 6);
     assert_eq!(
-        img.data,
+        img.data(),
         [
             [255, 0, 0, 255], // run pixel
             [255, 0, 0, 255],
@@ -307,8 +310,8 @@ fn parse_type11_rle_grayscale() {
     bytes.push(0x80 | 2);
     bytes.push(0xAA);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, vec![10, 20, 0xAA, 0xAA, 0xAA]);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), vec![10, 20, 0xAA, 0xAA, 0xAA]);
 }
 
 // ---------------------------------------------------------------------------
@@ -344,10 +347,10 @@ fn parse_type2_15bit_a1r5g5b5() {
     ];
     let bytes = write_type2_15bit(2, 2, 15, &pixels);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data[0..4], [255, 0, 0, 255]);
-    assert_eq!(img.data[4..8], [0, 255, 0, 255]);
-    assert_eq!(img.data[8..12], [0, 0, 255, 255]);
-    assert_eq!(img.data[12..16], [255, 255, 255, 255]);
+    assert_eq!(img.data()[0..4], [255, 0, 0, 255]);
+    assert_eq!(img.data()[4..8], [0, 255, 0, 255]);
+    assert_eq!(img.data()[8..12], [0, 0, 255, 255]);
+    assert_eq!(img.data()[12..16], [255, 255, 255, 255]);
 }
 
 #[test]
@@ -357,8 +360,8 @@ fn parse_type2_16bit_a1r5g5b5_alpha_bit() {
     let pixels = vec![0x7C00, 0xFC00];
     let bytes = write_type2_15bit(2, 1, 16, &pixels);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data[0..4], [255, 0, 0, 0]);
-    assert_eq!(img.data[4..8], [255, 0, 0, 255]);
+    assert_eq!(img.data()[0..4], [255, 0, 0, 0]);
+    assert_eq!(img.data()[4..8], [255, 0, 0, 255]);
 }
 
 // ---------------------------------------------------------------------------
@@ -387,7 +390,7 @@ fn parse_type2_bottom_up_is_flipped_to_top_down() {
     bytes.extend_from_slice(&[0x00, 0x00, 0xFF]); // red
     let img = parse_tga(&bytes).unwrap();
     // After flip: top row = red, bottom row = blue.
-    assert_eq!(img.data, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+    assert_eq!(img.data(), vec![255, 0, 0, 255, 0, 0, 255, 255]);
 }
 
 // ---------------------------------------------------------------------------
@@ -426,7 +429,7 @@ fn footer_present_does_not_break_parse() {
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(b"TRUEVISION-XFILE.\0");
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
     assert!(parse_tga_footer(&bytes).is_some());
 }
 
@@ -493,7 +496,8 @@ fn decodes_right_to_left_columns_by_mirroring() {
         }
     }
     assert_eq!(
-        img.data, expected,
+        img.data(),
+        expected,
         "right-to-left file must decode mirrored"
     );
 }
@@ -525,7 +529,7 @@ fn right_to_left_plus_bottom_up_normalises_both_axes() {
             dst[3] = 0xFF;
         }
     }
-    assert_eq!(img.data, expected, "180° rotation expected");
+    assert_eq!(img.data(), expected, "180° rotation expected");
 }
 
 // ---------------------------------------------------------------------------
@@ -547,17 +551,21 @@ fn roundtrip_all_writer_combos() {
             let raw = encode_tga_uncompressed(w, h, &rgba).unwrap();
             let img = parse_tga(&raw).unwrap();
             assert_eq!(
-                img.data, rgba,
+                img.data(),
+                rgba,
                 "type 2 roundtrip {}×{} alpha={has_alpha}",
-                w, h
+                w,
+                h
             );
             // Type 10 (RLE)
             let rle = encode_tga_rle(w, h, &rgba).unwrap();
             let img2 = parse_tga(&rle).unwrap();
             assert_eq!(
-                img2.data, rgba,
+                img2.data(),
+                rgba,
                 "type 10 roundtrip {}×{} alpha={has_alpha}",
-                w, h
+                w,
+                h
             );
         }
     }

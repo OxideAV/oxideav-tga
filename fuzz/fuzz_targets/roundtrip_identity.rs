@@ -1,4 +1,7 @@
 #![no_main]
+// Pins the pre-contract writers (deprecated for one release) through
+// the decoder; the contract API has its own `contract_identity` target.
+#![allow(deprecated)]
 
 //! Bit-exact encode→decode **identity** target for the lossless writers.
 //!
@@ -207,7 +210,7 @@ fuzz_target!(|data: &[u8]| {
     let img = parse_tga(&bytes).expect("encoder produced a file parse_tga rejects");
     assert_eq!(img.width, w as u32, "width");
     assert_eq!(img.height, h as u32, "height");
-    assert_eq!(img.pixel_format, writer.decoded_format(), "pixel format");
+    assert_eq!(img.format, writer.decoded_format(), "pixel format");
 
     let expected = match (bpp, writer.forces_opaque()) {
         // Gray8: exact copy.
@@ -220,5 +223,5 @@ fuzz_target!(|data: &[u8]| {
         (4, false) => pixels.clone(),
         _ => unreachable!(),
     };
-    assert_eq!(img.data, expected, "decoded raster != expected identity");
+    assert_eq!(img.data(), expected, "decoded raster != expected identity");
 });

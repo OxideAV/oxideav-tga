@@ -10,9 +10,8 @@
 //! bpp, true-colour vs palette vs grayscale).
 //!
 //! The benches use only the crate's published standalone API
-//! (`parse_tga`, `encode_tga_uncompressed`, `encode_tga_rle`,
-//! `encode_tga_uncompressed_rgb24`, `encode_tga_grayscale`,
-//! `encode_tga_palette`). The TGA 2.0 spec (`docs/image/tga/tgaffs.pdf`)
+//! (`decode`, `encode` / `encode_rgb8` / `encode_rgba8` with
+//! `EncodeOptions`). The TGA 2.0 spec (`docs/image/tga/tgaffs.pdf`)
 //! defines what each path does on the wire; the benches characterise
 //! how long each takes on synthetic frames sized for sub-second
 //! runs at criterion's default sample count.
@@ -22,10 +21,17 @@
 //! `cargo bench -- --sample-size N` if needed.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_palette, encode_tga_rle, encode_tga_uncompressed,
-    encode_tga_uncompressed_rgb24, parse_tga,
-};
+use oxideav_tga::{decode, encode, encode_rgb8, encode_rgba8, EncodeOptions, TgaImage};
+
+fn unc() -> EncodeOptions {
+    EncodeOptions::default()
+        .with_rle(false)
+        .with_drop_opaque_alpha(true)
+}
+
+fn rle() -> EncodeOptions {
+    EncodeOptions::default().with_drop_opaque_alpha(true)
+}
 
 const W: u16 = 256;
 const H: u16 = 256;
@@ -131,55 +137,67 @@ fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
 
     // type 2 / 24 bpp — every-pixel-unique gradient encoded uncompressed.
-    let uncompressed_24 = encode_tga_uncompressed(W, H, &gradient_rgba_noise(W, H)).unwrap();
+    let uncompressed_24 =
+        encode_rgba8(W as u32, H as u32, &gradient_rgba_noise(W, H), &unc()).unwrap();
     group.bench_function("uncompressed_24bpp", |b| {
         b.iter(|| {
-            let img = parse_tga(black_box(&uncompressed_24)).unwrap();
+            let img = decode(black_box(&uncompressed_24)).unwrap();
             black_box(img);
         })
     });
 
     // type 2 / 32 bpp — same gradient with alternating alpha.
-    let uncompressed_32 = encode_tga_uncompressed(W, H, &gradient_rgba_alpha(W, H)).unwrap();
+    let uncompressed_32 =
+        encode_rgba8(W as u32, H as u32, &gradient_rgba_alpha(W, H), &unc()).unwrap();
     group.bench_function("uncompressed_32bpp", |b| {
         b.iter(|| {
-            let img = parse_tga(black_box(&uncompressed_32)).unwrap();
+            let img = decode(black_box(&uncompressed_32)).unwrap();
             black_box(img);
         })
     });
 
     // type 10 / 24 bpp / run-heavy — 8 long run packets per row.
-    let rle_runs = encode_tga_rle(W, H, &rgba_runs(W, H)).unwrap();
+    let rle_runs = encode_rgba8(W as u32, H as u32, &rgba_runs(W, H), &rle()).unwrap();
     group.bench_function("rle_24bpp_runs", |b| {
         b.iter(|| {
-            let img = parse_tga(black_box(&rle_runs)).unwrap();
+            let img = decode(black_box(&rle_runs)).unwrap();
             black_box(img);
         })
     });
 
     // type 10 / 24 bpp / noise — RLE degenerates to raw packets.
-    let rle_noise = encode_tga_rle(W, H, &gradient_rgba_noise(W, H)).unwrap();
+    let rle_noise = encode_rgba8(W as u32, H as u32, &gradient_rgba_noise(W, H), &rle()).unwrap();
     group.bench_function("rle_24bpp_noise", |b| {
         b.iter(|| {
-            let img = parse_tga(black_box(&rle_noise)).unwrap();
+            let img = decode(black_box(&rle_noise)).unwrap();
             black_box(img);
         })
     });
 
     // type 3 / 8 bpp grayscale.
-    let gs = encode_tga_grayscale(W, H, &gray8(W, H)).unwrap();
+    let gs = encode(
+        &TgaImage::from_gray8(W as u32, H as u32, gray8(W, H)),
+        &unc(),
+    )
+    .unwrap();
     group.bench_function("grayscale_8bpp", |b| {
         b.iter(|| {
-            let img = parse_tga(black_box(&gs)).unwrap();
+            let img = decode(black_box(&gs)).unwrap();
             black_box(img);
         })
     });
 
     // type 1 / 8 bpp + 256-colour palette.
-    let pal = encode_tga_palette(W, H, &palette_rgba(W, H)).unwrap();
+    let pal = encode(
+        &TgaImage::from_rgba8(W as u32, H as u32, palette_rgba(W, H))
+            .to_indexed()
+            .unwrap(),
+        &unc(),
+    )
+    .unwrap();
     group.bench_function("palette_8bpp", |b| {
         b.iter(|| {
-            let img = parse_tga(black_box(&pal)).unwrap();
+            let img = decode(black_box(&pal)).unwrap();
             black_box(img);
         })
     });
@@ -196,7 +214,7 @@ fn bench_encode(c: &mut Criterion) {
     let rgba = gradient_rgba_alpha(W, H);
     group.bench_function("uncompressed_rgba", |b| {
         b.iter(|| {
-            let bytes = encode_tga_uncompressed(W, H, black_box(&rgba)).unwrap();
+            let bytes = encode_rgba8(W as u32, H as u32, black_box(&rgba), &unc()).unwrap();
             black_box(bytes);
         })
     });
@@ -205,7 +223,7 @@ fn bench_encode(c: &mut Criterion) {
     let rgb = rgb24(W, H);
     group.bench_function("uncompressed_rgb24", |b| {
         b.iter(|| {
-            let bytes = encode_tga_uncompressed_rgb24(W, H, black_box(&rgb)).unwrap();
+            let bytes = encode_rgb8(W as u32, H as u32, black_box(&rgb), &unc()).unwrap();
             black_box(bytes);
         })
     });
@@ -214,7 +232,7 @@ fn bench_encode(c: &mut Criterion) {
     let runs = rgba_runs(W, H);
     group.bench_function("rle_rgba_runs", |b| {
         b.iter(|| {
-            let bytes = encode_tga_rle(W, H, black_box(&runs)).unwrap();
+            let bytes = encode_rgba8(W as u32, H as u32, black_box(&runs), &rle()).unwrap();
             black_box(bytes);
         })
     });
@@ -223,7 +241,7 @@ fn bench_encode(c: &mut Criterion) {
     let noise = gradient_rgba_noise(W, H);
     group.bench_function("rle_rgba_noise", |b| {
         b.iter(|| {
-            let bytes = encode_tga_rle(W, H, black_box(&noise)).unwrap();
+            let bytes = encode_rgba8(W as u32, H as u32, black_box(&noise), &rle()).unwrap();
             black_box(bytes);
         })
     });

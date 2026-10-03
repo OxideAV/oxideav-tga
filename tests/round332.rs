@@ -14,6 +14,9 @@
 //!   carrying `tag_id`'s payload bytes, or `None` for a missing id, a
 //!   marker record (offset 0, no payload), or an out-of-buffer range.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga_developer_area,
     DeveloperTagInput, ExtensionAreaInput, TgaDeveloperArea, TgaDeveloperTag,

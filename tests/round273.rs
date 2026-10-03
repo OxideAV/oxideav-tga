@@ -17,6 +17,9 @@
 //! Origin-0 files (everything the crate's own encoder writes) are
 //! unaffected: `idx - 0 == idx`.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{parse_tga, TgaPixelFormat};
 
 /// Build a 4×1 type-1 (uncompressed colour-mapped) TGA whose colour map
@@ -55,7 +58,7 @@ fn origin_zero_is_unchanged() {
     let pal = [[0x00, 0x00, 0xFF], [0x00, 0xFF, 0x00], [0xFF, 0x00, 0x00]];
     let bytes = colour_mapped_with_origin(0, &pal, &[0, 1, 2, 0]);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
     let want: Vec<u8> = [
         [255, 0, 0, 255],
         [0, 255, 0, 255],
@@ -63,7 +66,7 @@ fn origin_zero_is_unchanged() {
         [255, 0, 0, 255],
     ]
     .concat();
-    assert_eq!(img.data, want);
+    assert_eq!(img.data(), want);
 }
 
 #[test]
@@ -82,7 +85,7 @@ fn nonzero_origin_offsets_palette_lookup() {
         [255, 0, 0, 255],
     ]
     .concat();
-    assert_eq!(img.data, want);
+    assert_eq!(img.data(), want);
 }
 
 #[test]
@@ -145,7 +148,7 @@ fn rle_colour_mapped_honours_origin() {
         .take(4)
         .flatten()
         .collect();
-    assert_eq!(img.data, want);
+    assert_eq!(img.data(), want);
 }
 
 #[test]
@@ -169,5 +172,5 @@ fn high_origin_at_short_top_of_index_space() {
         [0, 0, 255, 255],
     ]
     .concat();
-    assert_eq!(img.data, want);
+    assert_eq!(img.data(), want);
 }

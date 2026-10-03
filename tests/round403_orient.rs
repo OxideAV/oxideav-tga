@@ -14,6 +14,9 @@
 //!     logical index `idx` addresses on-disk entry `idx - first`, and
 //!     indices below the origin or past the stored length are rejected.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::*;
 
 fn base_header(image_type: u8, w: u16, h: u16, depth: u8, desc: u8) -> Vec<u8> {
@@ -69,7 +72,7 @@ fn storage_order_flips_normalise_to_topdown_left_right() {
         assert_eq!(img.width, 2);
         assert_eq!(img.height, 2);
         for (i, expect) in want.iter().enumerate() {
-            assert_eq!(&img.data[i * 4..i * 4 + 4], expect, "{label} px{i}");
+            assert_eq!(&img.data()[i * 4..i * 4 + 4], expect, "{label} px{i}");
         }
     }
 }
@@ -82,8 +85,8 @@ fn expand_16bpp_a1r5g5b5() {
     v.extend_from_slice(&0xFC00u16.to_le_bytes());
     v.extend_from_slice(&0x001Fu16.to_le_bytes());
     let img = parse_tga(&v).unwrap();
-    assert_eq!(&img.data[0..4], &[0xFF, 0x00, 0x00, 0xFF], "opaque red");
-    assert_eq!(&img.data[4..8], &[0x00, 0x00, 0xFF, 0x00], "blue alpha0");
+    assert_eq!(&img.data()[0..4], &[0xFF, 0x00, 0x00, 0xFF], "opaque red");
+    assert_eq!(&img.data()[4..8], &[0x00, 0x00, 0xFF, 0x00], "blue alpha0");
 }
 
 #[test]
@@ -92,7 +95,7 @@ fn expand_15bpp_forces_opaque() {
     let mut v = base_header(2, 1, 1, 15, 0x20);
     v.extend_from_slice(&0x001Fu16.to_le_bytes());
     let img = parse_tga(&v).unwrap();
-    assert_eq!(&img.data[0..4], &[0x00, 0x00, 0xFF, 0xFF]);
+    assert_eq!(&img.data()[0..4], &[0x00, 0x00, 0xFF, 0xFF]);
 }
 
 #[test]
@@ -103,7 +106,7 @@ fn expand5_replicates_top_bits() {
     v.extend_from_slice(&0xFFFFu16.to_le_bytes());
     let img = parse_tga(&v).unwrap();
     assert_eq!(
-        &img.data[0..4],
+        &img.data()[0..4],
         &[0xFF, 0xFF, 0xFF, 0xFF],
         "0b11111 -> 0xFF"
     );
@@ -112,7 +115,7 @@ fn expand5_replicates_top_bits() {
     // R = 0b10000, G/B = 0.
     v2.extend_from_slice(&(0x10u16 << 10).to_le_bytes());
     let img2 = parse_tga(&v2).unwrap();
-    assert_eq!(img2.data[0], 0x84, "0b10000 -> 0x84");
+    assert_eq!(img2.data()[0], 0x84, "0b10000 -> 0x84");
 }
 
 #[test]
@@ -134,9 +137,9 @@ fn colour_map_origin_resolves_and_rejects_out_of_range() {
     v.extend_from_slice(&[10, 11, 12]); // pixel indices
 
     let img = parse_tga(&v).unwrap();
-    assert_eq!(&img.data[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
-    assert_eq!(&img.data[4..8], &[0x00, 0xFF, 0x00, 0xFF]);
-    assert_eq!(&img.data[8..12], &[0x00, 0x00, 0xFF, 0xFF]);
+    assert_eq!(&img.data()[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+    assert_eq!(&img.data()[4..8], &[0x00, 0xFF, 0x00, 0xFF]);
+    assert_eq!(&img.data()[8..12], &[0x00, 0x00, 0xFF, 0xFF]);
 
     // index below the origin -> out of range.
     let mut below = v.clone();

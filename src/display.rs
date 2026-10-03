@@ -1,8 +1,8 @@
 //! Composed, spec-ordered TGA metadata-application pipeline.
 //!
-//! [`crate::parse_tga`] is deliberately a *raw* decoder: it expands the
-//! on-disk pixel array (palette lookup, BGR→RGBA swap, 5-5-5 expansion,
-//! RLE), normalises the storage order to top-left, and stops. It applies
+//! [`crate::decode`] is deliberately a *raw* decoder: it unpacks the
+//! on-disk pixel array (BGR→RGB swap, 5-5-5 expansion, RLE), normalises
+//! the storage order to top-left, and stops. It applies
 //! **none** of the file's own metadata — gamma, colour correction, the
 //! attributes-type alpha interpretation, the key colour, or the pixel
 //! aspect ratio. That keeps the raw decode contract pure: a caller that
@@ -39,8 +39,8 @@
 //!    area is present its Attributes Type wins; otherwise we fall back to
 //!    the header attribute-bit count, which is present in every file
 //!    including TGA 1.0. This is the
-//!    [`resolve_alpha_with_targa32_fallback`](crate::resolve_alpha_with_targa32_fallback)
-//!    / [`resolve_alpha_from_descriptor`](crate::resolve_alpha_from_descriptor)
+//!    [`resolve_alpha_with_targa32_fallback`]
+//!    / [`resolve_alpha_from_descriptor`]
 //!    split, composed. Pre-multiplied alpha (Field 24 = 4) is
 //!    un-multiplied here, recovering straight colour, **before** the tone
 //!    curves run — the un-multiply is the inverse of a *linear* scale by
@@ -74,15 +74,15 @@
 //! "display this file" behaviour.
 
 use crate::decoder::{
-    parse_tga, parse_tga_colour_correction_table, parse_tga_developer_area,
-    parse_tga_extension_area, parse_tga_gamma, parse_tga_image_origin, parse_tga_key_color,
-    parse_tga_pixel_aspect_ratio, parse_tga_postage_stamp, resolve_alpha_from_descriptor,
+    decode_legacy, parse_tga_colour_correction_table, parse_tga_developer_area,
+    parse_tga_extension_area, parse_tga_postage_stamp, resolve_alpha_from_descriptor,
     resolve_alpha_with_targa32_fallback,
 };
 use crate::error::Result;
 use crate::image::TgaImage;
 use crate::types::{
-    AttributeBits, AttributesType, GammaValue, ImageOrigin, PixelAspectRatio, TgaDeveloperArea,
+    read_header, AttributeBits, AttributesType, GammaValue, ImageOrigin, PixelAspectRatio,
+    TgaDeveloperArea,
 };
 
 /// Which spec §C.6 metadata passes [`decode_tga_for_display`] should run
@@ -127,7 +127,7 @@ impl TgaDisplayOptions {
     };
 
     /// Every pass disabled. [`decode_tga_for_display`] with this is
-    /// byte-identical to [`parse_tga`] — useful as a builder base.
+    /// byte-identical to [`crate::decode`] — useful as a builder base.
     pub const NONE: Self = Self {
         resolve_alpha: false,
         apply_tone: false,
@@ -159,7 +159,7 @@ impl TgaDisplayOptions {
         self
     }
 
-    /// `true` when no pass is enabled (the [`parse_tga`]-equivalent
+    /// `true` when no pass is enabled (the [`crate::decode`]-equivalent
     /// configuration).
     pub fn is_passthrough(self) -> bool {
         self == Self::NONE
@@ -242,16 +242,20 @@ impl TgaDisplayReport {
 /// Decode a TGA and apply the file's own §C.6 metadata in spec order to
 /// produce a display-ready frame.
 ///
-/// This is the composed counterpart to [`parse_tga`]: `parse_tga` returns
-/// the raw decoded samples, this returns the frame after the metadata
-/// passes selected by `options` have run (see the module docs for the
-/// order + spec rationale).
+/// This is the composed counterpart to [`crate::decode`]: `decode` returns
+/// the raw decoded samples in their native layout, this returns the frame
+/// after the metadata passes selected by `options` have run (see the
+/// module docs for the order + spec rationale). The result is in the
+/// pre-contract layout (`Gray8`, else packed `Rgba` with the palette
+/// expanded — [`TgaImage::into_legacy_layout`]), which is what the
+/// per-pixel passes operate on.
 ///
-/// With [`TgaDisplayOptions::NONE`] the result is byte-identical to
-/// [`parse_tga`]. With [`TgaDisplayOptions::default`] every pass runs, in
-/// the spec-faithful order.
+/// With [`TgaDisplayOptions::NONE`] the result is byte-identical to the
+/// deprecated `parse_tga` (i.e. `decode(..).into_legacy_layout()`). With
+/// [`TgaDisplayOptions::default`] every pass runs, in the spec-faithful
+/// order.
 ///
-/// Returns the same errors as [`parse_tga`] (the raw decode is the only
+/// Returns the same errors as [`crate::decode`] (the raw decode is the only
 /// fallible step; all metadata passes are infallible no-ops when the
 /// relevant field is absent or malformed).
 pub fn decode_tga_for_display(input: &[u8], options: &TgaDisplayOptions) -> Result<TgaImage> {
@@ -264,7 +268,7 @@ pub fn decode_tga_for_display_reported(
     input: &[u8],
     options: &TgaDisplayOptions,
 ) -> Result<(TgaImage, TgaDisplayReport)> {
-    let mut image = parse_tga(input)?;
+    let mut image = decode_legacy(input)?;
     let mut report = TgaDisplayReport {
         alpha: AlphaResolution::Skipped,
         tone: ToneApplied::None,
@@ -284,7 +288,7 @@ pub fn decode_tga_for_display_reported(
 
     // -- Pass 3: key colour ------------------------------------------------
     if options.apply_key_color {
-        if let Some(key) = parse_tga_key_color(input) {
+        if let Some(key) = parse_tga_extension_area(input).map(|e| e.key_color_typed()) {
             if !key.is_unset() {
                 report.keyed_pixels = key.key_out_image(&mut image);
             }
@@ -293,7 +297,9 @@ pub fn decode_tga_for_display_reported(
 
     // -- Pass 4: pixel aspect (geometry; last) ----------------------------
     if options.apply_pixel_aspect {
-        let par = parse_tga_pixel_aspect_ratio(input).unwrap_or(PixelAspectRatio::UNSET);
+        let par = parse_tga_extension_area(input)
+            .map(|e| e.pixel_aspect_ratio_typed())
+            .unwrap_or(PixelAspectRatio::UNSET);
         if let Some(resampled) = par.resampled(&image) {
             image = resampled;
             report.resampled = true;
@@ -334,7 +340,7 @@ fn resolve_alpha(input: &[u8], image: &mut TgaImage) -> AlphaResolution {
 /// only to *report* which bits were seen when the extension-area path
 /// already settled the pixels).
 fn resolve_alpha_from_descriptor_readonly(input: &[u8]) -> Option<AttributeBits> {
-    crate::decoder::parse_tga_attribute_bits(input)
+    read_header(input).map(|h| h.attribute_bits())
 }
 
 /// Pass 2 helper: apply the colour-correction table if present, else the
@@ -344,7 +350,7 @@ fn apply_tone(input: &[u8], image: &mut TgaImage) -> ToneApplied {
         table.apply_to_image(image);
         return ToneApplied::ColourCorrection;
     }
-    if let Some(gamma) = parse_tga_gamma(input) {
+    if let Some(gamma) = parse_tga_extension_area(input).map(|e| e.gamma_typed()) {
         if !gamma.is_unset() && !gamma.is_identity() {
             gamma.apply_to_image(image);
             return ToneApplied::Gamma(gamma);
@@ -425,7 +431,9 @@ impl TgaDecodedFrame {
 /// same as [`decode_tga_for_display`].
 pub fn decode_tga_frame(input: &[u8], options: &TgaDisplayOptions) -> Result<TgaDecodedFrame> {
     let (image, report) = decode_tga_for_display_reported(input, options)?;
-    let screen_origin = parse_tga_image_origin(input).unwrap_or(ImageOrigin::ORIGIN);
+    let screen_origin = read_header(input)
+        .map(|h| h.image_origin())
+        .unwrap_or(ImageOrigin::ORIGIN);
     // A broken thumbnail shouldn't sink the main decode the caller wanted.
     let postage_stamp = parse_tga_postage_stamp(input).ok().flatten();
     let developer_area = parse_tga_developer_area(input);

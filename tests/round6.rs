@@ -14,6 +14,9 @@
 //! `(0.5, 0.5, 0, 0)`; un-premultiply recovers the straight colour by
 //! dividing each channel by the normalised alpha.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_attributes_type,
     AttributesType, ExtensionAreaInput, TgaImage, TgaPixelFormat, TgaTimestamp,
@@ -24,13 +27,7 @@ use oxideav_tga::{
 // ---------------------------------------------------------------------------
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
-    TgaImage {
-        width,
-        height,
-        pixel_format: TgaPixelFormat::Rgba,
-        data,
-        pts: None,
-    }
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
 }
 
 fn baseline_ext() -> ExtensionAreaInput {
@@ -172,7 +169,7 @@ fn apply_useful_alpha_is_noop() {
     let original = vec![10, 20, 30, 40, 200, 100, 0, 128];
     let mut img = rgba_image(2, 1, original.clone());
     AttributesType::UsefulAlpha.apply_to_image(&mut img);
-    assert_eq!(img.data, original, "useful alpha must be bit-exact");
+    assert_eq!(img.data(), original, "useful alpha must be bit-exact");
 }
 
 #[test]
@@ -180,14 +177,14 @@ fn apply_undefined_retain_is_noop() {
     let original = vec![1, 2, 3, 4, 5, 6, 7, 8];
     let mut img = rgba_image(2, 1, original.clone());
     AttributesType::UndefinedRetain.apply_to_image(&mut img);
-    assert_eq!(img.data, original);
+    assert_eq!(img.data(), original);
 }
 
 #[test]
 fn apply_no_alpha_forces_every_pixel_opaque() {
     let mut img = rgba_image(2, 1, vec![10, 20, 30, 0, 40, 50, 60, 99]);
     AttributesType::NoAlpha.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![10, 20, 30, 255, 40, 50, 60, 255]);
+    assert_eq!(img.data(), vec![10, 20, 30, 255, 40, 50, 60, 255]);
 }
 
 #[test]
@@ -195,36 +192,24 @@ fn apply_premultiplied_unmultiplies_every_pixel() {
     // Two pixels: spec example (128,0,0,128) and an opaque (200,100,50,255).
     let mut img = rgba_image(2, 1, vec![128, 0, 0, 128, 200, 100, 50, 255]);
     AttributesType::PremultipliedAlpha.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![255, 0, 0, 128, 200, 100, 50, 255]);
+    assert_eq!(img.data(), vec![255, 0, 0, 128, 200, 100, 50, 255]);
 }
 
 #[test]
 fn apply_leaves_gray8_untouched() {
-    let mut img = TgaImage {
-        width: 3,
-        height: 1,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: vec![10, 100, 200],
-        pts: None,
-    };
+    let mut img = TgaImage::packed(3, 1, TgaPixelFormat::Gray8, vec![10, 100, 200]);
     // No alpha channel to interpret — every variant is a no-op.
     AttributesType::NoAlpha.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![10, 100, 200]);
+    assert_eq!(img.data(), vec![10, 100, 200]);
     AttributesType::PremultipliedAlpha.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![10, 100, 200]);
+    assert_eq!(img.data(), vec![10, 100, 200]);
 }
 
 #[test]
 fn apply_leaves_rgb24_untouched() {
-    let mut img = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgb24,
-        data: vec![1, 2, 3, 4, 5, 6],
-        pts: None,
-    };
+    let mut img = TgaImage::packed(2, 1, TgaPixelFormat::Rgb24, vec![1, 2, 3, 4, 5, 6]);
     AttributesType::PremultipliedAlpha.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(img.data(), vec![1, 2, 3, 4, 5, 6]);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,13 +272,13 @@ fn end_to_end_decode_then_normalize_premultiplied() {
     let full = encode_tga_with_extension(&base, &ext_in).unwrap();
 
     let mut img = parse_tga(&full).expect("decode");
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
     let attr = parse_tga_attributes_type(&full).expect("recover attributes type");
     assert_eq!(attr, AttributesType::PremultipliedAlpha);
 
     attr.apply_to_image(&mut img);
     // Every stored (128,0,0,128) un-premultiplies to straight (255,0,0,128).
-    for px in img.data.chunks_exact(4) {
+    for px in img.data().chunks_exact(4) {
         assert_eq!(px, &[255, 0, 0, 128]);
     }
 }
@@ -317,7 +302,7 @@ fn end_to_end_decode_then_normalize_no_alpha() {
     let attr = parse_tga_attributes_type(&full).expect("recover attributes type");
     assert_eq!(attr, AttributesType::NoAlpha);
     attr.apply_to_image(&mut img);
-    for px in img.data.chunks_exact(4) {
+    for px in img.data().chunks_exact(4) {
         assert_eq!(px, &[40, 80, 120, 255]);
     }
 }

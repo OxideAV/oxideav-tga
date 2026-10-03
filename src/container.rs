@@ -18,7 +18,8 @@ use oxideav_core::{
     ContainerRegistry, Demuxer, Muxer, ProbeData, ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE,
 };
 
-use crate::types::{parse_footer, parse_header};
+use crate::decoder::{native_format, validate_header};
+use crate::types::parse_footer;
 
 pub fn register(reg: &mut ContainerRegistry) {
     reg.register_demuxer("tga", open_demuxer);
@@ -37,14 +38,11 @@ fn probe(data: &ProbeData) -> ProbeScore {
     if parse_footer(data.buf).is_some() {
         return MAX_PROBE_SCORE;
     }
-    // Weaker but still useful: a header that parses, with an image
-    // type in our known set + a non-zero width/height + a sane depth.
-    if let Some(h) = parse_header(data.buf) {
-        let plausible_type = matches!(h.image_type_raw, 0 | 1 | 2 | 3 | 9 | 10 | 11);
-        let plausible_depth = matches!(h.depth, 8 | 15 | 16 | 24 | 32);
-        if plausible_type && plausible_depth && h.width != 0 && h.height != 0 {
-            return oxideav_core::PROBE_SCORE_EXTENSION + 5;
-        }
+    // Weaker but still useful: a header that validates (an image type
+    // in our known set at a depth it allows + non-zero width/height) —
+    // the same plausibility test as the standalone `probe`.
+    if validate_header(data.buf, false).is_ok() {
+        return oxideav_core::PROBE_SCORE_EXTENSION + 5;
     }
     if matches!(
         data.ext,
@@ -63,11 +61,17 @@ pub fn open_demuxer(
     input.seek(SeekFrom::Start(0))?;
     let mut buf = Vec::new();
     input.read_to_end(&mut buf)?;
-    let header = parse_header(&buf).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
+    let v = validate_header(&buf, false)?;
+    let header = v.header;
     let mut params = CodecParameters::video(CodecId::new(crate::CODEC_ID_STR));
     params.width = Some(header.width as u32);
     params.height = Some(header.height as u32);
-    params.pixel_format = Some(PixelFormat::Rgba);
+    // The framework decoder emits the legacy layout: `Gray8` for the
+    // grayscale types, packed `Rgba` for everything else.
+    params.pixel_format = Some(match native_format(v.image_type, header.depth) {
+        crate::TgaPixelFormat::Gray8 => PixelFormat::Gray8,
+        _ => PixelFormat::Rgba,
+    });
     let stream = StreamInfo {
         index: 0,
         params,

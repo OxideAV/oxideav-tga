@@ -15,6 +15,9 @@
 //! plus the `to_bytes` / `from_header` round-trip primitives, mirroring
 //! `AttributeBits` / `Interleaving` / `ColorMapType`.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{encode_tga_rle, encode_tga_with_extension, parse_tga_footer};
 use oxideav_tga::{
     encode_tga_uncompressed, parse_header, parse_tga, parse_tga_image_id, parse_tga_image_origin,
@@ -164,7 +167,7 @@ fn set_image_origin_does_not_change_length_or_pixels() {
     set_image_origin(&mut bytes, ImageOrigin::new(1, 65535)).unwrap();
     assert_eq!(bytes.len(), before_len, "origin is in the fixed header");
     let after_img = parse_tga(&bytes).unwrap();
-    assert_eq!(before_img.data, after_img.data, "raster unchanged");
+    assert_eq!(before_img.data(), after_img.data(), "raster unchanged");
     assert_eq!(
         (before_img.width, before_img.height),
         (after_img.width, after_img.height)

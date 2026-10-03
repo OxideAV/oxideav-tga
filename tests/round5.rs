@@ -8,6 +8,9 @@
 //! contiguous values are the desired A:R:G:B correction for that
 //! entry").
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_grayscale, encode_tga_uncompressed, encode_tga_with_extension, parse_tga,
     parse_tga_colour_correction_table, ExtensionAreaInput, TgaColourCorrectionTable, TgaImage,
@@ -193,13 +196,7 @@ fn correct_gray8_uses_green_curve() {
 // ---------------------------------------------------------------------------
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
-    TgaImage {
-        width,
-        height,
-        pixel_format: TgaPixelFormat::Rgba,
-        data,
-        pts: None,
-    }
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
 }
 
 #[test]
@@ -207,7 +204,7 @@ fn apply_identity_leaves_rgba_unchanged() {
     let original = solid_rgba(5, 4, [12, 34, 56, 78]);
     let mut img = rgba_image(5, 4, original.clone());
     TgaColourCorrectionTable::default().apply_to_image(&mut img);
-    assert_eq!(img.data, original, "identity apply must be bit-exact");
+    assert_eq!(img.data(), original, "identity apply must be bit-exact");
 }
 
 #[test]
@@ -225,7 +222,7 @@ fn apply_inversion_to_rgba_image() {
     let data = vec![10, 20, 30, 40, 200, 100, 0, 255];
     let mut img = rgba_image(2, 1, data);
     cct.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![245, 235, 225, 215, 55, 155, 255, 0]);
+    assert_eq!(img.data(), vec![245, 235, 225, 215, 55, 155, 255, 0]);
 }
 
 #[test]
@@ -236,15 +233,9 @@ fn apply_to_gray8_image_uses_green_curve() {
         let out = ((i * 2).min(255)) as u16;
         cct.green[i] = (out << 8) | out;
     }
-    let mut img = TgaImage {
-        width: 3,
-        height: 1,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: vec![10, 100, 200],
-        pts: None,
-    };
+    let mut img = TgaImage::packed(3, 1, TgaPixelFormat::Gray8, vec![10, 100, 200]);
     cct.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![20, 200, 255]);
+    assert_eq!(img.data(), vec![20, 200, 255]);
 }
 
 #[test]
@@ -257,15 +248,9 @@ fn apply_to_rgb24_image_skips_alpha() {
         cct.blue[i] = 0x3000;
         cct.alpha[i] = 0xFF00; // would corrupt output if (wrongly) used
     }
-    let mut img = TgaImage {
-        width: 2,
-        height: 1,
-        pixel_format: TgaPixelFormat::Rgb24,
-        data: vec![1, 2, 3, 4, 5, 6],
-        pts: None,
-    };
+    let mut img = TgaImage::packed(2, 1, TgaPixelFormat::Rgb24, vec![1, 2, 3, 4, 5, 6]);
     cct.apply_to_image(&mut img);
-    assert_eq!(img.data, vec![0x10, 0x20, 0x30, 0x10, 0x20, 0x30]);
+    assert_eq!(img.data(), vec![0x10, 0x20, 0x30, 0x10, 0x20, 0x30]);
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +284,7 @@ fn end_to_end_decode_then_apply_cct() {
 
     recovered.apply_to_image(&mut img);
     // Every pixel was (10,20,30,255) → (42,52,62,255).
-    for px in img.data.chunks_exact(4) {
+    for px in img.data().chunks_exact(4) {
         assert_eq!(px, &[42, 52, 62, 255]);
     }
 }
@@ -321,8 +306,8 @@ fn end_to_end_grayscale_decode_then_apply() {
     let full = encode_tga_with_extension(&base, &ext_in).unwrap();
 
     let mut img = parse_tga(&full).expect("decode gray");
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
     let recovered = parse_tga_colour_correction_table(&full).expect("recover CCT");
     recovered.apply_to_image(&mut img);
-    assert!(img.data.iter().all(|&b| b == 50), "100 → 50 via /2 curve");
+    assert!(img.data().iter().all(|&b| b == 50), "100 → 50 via /2 curve");
 }

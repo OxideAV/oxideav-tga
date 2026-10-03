@@ -9,6 +9,9 @@
 //! Each test independently round-trips a hand-crafted byte stream so
 //! that a bug in one side can't mask the same bug on the other.
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_extension_area,
@@ -86,8 +89,8 @@ fn roundtrip_type1_palette() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 8);
     assert_eq!(img.height, 6);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -102,7 +105,7 @@ fn roundtrip_type1_palette_opaque() {
     assert_eq!(bytes[2], 1);
     assert_eq!(bytes[7], 24, "opaque palette → 24-bit colour-map entries");
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -131,8 +134,8 @@ fn roundtrip_type3_grayscale() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 16);
     assert_eq!(img.height, 8);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, gray);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), gray);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +148,7 @@ fn roundtrip_type9_palette_rle() {
     let bytes = encode_tga_palette_rle(16, 8, &rgba).unwrap();
     assert_eq!(bytes[2], 9);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 #[test]
@@ -177,7 +180,7 @@ fn type9_compresses_better_than_type1_on_banded() {
         raw.len()
     );
     let back = parse_tga(&rle).unwrap();
-    assert_eq!(back.data, rgba);
+    assert_eq!(back.data(), rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,8 +193,8 @@ fn roundtrip_type11_grayscale_rle() {
     let bytes = encode_tga_grayscale_rle(16, 8, &gray).unwrap();
     assert_eq!(bytes[2], 11);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(img.data, gray);
+    assert_eq!(img.format, TgaPixelFormat::Gray8);
+    assert_eq!(img.data(), gray);
 }
 
 #[test]
@@ -199,7 +202,7 @@ fn type11_compresses_constant_image_hard() {
     let gray = vec![0xAAu8; 100 * 100];
     let bytes = encode_tga_grayscale_rle(100, 100, &gray).unwrap();
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, gray);
+    assert_eq!(img.data(), gray);
     // 100×100 = 10000 bytes raw; RLE should pack each row into 1
     // header + 1 pixel ≈ 200 bytes plus header + footer-less.
     assert!(
@@ -221,18 +224,18 @@ fn roundtrip_all_round2_writer_combos() {
         let rgba = palette_image(w, h);
         let bytes = encode_tga_palette(w, h, &rgba).unwrap();
         let img = parse_tga(&bytes).unwrap();
-        assert_eq!(img.data, rgba, "type 1 roundtrip {}×{}", w, h);
+        assert_eq!(img.data(), rgba, "type 1 roundtrip {}×{}", w, h);
         let bytes = encode_tga_palette_rle(w, h, &rgba).unwrap();
         let img = parse_tga(&bytes).unwrap();
-        assert_eq!(img.data, rgba, "type 9 roundtrip {}×{}", w, h);
+        assert_eq!(img.data(), rgba, "type 9 roundtrip {}×{}", w, h);
         // Type 3 + 11 (grayscale).
         let gray = ramp_gray(w, h);
         let bytes = encode_tga_grayscale(w, h, &gray).unwrap();
         let img = parse_tga(&bytes).unwrap();
-        assert_eq!(img.data, gray, "type 3 roundtrip {}×{}", w, h);
+        assert_eq!(img.data(), gray, "type 3 roundtrip {}×{}", w, h);
         let bytes = encode_tga_grayscale_rle(w, h, &gray).unwrap();
         let img = parse_tga(&bytes).unwrap();
-        assert_eq!(img.data, gray, "type 11 roundtrip {}×{}", w, h);
+        assert_eq!(img.data(), gray, "type 11 roundtrip {}×{}", w, h);
     }
 }
 
@@ -321,7 +324,7 @@ fn parse_extension_area_hand_crafted() {
 
     // Main image still parses unchanged.
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +395,7 @@ fn roundtrip_extension_area_write_then_parse() {
 
     // Main image still parses + matches the input.
     let img = parse_tga(&full).unwrap();
-    assert_eq!(img.data, rgba);
+    assert_eq!(img.data(), rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -404,13 +407,7 @@ fn roundtrip_postage_stamp_rgba() {
     // Main image: 16×16 colour checker. Thumbnail: 4×4 same checker.
     let main_rgba = opaque_palette_image(16, 16);
     let stamp_rgba = opaque_palette_image(4, 4);
-    let stamp = TgaImage {
-        width: 4,
-        height: 4,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: stamp_rgba.clone(),
-        pts: None,
-    };
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone());
     let base = encode_tga_uncompressed(16, 16, &main_rgba).unwrap();
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
@@ -429,8 +426,8 @@ fn roundtrip_postage_stamp_rgba() {
         .expect("postage stamp should decode");
     assert_eq!(stamp_back.width, 4);
     assert_eq!(stamp_back.height, 4);
-    assert_eq!(stamp_back.pixel_format, TgaPixelFormat::Rgba);
-    assert_eq!(stamp_back.data, stamp_rgba);
+    assert_eq!(stamp_back.format, TgaPixelFormat::Rgba);
+    assert_eq!(stamp_back.data(), stamp_rgba);
 }
 
 #[test]
@@ -439,13 +436,7 @@ fn roundtrip_postage_stamp_grayscale_parent() {
     // format follows the parent's image type.
     let main_gray = ramp_gray(32, 32);
     let stamp_gray = ramp_gray(8, 8);
-    let stamp = TgaImage {
-        width: 8,
-        height: 8,
-        pixel_format: TgaPixelFormat::Gray8,
-        data: stamp_gray.clone(),
-        pts: None,
-    };
+    let stamp = TgaImage::packed(8, 8, TgaPixelFormat::Gray8, stamp_gray.clone());
     let base = encode_tga_grayscale(32, 32, &main_gray).unwrap();
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
@@ -458,8 +449,8 @@ fn roundtrip_postage_stamp_grayscale_parent() {
         .expect("postage stamp should decode");
     assert_eq!(stamp_back.width, 8);
     assert_eq!(stamp_back.height, 8);
-    assert_eq!(stamp_back.pixel_format, TgaPixelFormat::Gray8);
-    assert_eq!(stamp_back.data, stamp_gray);
+    assert_eq!(stamp_back.format, TgaPixelFormat::Gray8);
+    assert_eq!(stamp_back.data(), stamp_gray);
 }
 
 #[test]
@@ -487,13 +478,7 @@ fn postage_stamp_dimension_overflow_rejected() {
     // rejected at encode time rather than silently truncated.
     let rgba = opaque_palette_image(4, 4);
     let base = encode_tga_uncompressed(4, 4, &rgba).unwrap();
-    let stamp = TgaImage {
-        width: 256,
-        height: 4,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: vec![0u8; 256 * 4 * 4],
-        pts: None,
-    };
+    let stamp = TgaImage::packed(256, 4, TgaPixelFormat::Rgba, vec![0u8; 256 * 4 * 4]);
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
         ..ExtensionAreaInput::default()

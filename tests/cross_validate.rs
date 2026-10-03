@@ -9,6 +9,9 @@
 //!   uncompressed RGBA temp file, then re-decode with our reader
 //!   (read-their-write).
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -140,16 +143,20 @@ fn we_decode_magick_authored_tga() {
         assert_eq!(img.width, 8);
         assert_eq!(img.height, 8);
         // First pixel should be pure red regardless of pixel format.
-        match img.pixel_format {
+        match img.format {
             oxideav_tga::TgaPixelFormat::Rgba => {
-                assert_eq!(&img.data[0..3], &[255, 0, 0]);
+                assert_eq!(&img.data()[0..3], &[255, 0, 0]);
             }
             oxideav_tga::TgaPixelFormat::Rgb24 => {
-                assert_eq!(&img.data[0..3], &[255, 0, 0]);
+                assert_eq!(&img.data()[0..3], &[255, 0, 0]);
             }
             oxideav_tga::TgaPixelFormat::Gray8 => {
                 // magick may output grayscale for a single-colour image
                 // — accept that too.
+            }
+            _ => {
+                // Colour-mapped: the expanded first pixel is still red.
+                assert_eq!(&img.to_rgb8()[0..3], &[255, 0, 0]);
             }
         }
         let _ = std::fs::remove_file(&path);
@@ -292,13 +299,7 @@ fn magick_accepts_our_extension_area_output() {
     }
     let rgba = checker(16, 16);
     let base = encode_tga_uncompressed(16, 16, &rgba).unwrap();
-    let stamp = TgaImage {
-        width: 4,
-        height: 4,
-        pixel_format: TgaPixelFormat::Rgba,
-        data: checker(4, 4),
-        pts: None,
-    };
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, checker(4, 4));
     let ext = ExtensionAreaInput {
         author_name: "oxideav-tga test".to_string(),
         software_id: "oxideav-tga".to_string(),

@@ -22,6 +22,9 @@
 //! decoder's `decode_palette` expansion (15/16-bit A1R5G5B5, 24-bit BGR,
 //! 32-bit BGRA).
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{
     encode_tga_palette, encode_tga_palette_rle, encode_tga_palette_with_entry_size, parse_header,
     parse_tga, ColorMapEntrySize, ImageType, TgaPixelFormat,
@@ -132,9 +135,9 @@ fn default_writer_emits_24bit_map_when_opaque() {
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 2);
     assert_eq!(img.height, 2);
-    assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+    assert_eq!(img.format, TgaPixelFormat::Rgba);
     // 24-bit entries are alpha-less → decoder forces alpha 0xFF.
-    assert_eq!(&img.data[..], &rgba[..]);
+    assert_eq!(img.data(), &rgba[..]);
 }
 
 /// A palette that uses alpha → the default writer keeps the 32-bit BGRA
@@ -152,7 +155,7 @@ fn default_writer_emits_32bit_map_when_alpha_present() {
     assert_eq!(hdr.cmap_entry_size, 32, "alpha palette → 32-bit entries");
 
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(&img.data[..], &rgba[..]);
+    assert_eq!(img.data(), &rgba[..]);
 }
 
 /// The RLE colour-mapped writer (type 9) auto-selects the same way.
@@ -166,7 +169,7 @@ fn rle_writer_auto_selects_entry_size() {
     assert_eq!(hdr.image_type_raw, ImageType::RleColourMapped as u8);
     assert_eq!(hdr.cmap_entry_size, 24);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(&img.data[..], &opaque[..]);
+    assert_eq!(img.data(), &opaque[..]);
 
     let alpha = [
         1, 2, 3, 0x10, 1, 2, 3, 0x10, 1, 2, 3, 0x10, 4, 5, 6, 0xFF, //
@@ -175,7 +178,7 @@ fn rle_writer_auto_selects_entry_size() {
     let hdr = parse_header(&bytes).unwrap();
     assert_eq!(hdr.cmap_entry_size, 32);
     let img = parse_tga(&bytes).unwrap();
-    assert_eq!(&img.data[..], &alpha[..]);
+    assert_eq!(img.data(), &alpha[..]);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +203,7 @@ fn explicit_24bit_lossless_roundtrip_both_types() {
         assert_eq!(hdr.cmap_entry_size, 24);
         assert_eq!(hdr.image_type_raw, ty as u8);
         let img = parse_tga(&bytes).unwrap();
-        assert_eq!(&img.data[..], &rgba[..], "type {:?}", ty);
+        assert_eq!(img.data(), &rgba[..], "type {:?}", ty);
     }
 }
 
@@ -221,7 +224,7 @@ fn explicit_32bit_lossless_roundtrip_both_types() {
         let hdr = parse_header(&bytes).unwrap();
         assert_eq!(hdr.cmap_entry_size, 32);
         let img = parse_tga(&bytes).unwrap();
-        assert_eq!(&img.data[..], &rgba[..], "type {:?}", ty);
+        assert_eq!(img.data(), &rgba[..], "type {:?}", ty);
     }
 }
 
@@ -259,7 +262,7 @@ fn explicit_16bit_entries_quantise_to_5bits_and_keep_alpha_bit() {
     let img = parse_tga(&bytes).unwrap();
     // Pixel 0: colour quantised, alpha bit set → opaque.
     assert_eq!(
-        &img.data[0..4],
+        &img.data()[0..4],
         &[
             quantise_5bit(0xF8),
             quantise_5bit(0x10),
@@ -269,7 +272,7 @@ fn explicit_16bit_entries_quantise_to_5bits_and_keep_alpha_bit() {
     );
     // Pixel 1: colour quantised, alpha bit clear → transparent (0x00).
     assert_eq!(
-        &img.data[4..8],
+        &img.data()[4..8],
         &[
             quantise_5bit(0x00),
             quantise_5bit(0xFF),
@@ -300,7 +303,7 @@ fn explicit_15bit_entries_force_opaque() {
     let img = parse_tga(&bytes).unwrap();
     // ...but 15-bit forces alpha 0xFF for every pixel.
     assert_eq!(
-        &img.data[0..4],
+        &img.data()[0..4],
         &[
             quantise_5bit(0xF8),
             quantise_5bit(0x10),
@@ -309,7 +312,7 @@ fn explicit_15bit_entries_force_opaque() {
         ]
     );
     assert_eq!(
-        &img.data[4..8],
+        &img.data()[4..8],
         &[
             quantise_5bit(0x40),
             quantise_5bit(0x80),
@@ -345,7 +348,7 @@ fn already_5bit_colours_roundtrip_exact_16bit() {
     .unwrap();
     let img = parse_tga(&bytes).unwrap();
     // Each channel was already a valid 5-bit-expanded value → no loss.
-    assert_eq!(&img.data[..], &rgba[..]);
+    assert_eq!(img.data(), &rgba[..]);
 }
 
 // ---------------------------------------------------------------------------
@@ -518,9 +521,9 @@ fn entry_size_matrix_roundtrip() {
             let img = parse_tga(&bytes).unwrap();
             assert_eq!(img.width, 4);
             assert_eq!(img.height, 1);
-            assert_eq!(img.pixel_format, TgaPixelFormat::Rgba);
+            assert_eq!(img.format, TgaPixelFormat::Rgba);
             for (i, p) in pixels.iter().enumerate() {
-                let got = &img.data[i * 4..i * 4 + 4];
+                let got = &img.data()[i * 4..i * 4 + 4];
                 let want = [
                     channel_after(entry, p[0]),
                     channel_after(entry, p[1]),

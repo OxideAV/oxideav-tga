@@ -20,6 +20,9 @@
 //! the surface-but-don't-guess approach taken for `AttributeBits`
 //! (round 311).
 
+// These tests pin the pre-contract entry points (deprecated for one
+// release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
+#![allow(deprecated)]
 use oxideav_tga::{parse_tga, parse_tga_interleaving, Interleaving, TGA_INTERLEAVING_MASK};
 
 /// Build a minimal 1×1 uncompressed 24-bpp true-colour (type 2) TGA with
@@ -168,5 +171,5 @@ fn header_interleaving_matches_helper() {
     let img = parse_tga(&f).expect("decode succeeds despite interleaving flag");
     assert_eq!(img.width, 1);
     assert_eq!(img.height, 1);
-    assert_eq!(&img.data[0..3], &[30, 20, 10]);
+    assert_eq!(&img.data()[0..3], &[30, 20, 10]);
 }
