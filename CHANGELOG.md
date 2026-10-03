@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Image-crate contract (`IMAGE_CRATE_API`).** The crate root now
+  exposes the shared vocabulary: `probe`, `info -> ImageInfo`,
+  `header -> TgaHeader`, `decode -> TgaImage`,
+  `decode_with(&DecodeOptions)`, `decode_rgb8 -> RgbImage`,
+  `decode_rgba8 -> RgbaImage`, `decode_from<R: Read>`,
+  `encode(&TgaImage, &EncodeOptions)`, `encode_rgb8`, `encode_rgba8`,
+  `encode_to<W: Write>`; types `Plane`, `ColorInfo`, `ColorRange`,
+  `Metadata`, `Palette`, `ImageInfo`, `RgbImage`, `RgbaImage`,
+  `PixelFormat` (= `TgaPixelFormat`), `DecodeOptions`, `EncodeOptions`,
+  `RowOrder`, `Error` (= `TgaError`).
+- `TgaImage` has the contract shape: `{ width, height, format, planes:
+  Vec<Plane>, color, metadata, palette: Option<Palette>, extension:
+  Option<TgaExtensionArea> }` (`#[non_exhaustive]`). The `pixel_format`
+  field is `format`, the `data` field is the single `planes[0]` (use
+  `data()` / `data_mut()` / `as_bytes()` / `into_raw()`), and `pts` is
+  gone (the framework adapter stamps it on the `VideoFrame`).
+  Constructors: `new -> Result` (validates geometry), `new_indexed ->
+  Result`, `from_rgb8` / `from_rgba8` / `from_gray8` / `packed`,
+  `with_*`; conversions `to_rgb8` / `to_rgba8` (infallible) +
+  `try_to_rgb8` / `try_to_rgba8`, `to_indexed -> Result`,
+  `into_legacy_layout`.
+- `decode` returns the **native** layout: colour-mapped files are
+  `Pal8` + `palette` (indices rebased by the Color Map Origin), 24-bit
+  files are `Rgb24`, 32-bit and 15 / 16-bit (expanded as documented)
+  are `Rgba`, grayscale is `Gray8`. The TGA 2.0 extension area lands on
+  `TgaImage::extension` and its gamma on `metadata.gamma`; `color` is
+  the documented `ColorInfo::tga_default()` (full range, identity
+  matrix, unspecified primaries / transfer).
+- `encode` writes the layout as given (`Rgba` at 32 bits even when
+  opaque); the former writer *names* are `EncodeOptions` fields: `rle`,
+  `row_order` (new: `BottomUp`), `alpha_bits`, `drop_opaque_alpha` (the
+  old auto-depth rule), `palette_entry_size`, `image_id`,
+  `screen_origin`, `extension`, `footer`. A `metadata.gamma` is
+  written into the extension area and read back.
+- `DecodeOptions` limits (`max_width` / `max_height` / `max_pixels` /
+  `max_bytes`, default 1 GiB of decoded plane) are enforced before the
+  plane is allocated; `strict` rejects RLE packets that span a scan
+  line and a non-zero §C.2 interleaving flag.
+- `TgaError` gains `LimitExceeded(String)` and `Io(std::io::Error)`
+  (+ `From<std::io::Error>`), is `#[non_exhaustive]`, and no longer
+  derives `Clone` / `PartialEq` / `Eq`.
+- `TgaPixelFormat` gains `Pal8` and is `#[non_exhaustive]`;
+  `TgaHeader` derives `PartialEq` / `Eq`; `ExtensionAreaInput` /
+  `DeveloperTagInput` derive `PartialEq` (`ExtensionAreaInput::from_area`
+  builds one from a decoded `TgaExtensionArea`).
+- Registry: `register(&mut RuntimeContext)` is the fleet entry point
+  (the former two-argument `register(codecs, containers)` is
+  `register_registries`); `make_decoder` / `make_encoder` /
+  `make_decoder_with_display_options` are re-exported at the root;
+  `From<TgaImage> for VideoFrame`, `TgaImage::from_video_frame` and
+  `TryFrom<(&VideoFrame, &CodecParameters)>` bridge frames; the
+  framework `Decoder` / `Encoder` call the standalone functions. The
+  framework encoder accepts `Gray8` and `Pal8` frames too; the demuxer
+  declares `Gray8` (not `Rgba`) for grayscale files.
+- The metadata apply helpers (`AttributesType::apply_to_image`,
+  `GammaValue::apply_to_image`, `TgaColourCorrectionTable::apply_to_image`,
+  `KeyColor::key_out_image`, `PixelAspectRatio::resampled`,
+  `PostageStamp::subsample`) accept every layout; on `Pal8` the colour
+  passes operate on the palette entries.
+- `parse_tga_postage_stamp` / `parse_tga_scan_line` keep returning the
+  legacy expanded layout (`Gray8`, else `Rgba`); the display pipeline
+  does too (`decode(..).into_legacy_layout()` with `TgaDisplayOptions::NONE`).
+- CI: the standalone job now runs the test suite and clippy with
+  `--no-default-features`; new fuzz target `contract_identity`
+  (`decode(encode(img)) == img` across layouts and options), and
+  `decode_tga` drives `probe` / `info` / `decode_with` / `decode_rgb8`
+  / `decode_rgba8`. README reordered to the contract's sections.
+
+### Deprecated
+
+Kept for one release as thin wrappers with byte-identical results:
+
+- `parse_tga` → `decode` (+ `into_legacy_layout()` for the old
+  `Gray8`-or-`Rgba` shape); `parse_header` → `header` / `info`.
+- `encode_tga_uncompressed` / `encode_tga_rle` → `encode_rgba8` with
+  `EncodeOptions { rle, drop_opaque_alpha: true }`;
+  `encode_tga_uncompressed_rgb24` / `encode_tga_rle_rgb24` →
+  `encode_rgb8`; `encode_tga_grayscale` / `encode_tga_grayscale_rle` →
+  `encode(&TgaImage::from_gray8(..))`; `encode_tga_palette` /
+  `encode_tga_palette_rle` / `encode_tga_palette_with_entry_size` →
+  `TgaImage::to_indexed()` + `encode` (`EncodeOptions::palette_entry_size`);
+  `encode_tga_uncompressed_image` / `encode_tga_rle_image` → `encode`.
+- The one-field extension-area readers `parse_tga_gamma`,
+  `parse_tga_key_color`, `parse_tga_pixel_aspect_ratio`,
+  `parse_tga_software_version`, `parse_tga_timestamp`,
+  `parse_tga_job_time`, `parse_tga_author_name`,
+  `parse_tga_author_comments`, `parse_tga_job_name`,
+  `parse_tga_software_id`, `parse_tga_attributes_type` →
+  `decode(..).extension` / `parse_tga_extension_area(..)` + the
+  `*_typed()` accessors; the header readers `parse_tga_attribute_bits`,
+  `parse_tga_interleaving`, `parse_tga_image_origin`,
+  `parse_tga_color_map_type` → `header(..)` + the `TgaHeader` views.
+- `register_runtime` → `register`.
+
 ## [0.0.3](https://github.com/OxideAV/oxideav-tga/compare/v0.0.2...v0.0.3) - 2026-07-18
 
 ### Other
