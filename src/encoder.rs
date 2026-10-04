@@ -322,7 +322,7 @@ fn check_raw_len(width: u16, height: u16, bpp: usize, len: usize, what: &str) ->
 )]
 pub fn encode_tga_uncompressed(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
     check_raw_len(width, height, 4, rgba.len(), "RGBA")?;
-    let img = TgaImage::from_rgba8(width as u32, height as u32, rgba.to_vec());
+    let img = TgaImage::from_rgba8(width as u32, height as u32, rgba.to_vec())?;
     encode_image(&img, &legacy_opts(false))
 }
 
@@ -333,7 +333,7 @@ pub fn encode_tga_uncompressed(width: u16, height: u16, rgba: &[u8]) -> Result<V
 )]
 pub fn encode_tga_uncompressed_rgb24(width: u16, height: u16, rgb: &[u8]) -> Result<Vec<u8>> {
     check_raw_len(width, height, 3, rgb.len(), "rgb")?;
-    let img = TgaImage::from_rgb8(width as u32, height as u32, rgb.to_vec());
+    let img = TgaImage::from_rgb8(width as u32, height as u32, rgb.to_vec())?;
     encode_image(&img, &legacy_opts(false))
 }
 
@@ -342,7 +342,7 @@ pub fn encode_tga_uncompressed_rgb24(width: u16, height: u16, rgb: &[u8]) -> Res
 #[deprecated(note = "use oxideav_tga::encode_rgb8 (IMAGE_CRATE_API)")]
 pub fn encode_tga_rle_rgb24(width: u16, height: u16, rgb: &[u8]) -> Result<Vec<u8>> {
     check_raw_len(width, height, 3, rgb.len(), "rgb")?;
-    let img = TgaImage::from_rgb8(width as u32, height as u32, rgb.to_vec());
+    let img = TgaImage::from_rgb8(width as u32, height as u32, rgb.to_vec())?;
     encode_image(&img, &legacy_opts(true))
 }
 
@@ -352,7 +352,7 @@ pub fn encode_tga_rle_rgb24(width: u16, height: u16, rgb: &[u8]) -> Result<Vec<u
 #[deprecated(note = "use oxideav_tga::encode_rgba8 (IMAGE_CRATE_API)")]
 pub fn encode_tga_rle(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
     check_raw_len(width, height, 4, rgba.len(), "RGBA")?;
-    let img = TgaImage::from_rgba8(width as u32, height as u32, rgba.to_vec());
+    let img = TgaImage::from_rgba8(width as u32, height as u32, rgba.to_vec())?;
     encode_image(&img, &legacy_opts(true))
 }
 
@@ -361,11 +361,7 @@ pub fn encode_tga_rle(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>> {
 /// auto-depth rule.
 fn legacy_image(image: &TgaImage) -> Result<TgaImage> {
     image.validate()?;
-    Ok(TgaImage::from_rgba8(
-        image.width,
-        image.height,
-        image.to_rgba8(),
-    ))
+    TgaImage::from_rgba8(image.width, image.height, image.to_rgba8())
 }
 
 /// Wrapper so callers with a [`TgaImage`] don't need to flatten by hand.
@@ -441,7 +437,8 @@ fn encode_palette_inner(
 ) -> Result<Vec<u8>> {
     check_raw_len(width, height, 4, rgba.len(), "palette")?;
     let n = width as usize * height as usize * 4;
-    let img = TgaImage::from_rgba8(width as u32, height as u32, rgba[..n].to_vec()).to_indexed()?;
+    let img =
+        TgaImage::from_rgba8(width as u32, height as u32, rgba[..n].to_vec())?.to_indexed()?;
     encode_image(
         &img,
         &EncodeOptions::default()
@@ -473,7 +470,7 @@ fn encode_grayscale_inner(width: u16, height: u16, gray: &[u8], rle: bool) -> Re
         ));
     }
     let n = width as usize * height as usize;
-    let img = TgaImage::from_gray8(width as u32, height as u32, gray[..n].to_vec());
+    let img = TgaImage::from_gray8(width as u32, height as u32, gray[..n].to_vec())?;
     encode_image(&img, &EncodeOptions::default().with_rle(rle))
 }
 

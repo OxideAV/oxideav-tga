@@ -228,12 +228,7 @@ fn splice_then_extension_area_preserves_both() {
         software_id: "round8".to_string(),
         software_version: (100, 'a'),
         attributes_type: 3,
-        postage_stamp: Some(TgaImage::packed(
-            4,
-            2,
-            TgaPixelFormat::Rgba,
-            rgba_diag(4, 2),
-        )),
+        postage_stamp: Some(TgaImage::packed(4, 2, TgaPixelFormat::Rgba, rgba_diag(4, 2)).unwrap()),
         ..Default::default()
     };
     let full = encode_tga_with_extension(&base, &ext_input).unwrap();

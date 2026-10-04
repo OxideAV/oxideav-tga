@@ -189,7 +189,7 @@ fuzz_target!(|data: &[u8]| {
             sh as u32,
             TgaPixelFormat::Rgba,
             data,
-        ))
+        ).unwrap())
     } else {
         None
     };

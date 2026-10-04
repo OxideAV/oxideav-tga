@@ -464,32 +464,42 @@ impl TgaImage {
     }
 
     /// A packed image over `data` with the layout's tight stride
-    /// (`width × bytes_per_pixel`), any layout. Not validated; see
-    /// [`TgaImage::from_rgb8`]. A `Pal8` image built this way still
-    /// needs [`TgaImage::with_palette`].
-    pub fn packed(width: u32, height: u32, format: PixelFormat, data: Vec<u8>) -> Self {
+    /// (`width × bytes_per_pixel`), any layout, validated like
+    /// [`TgaImage::new`] (a zero dimension or a short buffer is
+    /// `Error::InvalidData`). A `Pal8` image built this way still needs
+    /// [`TgaImage::with_palette`] (or use [`TgaImage::new_indexed`]).
+    pub fn packed(width: u32, height: u32, format: PixelFormat, data: Vec<u8>) -> Result<Self> {
+        let stride = (width as usize).saturating_mul(format.bytes_per_pixel());
+        Self::new(width, height, format, vec![Plane::new(stride, data)])
+    }
+
+    /// [`TgaImage::packed`] without the geometry check, for the decoder
+    /// whose planes are correct by construction.
+    pub(crate) fn packed_unchecked(
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        data: Vec<u8>,
+    ) -> Self {
         let stride = width as usize * format.bytes_per_pixel();
         Self::unchecked(width, height, format, vec![Plane::new(stride, data)])
     }
 
     /// A packed `Rgb24` image over `data` (`3 × width × height` bytes,
-    /// row-major, stride `3 × width`). Not validated (the contract's
-    /// infallible constructor): a short buffer fails at
-    /// [`TgaImage::validate`] / [`crate::encode`], and the conversions
-    /// pad it with black.
-    pub fn from_rgb8(width: u32, height: u32, data: Vec<u8>) -> Self {
+    /// row-major, stride `3 × width`), validated like [`TgaImage::new`].
+    pub fn from_rgb8(width: u32, height: u32, data: Vec<u8>) -> Result<Self> {
         Self::packed(width, height, PixelFormat::Rgb24, data)
     }
 
-    /// A packed `Rgba` image over `data` (`4 × width × height` bytes);
-    /// see [`TgaImage::from_rgb8`] about validation.
-    pub fn from_rgba8(width: u32, height: u32, data: Vec<u8>) -> Self {
+    /// A packed `Rgba` image over `data` (`4 × width × height` bytes),
+    /// validated like [`TgaImage::new`].
+    pub fn from_rgba8(width: u32, height: u32, data: Vec<u8>) -> Result<Self> {
         Self::packed(width, height, PixelFormat::Rgba, data)
     }
 
-    /// A packed `Gray8` image over `data` (`width × height` bytes); see
-    /// [`TgaImage::from_rgb8`] about validation.
-    pub fn from_gray8(width: u32, height: u32, data: Vec<u8>) -> Self {
+    /// A packed `Gray8` image over `data` (`width × height` bytes),
+    /// validated like [`TgaImage::new`].
+    pub fn from_gray8(width: u32, height: u32, data: Vec<u8>) -> Result<Self> {
         Self::packed(width, height, PixelFormat::Gray8, data)
     }
 
@@ -758,7 +768,7 @@ impl TgaImage {
             return self;
         }
         let rgba = self.to_rgba8();
-        let mut out = Self::packed(self.width, self.height, PixelFormat::Rgba, rgba);
+        let mut out = Self::packed_unchecked(self.width, self.height, PixelFormat::Rgba, rgba);
         out.color = self.color;
         out.metadata = self.metadata;
         out.extension = self.extension;
@@ -798,7 +808,7 @@ impl TgaImage {
             };
             indices.push(idx as u8);
         }
-        let mut out = Self::packed(self.width, self.height, PixelFormat::Pal8, indices)
+        let mut out = Self::packed_unchecked(self.width, self.height, PixelFormat::Pal8, indices)
             .with_palette(Palette::new(palette));
         out.color = self.color;
         out.metadata = self.metadata.clone();
@@ -1025,6 +1035,7 @@ mod tests {
     #[test]
     fn to_rgba8_pal8_expands_and_pads_out_of_range() {
         let img = TgaImage::packed(3, 1, PixelFormat::Pal8, vec![0, 1, 9])
+            .unwrap()
             .with_palette(Palette::new(vec![[10, 20, 30, 128], [40, 50, 60, 255]]));
         assert_eq!(
             img.to_rgba8(),
@@ -1049,10 +1060,10 @@ mod tests {
 
     #[test]
     fn gray_and_rgba_kernels() {
-        let g = TgaImage::from_gray8(2, 1, vec![7, 200]);
+        let g = TgaImage::from_gray8(2, 1, vec![7, 200]).unwrap();
         assert_eq!(g.to_rgba8(), vec![7, 7, 7, 255, 200, 200, 200, 255]);
         assert_eq!(g.to_rgb8(), vec![7, 7, 7, 200, 200, 200]);
-        let a = TgaImage::from_rgba8(1, 1, vec![1, 2, 3, 4]);
+        let a = TgaImage::from_rgba8(1, 1, vec![1, 2, 3, 4]).unwrap();
         assert_eq!(a.to_rgb8(), vec![1, 2, 3]);
         assert_eq!(a.as_bytes(), Some(&[1u8, 2, 3, 4][..]));
         assert_eq!(a.stride(), 4);
@@ -1074,9 +1085,9 @@ mod tests {
         for i in 0..300u32 {
             rgba.extend_from_slice(&[(i % 256) as u8, (i / 256) as u8, 0, 255]);
         }
-        let img = TgaImage::from_rgba8(300, 1, rgba);
+        let img = TgaImage::from_rgba8(300, 1, rgba).unwrap();
         assert!(matches!(img.to_indexed(), Err(TgaError::Unsupported(_))));
-        let small = TgaImage::from_rgba8(3, 1, vec![1, 2, 3, 4, 1, 2, 3, 4, 9, 9, 9, 9]);
+        let small = TgaImage::from_rgba8(3, 1, vec![1, 2, 3, 4, 1, 2, 3, 4, 9, 9, 9, 9]).unwrap();
         let idx = small.to_indexed().unwrap();
         assert_eq!(idx.format, PixelFormat::Pal8);
         assert_eq!(idx.data(), &[0, 0, 1]);
@@ -1090,9 +1101,13 @@ mod tests {
 
     #[test]
     fn legacy_layout_matches_pre_contract_shape() {
-        let g = TgaImage::from_gray8(1, 1, vec![5]).into_legacy_layout();
+        let g = TgaImage::from_gray8(1, 1, vec![5])
+            .unwrap()
+            .into_legacy_layout();
         assert_eq!(g.format, PixelFormat::Gray8);
-        let r = TgaImage::from_rgb8(1, 1, vec![1, 2, 3]).into_legacy_layout();
+        let r = TgaImage::from_rgb8(1, 1, vec![1, 2, 3])
+            .unwrap()
+            .into_legacy_layout();
         assert_eq!(r.format, PixelFormat::Rgba);
         assert_eq!(r.data(), &[1, 2, 3, 255]);
     }

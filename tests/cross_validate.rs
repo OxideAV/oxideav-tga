@@ -299,7 +299,7 @@ fn magick_accepts_our_extension_area_output() {
     }
     let rgba = checker(16, 16);
     let base = encode_tga_uncompressed(16, 16, &rgba).unwrap();
-    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, checker(4, 4));
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, checker(4, 4)).unwrap();
     let ext = ExtensionAreaInput {
         author_name: "oxideav-tga test".to_string(),
         software_id: "oxideav-tga".to_string(),

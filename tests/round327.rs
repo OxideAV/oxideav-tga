@@ -34,7 +34,7 @@ use oxideav_tga::{
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
     assert_eq!(data.len(), width as usize * height as usize * 4);
-    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data).unwrap()
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn subsample_preserves_gray8() {
             data.push((x ^ y) as u8);
         }
     }
-    let img = TgaImage::packed(130, 10, TgaPixelFormat::Gray8, data);
+    let img = TgaImage::packed(130, 10, TgaPixelFormat::Gray8, data).unwrap();
     let stamp = PostageStamp::subsample(&img).expect("downscale gray");
     assert_eq!(stamp.format, TgaPixelFormat::Gray8);
     // 130 x 10: longer edge 130 → 64; height 10*64/130 = 4.

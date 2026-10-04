@@ -1702,9 +1702,12 @@ fn nearest_resample(image: &crate::image::TgaImage, dw: u32, dh: u32) -> crate::
             }
         }
     }
-    let mut out = crate::image::TgaImage::from_rgba8(dw, dh, Vec::new());
-    out.format = image.format;
-    out.planes = vec![crate::image::Plane::new(dst_stride, data)];
+    let mut out = crate::image::TgaImage::unchecked(
+        dw,
+        dh,
+        image.format,
+        vec![crate::image::Plane::new(dst_stride, data)],
+    );
     out.color = image.color;
     out.metadata = image.metadata.clone();
     out.palette = image.palette.clone();

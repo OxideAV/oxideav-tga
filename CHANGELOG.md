@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Cargo.toml` `exclude = ["/tests", "/fuzz"]` (crates.io 10 MiB cap).
+
+### Changed
+
+- **`TgaImage::from_rgb8` / `from_rgba8` / `from_gray8` / `packed` return
+  `Result`** (`InvalidData` on a buffer shorter than the geometry) — the
+  infallible signatures are gone (IMAGE_CRATE_API ruling); an invalid
+  image can no longer be built. `encode_rgb8` / `encode_rgba8` and the
+  deprecated `encode_tga_*` wrappers propagate the error (same
+  `InvalidData` they already returned for short input).
+- **The framework `Decoder` emits the native layout** (`Gray8` / `Pal8` +
+  palette side-channel / `Rgb24` / `Rgba`, as `decode` returns it) and
+  the TGA demuxer declares that layout on its stream, instead of the
+  pre-contract `Gray8`-or-`Rgba` shape. The colour signal stays
+  unstamped: TGA defines no colour space (`ColorInfo::tga_default` is a
+  convention). `make_decoder_with_display_options` is unchanged.
+  Framework consumers that assumed 4-byte `Rgba` frames for every
+  non-grey TGA must convert through `oxideav-pixfmt` or read the stream's
+  `pixel_format`; `into_legacy_layout()` / `parse_tga` keep the old shape.
+
 ## [0.0.4](https://github.com/OxideAV/oxideav-tga/compare/v0.0.3...v0.0.4) - 2026-10-03
 
 ### Other

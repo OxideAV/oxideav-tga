@@ -197,7 +197,8 @@ pub(crate) fn decode_image(input: &[u8], opts: &DecodeOptions) -> Result<TgaImag
     // spec-legal — some Truevision tooling wrote right-to-left files).
     let data = normalise_origin(pixels, width, height, bpp, header);
 
-    let mut image = TgaImage::packed(header.width as u32, header.height as u32, v.format, data);
+    let mut image =
+        TgaImage::packed_unchecked(header.width as u32, header.height as u32, v.format, data);
     if v.format == TgaPixelFormat::Pal8 {
         image.palette = palette.map(Palette::new);
     }
@@ -534,7 +535,7 @@ pub fn parse_tga_scan_line(
     let bpp = v.format.bytes_per_pixel();
     let data = normalise_origin(pixels, header.width as usize, 1, bpp, &row_header);
 
-    let mut row = TgaImage::packed(header.width as u32, 1, v.format, data);
+    let mut row = TgaImage::packed_unchecked(header.width as u32, 1, v.format, data);
     if v.format == TgaPixelFormat::Pal8 {
         row.palette = palette.map(Palette::new);
     }
@@ -966,7 +967,7 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
         pixels
     };
 
-    let mut stamp = TgaImage::packed(stamp_w as u32, stamp_h as u32, format, pixels);
+    let mut stamp = TgaImage::packed_unchecked(stamp_w as u32, stamp_h as u32, format, pixels);
     if format == TgaPixelFormat::Pal8 {
         stamp.palette = palette.map(Palette::new);
     }

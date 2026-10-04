@@ -84,7 +84,7 @@ pub fn encode(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec<u8>> {
 /// 24-bit true-colour TGA (image type 10, or 2 with `rle = false`).
 pub fn encode_rgb8(width: u32, height: u32, rgb: &[u8], opts: &EncodeOptions) -> Result<Vec<u8>> {
     check_raw_len(width, height, 3, rgb.len())?;
-    encode_image(&TgaImage::from_rgb8(width, height, rgb.to_vec()), opts)
+    encode_image(&TgaImage::from_rgb8(width, height, rgb.to_vec())?, opts)
 }
 
 /// Encode tightly packed 8-bit RGBA (`4 × width × height` bytes) as a
@@ -92,7 +92,7 @@ pub fn encode_rgb8(width: u32, height: u32, rgb: &[u8], opts: &EncodeOptions) ->
 /// 8 descriptor alpha bits.
 pub fn encode_rgba8(width: u32, height: u32, rgba: &[u8], opts: &EncodeOptions) -> Result<Vec<u8>> {
     check_raw_len(width, height, 4, rgba.len())?;
-    encode_image(&TgaImage::from_rgba8(width, height, rgba.to_vec()), opts)
+    encode_image(&TgaImage::from_rgba8(width, height, rgba.to_vec())?, opts)
 }
 
 /// [`encode`] straight into a writer.

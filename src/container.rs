@@ -11,8 +11,7 @@
 use std::io::{Read, SeekFrom, Write};
 
 use oxideav_core::{
-    CodecId, CodecParameters, CodecResolver, Error, MediaType, Packet, PixelFormat, Result,
-    StreamInfo, TimeBase,
+    CodecId, CodecParameters, CodecResolver, Error, MediaType, Packet, Result, StreamInfo, TimeBase,
 };
 use oxideav_core::{
     ContainerRegistry, Demuxer, Muxer, ProbeData, ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE,
@@ -66,12 +65,12 @@ pub fn open_demuxer(
     let mut params = CodecParameters::video(CodecId::new(crate::CODEC_ID_STR));
     params.width = Some(header.width as u32);
     params.height = Some(header.height as u32);
-    // The framework decoder emits the legacy layout: `Gray8` for the
-    // grayscale types, packed `Rgba` for everything else.
-    params.pixel_format = Some(match native_format(v.image_type, header.depth) {
-        crate::TgaPixelFormat::Gray8 => PixelFormat::Gray8,
-        _ => PixelFormat::Rgba,
-    });
+    // The framework decoder emits the native layout (`crate::decode`):
+    // the stream declares the same one.
+    params.pixel_format = Some(crate::registry::to_core_pixel_format(native_format(
+        v.image_type,
+        header.depth,
+    )));
     let stream = StreamInfo {
         index: 0,
         params,

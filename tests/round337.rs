@@ -25,7 +25,7 @@ use oxideav_tga::{
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
     assert_eq!(data.len(), (width * height * 4) as usize);
-    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data).unwrap()
 }
 
 #[test]
@@ -148,12 +148,12 @@ fn carry_then_apply_roundtrip_through_extension_area() {
 #[test]
 fn key_out_image_noop_for_non_rgba_formats() {
     // Gray8 / Rgb24 carry no alpha channel; keying is a no-op (returns 0).
-    let mut gray = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![0x10, 0x20]);
+    let mut gray = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![0x10, 0x20]).unwrap();
     let key = KeyColor::from_argb([0x00, 0x10, 0x10, 0x10]);
     assert_eq!(key.key_out_image(&mut gray), 0);
     assert_eq!(gray.data(), vec![0x10, 0x20], "gray data untouched");
 
-    let mut rgb = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0x10, 0x10, 0x10]);
+    let mut rgb = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0x10, 0x10, 0x10]).unwrap();
     assert_eq!(key.key_out_image(&mut rgb), 0);
     assert_eq!(rgb.data(), vec![0x10, 0x10, 0x10], "rgb24 data untouched");
 }

@@ -196,7 +196,7 @@ fn correct_gray8_uses_green_curve() {
 // ---------------------------------------------------------------------------
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
-    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data).unwrap()
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn apply_to_gray8_image_uses_green_curve() {
         let out = ((i * 2).min(255)) as u16;
         cct.green[i] = (out << 8) | out;
     }
-    let mut img = TgaImage::packed(3, 1, TgaPixelFormat::Gray8, vec![10, 100, 200]);
+    let mut img = TgaImage::packed(3, 1, TgaPixelFormat::Gray8, vec![10, 100, 200]).unwrap();
     cct.apply_to_image(&mut img);
     assert_eq!(img.data(), vec![20, 200, 255]);
 }
@@ -248,7 +248,7 @@ fn apply_to_rgb24_image_skips_alpha() {
         cct.blue[i] = 0x3000;
         cct.alpha[i] = 0xFF00; // would corrupt output if (wrongly) used
     }
-    let mut img = TgaImage::packed(2, 1, TgaPixelFormat::Rgb24, vec![1, 2, 3, 4, 5, 6]);
+    let mut img = TgaImage::packed(2, 1, TgaPixelFormat::Rgb24, vec![1, 2, 3, 4, 5, 6]).unwrap();
     cct.apply_to_image(&mut img);
     assert_eq!(img.data(), vec![0x10, 0x20, 0x30, 0x10, 0x20, 0x30]);
 }

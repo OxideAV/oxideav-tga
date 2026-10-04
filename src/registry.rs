@@ -27,7 +27,7 @@ use oxideav_core::{
 use crate::container;
 use crate::error::TgaError;
 use crate::image::{ColorInfo, ColorRange, Palette, Plane, TgaImage, TgaPixelFormat};
-use crate::options::EncodeOptions;
+use crate::options::{DecodeOptions, EncodeOptions};
 
 /// Convert a [`TgaError`] into the framework-shared `oxideav_core::Error`
 /// so trait impls in this crate can use `?` on errors returned by the
@@ -206,11 +206,17 @@ impl TryFrom<(&VideoFrame, &CodecParameters)> for TgaImage {
 /// Factory registered with the codec registry. Consumes one packet per
 /// whole TGA file and produces one frame.
 ///
-/// The frame carries the decoded samples in the pre-contract framework
-/// layout — `Gray8` for image types 3 / 11, packed `Rgba` for every
-/// other type (palette and 15 / 16 / 24-bit pixels expanded through
-/// [`TgaImage::to_rgba8`]) — which is what the container's stream
-/// parameters declare, and no §C.6 metadata is applied. A consumer
+/// The frame carries the decoded samples in the file's native layout,
+/// exactly as [`crate::decode`] returns them — `Gray8` for image types
+/// 3 / 11, `Pal8` plus the palette side-channel for the colour-mapped
+/// types, `Rgb24` for 24-bit true colour, `Rgba` for 32-bit (and the
+/// 15 / 16-bit pixels, which have no core layout and expand as
+/// `decode` does) — which is what the container's stream parameters
+/// declare; nothing is pre-converted to `Rgba` (use `oxideav-pixfmt`,
+/// or [`crate::decode_rgba8`] standalone), the colour signal is not
+/// stamped (TGA defines no colour space; the sRGB-like default is a
+/// documented convention on [`crate::ColorInfo::tga_default`]), and
+/// no §C.6 metadata is applied. A consumer
 /// that wants the file's own gamma / colour-correction /
 /// attributes-type / key-colour / pixel-aspect metadata applied builds
 /// the decoder with [`make_decoder_with_display_options`] (or runs
@@ -252,7 +258,7 @@ struct TgaDecoder {
     eof: bool,
     /// When `Some`, each decoded frame is finalized through
     /// [`crate::decode_tga_for_display`] with these options; when `None`
-    /// the raw samples are emitted in the legacy layout.
+    /// the raw samples are emitted in the native layout.
     display: Option<crate::display::TgaDisplayOptions>,
 }
 
@@ -263,7 +269,7 @@ impl Decoder for TgaDecoder {
     fn send_packet(&mut self, packet: &Packet) -> oxideav_core::Result<()> {
         let image = match self.display {
             Some(opts) => crate::display::decode_tga_for_display(&packet.data, &opts)?,
-            None => crate::decoder::decode_legacy(&packet.data)?,
+            None => crate::decoder::decode_image(&packet.data, &DecodeOptions::default())?,
         };
         self.pending = Some(image_into_video_frame(image, packet.pts));
         Ok(())
@@ -436,9 +442,9 @@ mod runtime_entry_tests {
     fn frame_bridge_round_trips_every_layout() {
         let pal = Palette::new(vec![[1, 2, 3, 255], [4, 5, 6, 255]]);
         let imgs = vec![
-            TgaImage::from_rgba8(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]),
-            TgaImage::from_rgb8(2, 1, vec![1, 2, 3, 4, 5, 6]),
-            TgaImage::from_gray8(2, 1, vec![9, 8]),
+            TgaImage::from_rgba8(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).unwrap(),
+            TgaImage::from_rgb8(2, 1, vec![1, 2, 3, 4, 5, 6]).unwrap(),
+            TgaImage::from_gray8(2, 1, vec![9, 8]).unwrap(),
             TgaImage::new_indexed(2, 1, vec![0, 1], pal).unwrap(),
         ];
         for img in imgs {
@@ -451,6 +457,66 @@ mod runtime_entry_tests {
             assert_eq!(back.format, img.format);
             assert_eq!(back.data(), img.data());
             assert_eq!(back.to_rgba8(), img.to_rgba8());
+        }
+    }
+
+    /// One packet through `make_decoder`, as the framework sees it.
+    fn decode_via_registry(bytes: Vec<u8>) -> VideoFrame {
+        let params = CodecParameters::video(CodecId::new(crate::CODEC_ID_STR));
+        let mut dec = make_decoder(&params).unwrap();
+        dec.send_packet(&Packet::new(0, TimeBase::new(1, 1), bytes))
+            .unwrap();
+        match dec.receive_frame().unwrap() {
+            Frame::Video(v) => v,
+            _ => panic!("non-video frame"),
+        }
+    }
+
+    #[test]
+    fn decoder_and_demuxer_use_the_native_layout_and_do_not_stamp_colour() {
+        use crate::{encode, EncodeOptions};
+        let pal = Palette::new(vec![[1, 2, 3, 255], [4, 5, 6, 255]]);
+        let cases = [
+            (
+                TgaImage::from_rgba8(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).unwrap(),
+                PixelFormat::Rgba,
+                8usize,
+            ),
+            (
+                TgaImage::from_rgb8(2, 1, vec![1, 2, 3, 4, 5, 6]).unwrap(),
+                PixelFormat::Rgb24,
+                6,
+            ),
+            (
+                TgaImage::from_gray8(2, 1, vec![9, 8]).unwrap(),
+                PixelFormat::Gray8,
+                2,
+            ),
+            (
+                TgaImage::new_indexed(2, 1, vec![0, 1], pal).unwrap(),
+                PixelFormat::Pal8,
+                2,
+            ),
+        ];
+        let ctx = oxideav_core::RuntimeContext::new();
+        for (img, core, stride) in cases {
+            let bytes = encode(&img, &EncodeOptions::default()).unwrap();
+            let v = decode_via_registry(bytes.clone());
+            assert_eq!(v.image_plane_count(), 1);
+            assert_eq!(v.planes[0].stride, stride, "{core:?} native stride");
+            assert_eq!(v.planes[0].data, img.data(), "{core:?} native bytes");
+            if core == PixelFormat::Pal8 {
+                assert_eq!(v.palette(), Some(&[1u8, 2, 3, 4, 5, 6][..]));
+            } else {
+                assert!(v.palette().is_none());
+            }
+            assert!(
+                v.color_signal().is_none(),
+                "TGA colour is a convention, never stamped"
+            );
+            let dmx = container::open_demuxer(Box::new(std::io::Cursor::new(bytes)), &ctx.codecs)
+                .unwrap();
+            assert_eq!(dmx.streams()[0].params.pixel_format, Some(core));
         }
     }
 

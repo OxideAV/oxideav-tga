@@ -176,7 +176,7 @@ fn bench_decode(c: &mut Criterion) {
 
     // type 3 / 8 bpp grayscale.
     let gs = encode(
-        &TgaImage::from_gray8(W as u32, H as u32, gray8(W, H)),
+        &TgaImage::from_gray8(W as u32, H as u32, gray8(W, H)).unwrap(),
         &unc(),
     )
     .unwrap();
@@ -190,6 +190,7 @@ fn bench_decode(c: &mut Criterion) {
     // type 1 / 8 bpp + 256-colour palette.
     let pal = encode(
         &TgaImage::from_rgba8(W as u32, H as u32, palette_rgba(W, H))
+            .unwrap()
             .to_indexed()
             .unwrap(),
         &unc(),

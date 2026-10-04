@@ -407,7 +407,7 @@ fn roundtrip_postage_stamp_rgba() {
     // Main image: 16×16 colour checker. Thumbnail: 4×4 same checker.
     let main_rgba = opaque_palette_image(16, 16);
     let stamp_rgba = opaque_palette_image(4, 4);
-    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone());
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone()).unwrap();
     let base = encode_tga_uncompressed(16, 16, &main_rgba).unwrap();
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
@@ -436,7 +436,7 @@ fn roundtrip_postage_stamp_grayscale_parent() {
     // format follows the parent's image type.
     let main_gray = ramp_gray(32, 32);
     let stamp_gray = ramp_gray(8, 8);
-    let stamp = TgaImage::packed(8, 8, TgaPixelFormat::Gray8, stamp_gray.clone());
+    let stamp = TgaImage::packed(8, 8, TgaPixelFormat::Gray8, stamp_gray.clone()).unwrap();
     let base = encode_tga_grayscale(32, 32, &main_gray).unwrap();
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
@@ -478,7 +478,7 @@ fn postage_stamp_dimension_overflow_rejected() {
     // rejected at encode time rather than silently truncated.
     let rgba = opaque_palette_image(4, 4);
     let base = encode_tga_uncompressed(4, 4, &rgba).unwrap();
-    let stamp = TgaImage::packed(256, 4, TgaPixelFormat::Rgba, vec![0u8; 256 * 4 * 4]);
+    let stamp = TgaImage::packed(256, 4, TgaPixelFormat::Rgba, vec![0u8; 256 * 4 * 4]).unwrap();
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
         ..ExtensionAreaInput::default()

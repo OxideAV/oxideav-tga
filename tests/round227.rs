@@ -289,7 +289,8 @@ fn gamma_apply_to_image_rgba_walks_every_pixel() {
         1,
         TgaPixelFormat::Rgba,
         vec![128, 128, 128, 200, 64, 64, 64, 100],
-    );
+    )
+    .unwrap();
     g.apply_to_image(&mut image);
     // First pixel: 128 → 64; alpha preserved.
     assert_eq!(&image.data()[..4], &[64, 64, 64, 200]);
@@ -300,7 +301,7 @@ fn gamma_apply_to_image_rgba_walks_every_pixel() {
 #[test]
 fn gamma_apply_to_image_gray8_walks_every_byte() {
     let g = GammaValue::new(2, 1);
-    let mut image = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![128, 255]);
+    let mut image = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![128, 255]).unwrap();
     g.apply_to_image(&mut image);
     assert_eq!(image.data(), vec![64, 255]);
 }
@@ -309,7 +310,7 @@ fn gamma_apply_to_image_gray8_walks_every_byte() {
 fn gamma_apply_to_image_rgb24_walks_every_byte() {
     // Rgb24 has no alpha, so every byte is a colour channel.
     let g = GammaValue::new(2, 1);
-    let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![128, 128, 128]);
+    let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![128, 128, 128]).unwrap();
     g.apply_to_image(&mut image);
     assert_eq!(image.data(), vec![64, 64, 64]);
 }
@@ -318,7 +319,7 @@ fn gamma_apply_to_image_rgb24_walks_every_byte() {
 fn gamma_apply_to_image_unset_and_identity_are_noops() {
     let original = vec![10u8, 20, 30, 200];
     for g in [GammaValue::UNSET, GammaValue::ONE, GammaValue::new(99, 99)] {
-        let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgba, original.clone());
+        let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgba, original.clone()).unwrap();
         g.apply_to_image(&mut image);
         assert_eq!(image.data(), original, "{g:?} must be a no-op");
     }
@@ -330,7 +331,7 @@ fn gamma_apply_to_image_malformed_is_noop() {
     // representation, but huge / overflow combinations can — both
     // sides should be a no-op so a hostile file never blows up.
     let original = vec![10u8, 20, 30, 200];
-    let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgba, original.clone());
+    let mut image = TgaImage::packed(1, 1, TgaPixelFormat::Rgba, original.clone()).unwrap();
     // denominator == 0 → unset → no-op.
     GammaValue::new(65535, 0).apply_to_image(&mut image);
     assert_eq!(image.data(), original);

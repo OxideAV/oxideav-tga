@@ -24,7 +24,7 @@ use oxideav_tga::{PixelAspectRatio, TgaImage, TgaPixelFormat};
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
     assert_eq!(data.len(), width as usize * height as usize * 4);
-    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data).unwrap()
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn apply_to_image_noop_for_square() {
 #[test]
 fn resample_preserves_pixel_format_gray8() {
     // Gray8: 2 columns, width:height 2:1 → 4 columns.
-    let img = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![100, 200]);
+    let img = TgaImage::packed(2, 1, TgaPixelFormat::Gray8, vec![100, 200]).unwrap();
     let out = PixelAspectRatio::new(2, 1)
         .resampled(&img)
         .expect("gray resample");

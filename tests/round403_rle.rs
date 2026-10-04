@@ -136,7 +136,8 @@ fn extension_postage_stamp_pixel_roundtrip() {
         sh as u32,
         TgaPixelFormat::Rgba,
         stamp_rgba.clone(),
-    );
+    )
+    .unwrap();
 
     let ext = ExtensionAreaInput {
         postage_stamp: Some(stamp),

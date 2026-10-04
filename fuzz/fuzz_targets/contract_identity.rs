@@ -90,7 +90,7 @@ fuzz_target!(|data: &[u8]| {
             h as u32,
             other,
             take(n * other.bytes_per_pixel(), 0),
-        ),
+        ).unwrap(),
     };
     let gamma = if flags & 0x20 != 0 {
         Some(f32::from(data[5] % 50 + 1) / 10.0)

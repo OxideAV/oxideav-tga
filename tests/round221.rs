@@ -55,7 +55,8 @@ fn all_alpha_zero_true_for_rgba_with_every_alpha_byte_zero() {
         1,
         TgaPixelFormat::Rgba,
         vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x00],
-    );
+    )
+    .unwrap();
     assert!(img.all_alpha_zero());
 }
 
@@ -66,25 +67,26 @@ fn all_alpha_zero_false_when_any_alpha_is_nonzero() {
         1,
         TgaPixelFormat::Rgba,
         vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x01],
-    );
+    )
+    .unwrap();
     assert!(!img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_false_for_rgb24() {
-    let img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0xAA, 0xBB, 0xCC]);
+    let img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0xAA, 0xBB, 0xCC]).unwrap();
     assert!(!img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_false_for_gray8() {
-    let img = TgaImage::packed(1, 1, TgaPixelFormat::Gray8, vec![0x42]);
+    let img = TgaImage::packed(1, 1, TgaPixelFormat::Gray8, vec![0x42]).unwrap();
     assert!(!img.all_alpha_zero());
 }
 
 #[test]
 fn all_alpha_zero_false_for_empty_rgba() {
-    let img = TgaImage::packed(0, 0, TgaPixelFormat::Rgba, vec![]);
+    let img = TgaImage::packed(0, 0, TgaPixelFormat::Rgba, vec![]).unwrap();
     assert!(!img.all_alpha_zero());
 }
 
@@ -100,7 +102,8 @@ fn all_alpha_zero_true_for_fully_opaque_then_zeroed_alpha() {
             0x00, 0xFF, 0x00, 0x00, // green, A=0
             0x00, 0x00, 0xFF, 0x00, // blue, A=0
         ],
-    );
+    )
+    .unwrap();
     assert!(img.all_alpha_zero());
 }
 
@@ -115,7 +118,8 @@ fn force_opaque_writes_ff_to_every_alpha_byte() {
         1,
         TgaPixelFormat::Rgba,
         vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0x22, 0x33, 0x80],
-    );
+    )
+    .unwrap();
     img.force_opaque();
     assert_eq!(
         img.data(),
@@ -126,7 +130,7 @@ fn force_opaque_writes_ff_to_every_alpha_byte() {
 
 #[test]
 fn force_opaque_is_noop_on_rgb24() {
-    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0xAA, 0xBB, 0xCC]);
+    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0xAA, 0xBB, 0xCC]).unwrap();
     let before = img.data().to_vec();
     img.force_opaque();
     assert_eq!(img.data(), before);
@@ -134,7 +138,7 @@ fn force_opaque_is_noop_on_rgb24() {
 
 #[test]
 fn force_opaque_is_noop_on_gray8() {
-    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Gray8, vec![0x42]);
+    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Gray8, vec![0x42]).unwrap();
     let before = img.data().to_vec();
     img.force_opaque();
     assert_eq!(img.data(), before);
@@ -147,7 +151,8 @@ fn force_opaque_then_all_alpha_zero_is_false() {
         1,
         TgaPixelFormat::Rgba,
         vec![0x10, 0x20, 0x30, 0x00, 0x40, 0x50, 0x60, 0x00],
-    );
+    )
+    .unwrap();
     assert!(img.all_alpha_zero());
     img.force_opaque();
     assert!(!img.all_alpha_zero());
@@ -293,7 +298,7 @@ fn resolver_rgb24_image_is_left_untouched_no_extension() {
     // RGB24 carries no alpha — the resolver is a strict no-op on the
     // pixels and surfaces whatever attributes the file declares.
     // Standalone (no extension area) → returns `None`.
-    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0x10, 0x20, 0x30]);
+    let mut img = TgaImage::packed(1, 1, TgaPixelFormat::Rgb24, vec![0x10, 0x20, 0x30]).unwrap();
     let before = img.data().to_vec();
     // We can pass any input bytes — the function returns early on the
     // pixel-format check before touching the buffer.

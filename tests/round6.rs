@@ -27,7 +27,7 @@ use oxideav_tga::{
 // ---------------------------------------------------------------------------
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
-    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data)
+    TgaImage::packed(width, height, TgaPixelFormat::Rgba, data).unwrap()
 }
 
 fn baseline_ext() -> ExtensionAreaInput {
@@ -197,7 +197,7 @@ fn apply_premultiplied_unmultiplies_every_pixel() {
 
 #[test]
 fn apply_leaves_gray8_untouched() {
-    let mut img = TgaImage::packed(3, 1, TgaPixelFormat::Gray8, vec![10, 100, 200]);
+    let mut img = TgaImage::packed(3, 1, TgaPixelFormat::Gray8, vec![10, 100, 200]).unwrap();
     // No alpha channel to interpret — every variant is a no-op.
     AttributesType::NoAlpha.apply_to_image(&mut img);
     assert_eq!(img.data(), vec![10, 100, 200]);
@@ -207,7 +207,7 @@ fn apply_leaves_gray8_untouched() {
 
 #[test]
 fn apply_leaves_rgb24_untouched() {
-    let mut img = TgaImage::packed(2, 1, TgaPixelFormat::Rgb24, vec![1, 2, 3, 4, 5, 6]);
+    let mut img = TgaImage::packed(2, 1, TgaPixelFormat::Rgb24, vec![1, 2, 3, 4, 5, 6]).unwrap();
     AttributesType::PremultipliedAlpha.apply_to_image(&mut img);
     assert_eq!(img.data(), vec![1, 2, 3, 4, 5, 6]);
 }

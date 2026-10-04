@@ -349,7 +349,7 @@ fn postage_stamp_with_24bit_parent_no_alpha() {
     // 24-bit parent ⇒ postage stamp on disk is BGR (no alpha byte per pixel).
     let main_rgba = opaque_checker_rgba(16, 16);
     let stamp_rgba = opaque_checker_rgba(4, 4);
-    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone());
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone()).unwrap();
     let base = encode_tga_uncompressed(16, 16, &main_rgba).unwrap();
     // Parent is 24 bpp (no alpha in main_rgba).
     assert_eq!(base[16], 24);
@@ -373,7 +373,7 @@ fn postage_stamp_with_32bit_parent_carries_alpha() {
     // 32-bit parent (alpha-bearing main image) ⇒ stamp carries alpha.
     let main_rgba = alpha_checker_rgba(16, 16);
     let stamp_rgba = alpha_checker_rgba(4, 4);
-    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone());
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Rgba, stamp_rgba.clone()).unwrap();
     let base = encode_tga_uncompressed(16, 16, &main_rgba).unwrap();
     assert_eq!(base[16], 32);
     let ext_in = ExtensionAreaInput {
@@ -405,7 +405,7 @@ fn postage_stamp_with_palette_parent_using_gray8_indices() {
     // Build a 4×4 thumbnail of palette indices. The main image used
     // a 4-colour checker so palette[0..4] is well-defined.
     let stamp_indices: Vec<u8> = (0..16).map(|i| (i % 4) as u8).collect();
-    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Gray8, stamp_indices.clone());
+    let stamp = TgaImage::packed(4, 4, TgaPixelFormat::Gray8, stamp_indices.clone()).unwrap();
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
         ..ExtensionAreaInput::default()
@@ -449,7 +449,8 @@ fn postage_stamp_rgba_with_palette_parent_is_unsupported() {
         vec![
             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
         ],
-    );
+    )
+    .unwrap();
     let ext_in = ExtensionAreaInput {
         postage_stamp: Some(stamp),
         ..ExtensionAreaInput::default()

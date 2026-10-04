@@ -49,8 +49,9 @@ picture, so there is no `decode_all`.
 
 `TgaImage` constructors: `new(w, h, format, planes) -> Result`
 (validates the plane geometry), `new_indexed(w, h, indices, palette)
--> Result`, the infallible `from_rgb8` / `from_rgba8` / `from_gray8` /
-`packed`, and `with_color` / `with_metadata` / `with_palette` /
+-> Result`, `from_rgb8` / `from_rgba8` / `from_gray8` / `packed` (all
+`-> Result`, `InvalidData` on a buffer shorter than the geometry), and
+`with_color` / `with_metadata` / `with_palette` /
 `with_extension`. Accessors: `width()`, `height()`, `format()`,
 `stride()`, `as_bytes() -> Option<&[u8]>`, `data()`, `data_mut()`,
 `into_raw()`, `to_rgb8()`, `to_rgba8()` (infallible on anything the
@@ -78,10 +79,15 @@ oxideav_tga::register(&mut ctx);               // codec "tga" + container "tga" 
 ```
 
 * `make_decoder(&CodecParameters)` / `make_encoder(&CodecParameters)` —
-  the factories the registry installs. The decoder emits the legacy
-  framework layout (`Gray8` for the grayscale types, packed `Rgba` for
-  everything else, palette and 15 / 16 / 24-bit pixels expanded), which
-  is what the demuxer's stream parameters declare;
+  the factories the registry installs. The decoder emits the native
+  layout exactly as `decode` returns it — `Gray8` for the grayscale
+  types, `Pal8` + the palette side-channel for the colour-mapped types,
+  `Rgb24` for 24-bit true colour, `Rgba` for 32-bit (and for 15 / 16-bit
+  pixels, which have no core layout) — which is what the demuxer's
+  stream parameters declare; nothing is pre-converted to `Rgba`, and no
+  colour signal is stamped (TGA defines no colour space; the sRGB-like
+  default is a documented convention). Convert through `oxideav-pixfmt`,
+  or use `decode_rgba8` standalone;
   `make_decoder_with_display_options(TgaDisplayOptions)` finalises each
   frame through the display pipeline below instead. The encoder accepts
   `Rgba` / `Rgb24` / `Gray8` / `Pal8` (+ palette side-channel) frames

@@ -30,15 +30,15 @@ fn seeded(len: usize, seed: u32) -> Vec<u8> {
 }
 
 fn rgba(w: u32, h: u32) -> TgaImage {
-    TgaImage::from_rgba8(w, h, seeded(w as usize * h as usize * 4, 1))
+    TgaImage::from_rgba8(w, h, seeded(w as usize * h as usize * 4, 1)).unwrap()
 }
 
 fn rgb(w: u32, h: u32) -> TgaImage {
-    TgaImage::from_rgb8(w, h, seeded(w as usize * h as usize * 3, 2))
+    TgaImage::from_rgb8(w, h, seeded(w as usize * h as usize * 3, 2)).unwrap()
 }
 
 fn gray(w: u32, h: u32) -> TgaImage {
-    TgaImage::from_gray8(w, h, seeded(w as usize * h as usize, 3))
+    TgaImage::from_gray8(w, h, seeded(w as usize * h as usize, 3)).unwrap()
 }
 
 fn pal(w: u32, h: u32, alpha: bool) -> TgaImage {
@@ -193,7 +193,7 @@ fn decode_returns_native_layouts_and_conversions_are_exact() {
 
 #[test]
 fn gray_and_palette_expansion_kernels() {
-    let g = TgaImage::from_gray8(2, 1, vec![0, 200]);
+    let g = TgaImage::from_gray8(2, 1, vec![0, 200]).unwrap();
     assert_eq!(g.to_rgba8(), vec![0, 0, 0, 255, 200, 200, 200, 255]);
     let p = pal(3, 1, true);
     let pal_entries = &p.palette.as_ref().unwrap().entries;
@@ -395,7 +395,7 @@ fn encode_rgb8_and_rgba8_match_encode_of_from_constructors() {
     assert_eq!(
         encode_rgb8(w as u32, h as u32, &rgb_px, &opts).unwrap(),
         encode(
-            &TgaImage::from_rgb8(w as u32, h as u32, rgb_px.clone()),
+            &TgaImage::from_rgb8(w as u32, h as u32, rgb_px.clone()).unwrap(),
             &opts
         )
         .unwrap()
@@ -403,7 +403,7 @@ fn encode_rgb8_and_rgba8_match_encode_of_from_constructors() {
     assert_eq!(
         encode_rgba8(w as u32, h as u32, &rgba_px, &opts).unwrap(),
         encode(
-            &TgaImage::from_rgba8(w as u32, h as u32, rgba_px.clone()),
+            &TgaImage::from_rgba8(w as u32, h as u32, rgba_px.clone()).unwrap(),
             &opts
         )
         .unwrap()
@@ -413,7 +413,7 @@ fn encode_rgb8_and_rgba8_match_encode_of_from_constructors() {
         Err(TgaError::InvalidData(_))
     ));
     assert!(matches!(
-        encode(&TgaImage::from_rgba8(3, 3, vec![0; 4]), &opts),
+        TgaImage::from_rgba8(3, 3, vec![0; 4]),
         Err(TgaError::InvalidData(_))
     ));
 }
@@ -436,7 +436,7 @@ fn palette_entry_size_field_and_unsupported_inputs() {
     assert_eq!(back.format, PixelFormat::Pal8);
     assert_eq!(back.data(), img.data(), "indices survive; colours quantise");
     // Pal8 without a palette, or > 256 colours, cannot be represented.
-    let no_pal = TgaImage::packed(2, 1, PixelFormat::Pal8, vec![0, 1]);
+    let no_pal = TgaImage::packed(2, 1, PixelFormat::Pal8, vec![0, 1]).unwrap();
     assert!(matches!(
         encode(&no_pal, &EncodeOptions::default()),
         Err(TgaError::InvalidData(_))
@@ -445,12 +445,12 @@ fn palette_entry_size_field_and_unsupported_inputs() {
         .flat_map(|i| [(i % 256) as u8, (i / 256) as u8, 0, 255])
         .collect();
     assert!(matches!(
-        TgaImage::from_rgba8(300, 1, many).to_indexed(),
+        TgaImage::from_rgba8(300, 1, many).unwrap().to_indexed(),
         Err(TgaError::Unsupported(_))
     ));
     assert!(matches!(
         encode(
-            &TgaImage::from_gray8(70000, 1, vec![0; 70000]),
+            &TgaImage::from_gray8(70000, 1, vec![0; 70000]).unwrap(),
             &EncodeOptions::default()
         ),
         Err(TgaError::Unsupported(_))
@@ -518,17 +518,35 @@ fn metadata_gamma_and_extension_round_trip() {
 // ---- TgaImage constructors ----------------------------------------------------
 
 #[test]
-fn new_validates_and_from_constructors_are_infallible() {
+fn new_and_the_raw_constructors_are_fallible() {
     assert!(TgaImage::new(2, 2, PixelFormat::Gray8, vec![Plane::new(2, vec![0; 3])]).is_err());
     assert!(TgaImage::new(2, 2, PixelFormat::Gray8, vec![Plane::new(2, vec![0; 4])]).is_ok());
     assert!(TgaImage::new(2, 2, PixelFormat::Gray8, vec![]).is_err());
-    let short = TgaImage::from_rgb8(2, 2, vec![1, 2, 3]);
-    assert_eq!(short.width(), 2);
-    assert_eq!(short.height(), 2);
-    assert_eq!(short.format(), PixelFormat::Rgb24);
-    assert!(short.validate().is_err());
-    assert!(short.try_to_rgb8().is_err());
-    assert_eq!(short.to_rgba8().len(), 16, "padded, never panics");
+    // from_rgb8 / from_rgba8 / from_gray8 / packed validate too: a short
+    // buffer is InvalidData, so an invalid image
+    // cannot be built (IMAGE_CRATE_API ruling; no infallible alias).
+    assert!(matches!(
+        TgaImage::from_rgb8(2, 2, vec![1, 2, 3]),
+        Err(TgaError::InvalidData(_))
+    ));
+    assert!(matches!(
+        TgaImage::from_rgba8(1, 1, vec![1, 2, 3]),
+        Err(TgaError::InvalidData(_))
+    ));
+    assert!(matches!(
+        TgaImage::from_gray8(3, 2, vec![0; 5]),
+        Err(TgaError::InvalidData(_))
+    ));
+    assert!(matches!(
+        TgaImage::packed(2, 1, PixelFormat::Rgba, vec![0; 7]),
+        Err(TgaError::InvalidData(_))
+    ));
+    let ok = TgaImage::from_rgb8(2, 2, vec![1; 12]).unwrap();
+    assert_eq!(ok.width(), 2);
+    assert_eq!(ok.height(), 2);
+    assert_eq!(ok.format(), PixelFormat::Rgb24);
+    assert!(ok.validate().is_ok());
+    assert_eq!(ok.to_rgba8().len(), 16);
     assert!(TgaImage::new_indexed(2, 1, vec![0, 5], Palette::new(vec![[0; 4]])).is_err());
     let built = TgaImage::new(
         1,
