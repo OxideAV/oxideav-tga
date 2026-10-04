@@ -184,12 +184,7 @@ fuzz_target!(|data: &[u8]| {
         let sw = (cur.next_u8() % MAX_STAMP_SIDE).max(1);
         let sh = (cur.next_u8() % MAX_STAMP_SIDE).max(1);
         let data = tile(cur.rest(), sw as usize * sh as usize * 4);
-        Some(TgaImage::packed(
-            sw as u32,
-            sh as u32,
-            TgaPixelFormat::Rgba,
-            data,
-        ).unwrap())
+        Some(TgaImage::packed(sw as u32, sh as u32, TgaPixelFormat::Rgba, data).unwrap())
     } else {
         None
     };

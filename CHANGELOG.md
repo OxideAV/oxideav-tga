@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Cargo.toml` `exclude = ["/tests", "/fuzz"]` (crates.io 10 MiB cap).
 
+### Fixed
+
+- Fuzz harness `contract_identity` asserted "no footer" for files whose
+  pixel tail happens to spell the §C.4 `TRUEVISION-XFILE.` signature in
+  the last 26 bytes; the spec gives a reader no other footer test, so
+  `info().has_footer` is correct there. The harness now asserts the
+  spec rule (scheduled-fuzz finding 2026-10-04).
+
 ### Changed
 
 - **`TgaImage::from_rgb8` / `from_rgba8` / `from_gray8` / `packed` return

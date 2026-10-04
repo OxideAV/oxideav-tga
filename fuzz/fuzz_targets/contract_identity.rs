@@ -90,7 +90,8 @@ fuzz_target!(|data: &[u8]| {
             h as u32,
             other,
             take(n * other.bytes_per_pixel(), 0),
-        ).unwrap(),
+        )
+        .unwrap(),
     };
     let gamma = if flags & 0x20 != 0 {
         Some(f32::from(data[5] % 50 + 1) / 10.0)
@@ -140,11 +141,17 @@ fuzz_target!(|data: &[u8]| {
         }
         None => assert_eq!(back.metadata.gamma, None),
     }
-    assert_eq!(
-        described.has_footer,
-        gamma.is_some() || flags & 8 != 0,
-        "footer presence"
-    );
+    // A footer is present exactly when the encoder wrote one — or when
+    // the pixel tail happens to spell the §C.4 signature in the last 26
+    // bytes, which is the only footer test the spec gives a reader
+    // (fuzz finding 2026-10-04: the mutator wrote "TRUEVISION-XFILE."
+    // into a Gray8 plane).
+    if gamma.is_some() || flags & 8 != 0 {
+        assert!(described.has_footer, "footer requested but not detected");
+    } else {
+        let tail_magic = bytes.len() >= 26 && bytes[bytes.len() - 18..] == *b"TRUEVISION-XFILE.\0";
+        assert_eq!(described.has_footer, tail_magic, "footer presence");
+    }
     assert_eq!(
         described.image_id_length as usize, id_len,
         "image id length"
