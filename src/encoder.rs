@@ -14,6 +14,7 @@
 //! | `Pal8` + palette | 1 / 9 | 8-bit indices + 15 / 16 / 24 / 32-bit colour map |
 //! | `Rgb24` | 2 / 10 | 24 (BGR) |
 //! | `Rgba` | 2 / 10 | 32 (BGRA), descriptor alpha bits 8 |
+//! | `Rgb24` / `Rgba` + `true_colour_depth` | 2 / 10 | 15 / 16 (`ARRRRRGG GGGBBBBB`), alpha bits 1 for 16-bit `Rgba` |
 //! | `Gray8` | 3 / 11 | 8 |
 //!
 //! The RLE packetiser (§C.5) runs per row — a run packet for ≥ 2
@@ -29,7 +30,7 @@
 
 use crate::error::{Result, TgaError as Error};
 use crate::image::{Palette, TgaImage, TgaPixelFormat};
-use crate::options::{EncodeOptions, RowOrder};
+use crate::options::{EncodeOptions, RowOrder, TrueColourDepth};
 use crate::types::{
     ColorMapEntrySize, ImageOrigin, ImageType, TgaColourCorrectionTable, TgaDeveloperTag,
     TgaScanLineTable, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
@@ -74,10 +75,17 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
         format = TgaPixelFormat::Rgb24;
     }
     let image_type = format.image_type(opts.rle);
-    let (depth, alpha_bits) = match format {
-        TgaPixelFormat::Rgba => (32u8, opts.alpha_bits.unwrap_or(8) & 0x0F),
-        TgaPixelFormat::Rgb24 => (24, 0),
-        TgaPixelFormat::Gray8 | TgaPixelFormat::Pal8 => (8, 0),
+    let (depth, alpha_bits) = match (format, opts.true_colour_depth) {
+        (TgaPixelFormat::Rgba, None) => (32u8, opts.alpha_bits.unwrap_or(8) & 0x0F),
+        (TgaPixelFormat::Rgb24, None) => (24, 0),
+        // §C.2 16-bit: the top bit is the one attribute bit; an `Rgba`
+        // source declares it (1), an `Rgb24` source has none to declare.
+        (TgaPixelFormat::Rgba, Some(TrueColourDepth::Bits16)) => {
+            (16, opts.alpha_bits.unwrap_or(1) & 0x0F)
+        }
+        (TgaPixelFormat::Rgb24, Some(TrueColourDepth::Bits16)) => (16, 0),
+        (TgaPixelFormat::Rgba | TgaPixelFormat::Rgb24, Some(TrueColourDepth::Bits15)) => (15, 0),
+        (TgaPixelFormat::Gray8 | TgaPixelFormat::Pal8, _) => (8, 0),
     };
     let palette: Option<(&Palette, ColorMapEntrySize)> = match format {
         TgaPixelFormat::Pal8 => {
@@ -96,7 +104,7 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
     let w = width as usize;
     let h = height as usize;
     let src_bpp = image.bytes_per_pixel();
-    let out_bpp = depth as usize / 8;
+    let out_bpp = usize::from(depth.div_ceil(8));
     let map_bytes = palette.map(|(p, e)| p.len() * e.bytes()).unwrap_or(0);
     let mut out = Vec::with_capacity(
         TGA_HEADER_SIZE
@@ -142,27 +150,36 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
         };
         let row = &data[y * stride..y * stride + row_bytes];
         wire_row.clear();
-        match (image.format, format) {
+        match (image.format, depth) {
             // RGBA source written at 32 bits: BGRA.
-            (TgaPixelFormat::Rgba, TgaPixelFormat::Rgba) => {
+            (TgaPixelFormat::Rgba, 32) => {
                 for p in row.chunks_exact(4) {
                     wire_row.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
                 }
             }
             // RGBA source with uniformly opaque alpha, dropped to 24 bits.
-            (TgaPixelFormat::Rgba, TgaPixelFormat::Rgb24) => {
+            (TgaPixelFormat::Rgba, 24) => {
                 for p in row.chunks_exact(4) {
                     wire_row.extend_from_slice(&[p[2], p[1], p[0]]);
                 }
             }
-            (TgaPixelFormat::Rgb24, _) => {
+            (TgaPixelFormat::Rgb24, 24) => {
                 for p in row.chunks_exact(3) {
                     wire_row.extend_from_slice(&[p[2], p[1], p[0]]);
                 }
             }
+            // 15 / 16-bit true colour: `[A]RRRRRGG GGGBBBBB` little-endian.
+            (TgaPixelFormat::Rgba | TgaPixelFormat::Rgb24, 15 | 16) => {
+                for p in row.chunks_exact(src_bpp) {
+                    let a = if src_bpp == 4 { p[3] } else { 0xFF };
+                    wire_row.extend_from_slice(&pack_a1r5g5b5([p[0], p[1], p[2], a], depth));
+                }
+            }
             // Indices and luma go out as they are.
             (TgaPixelFormat::Gray8 | TgaPixelFormat::Pal8, _) => wire_row.extend_from_slice(row),
-            (TgaPixelFormat::Rgba, _) => unreachable!("Rgba only narrows to Rgb24"),
+            (TgaPixelFormat::Rgba | TgaPixelFormat::Rgb24, _) => {
+                unreachable!("true colour is written at 15 / 16 / 24 / 32 bits")
+            }
         }
         if opts.rle {
             rle_one_row(&wire_row, out_bpp, &mut out);
@@ -251,6 +268,22 @@ fn rle_one_row(row: &[u8], bpp: usize, out: &mut Vec<u8>) {
     }
 }
 
+/// Pack one straight-RGBA pixel into the §C.2 15 / 16-bit layout
+/// (`[A]RRRRRGG GGGBBBBB`, little-endian): each channel's top five
+/// bits (`v >> 3`, the exact inverse of the decoder's `v << 3 | v >> 2`
+/// expansion), and for `depth` 16 the attribute bit from `a >= 0x80`.
+/// Depth 15 leaves the top bit clear.
+pub(crate) fn pack_a1r5g5b5(rgba: [u8; 4], depth: u8) -> [u8; 2] {
+    let r5 = u16::from(rgba[0] >> 3);
+    let g5 = u16::from(rgba[1] >> 3);
+    let b5 = u16::from(rgba[2] >> 3);
+    let mut v = (r5 << 10) | (g5 << 5) | b5;
+    if depth == 16 && rgba[3] >= 0x80 {
+        v |= 0x8000;
+    }
+    v.to_le_bytes()
+}
+
 /// Pack one straight-RGBA palette colour into the on-disk colour-map
 /// entry layout for `entry` (spec §C.2). The byte order mirrors
 /// `decode_palette`'s expansion exactly so a round trip is faithful:
@@ -274,14 +307,7 @@ fn push_colour_map_entry(out: &mut Vec<u8>, rgba: [u8; 4], entry: ColorMapEntryS
             out.push(rgba[3]); // A
         }
         ColorMapEntrySize::Bits15 | ColorMapEntrySize::Bits16 => {
-            let r5 = (rgba[0] >> 3) as u16;
-            let g5 = (rgba[1] >> 3) as u16;
-            let b5 = (rgba[2] >> 3) as u16;
-            let mut v = (r5 << 10) | (g5 << 5) | b5;
-            if entry == ColorMapEntrySize::Bits16 && rgba[3] >= 0x80 {
-                v |= 0x8000;
-            }
-            out.extend_from_slice(&v.to_le_bytes());
+            out.extend_from_slice(&pack_a1r5g5b5(rgba, entry.bits()));
         }
     }
 }
@@ -796,6 +822,11 @@ fn write_postage_stamp(out: &mut Vec<u8>, stamp: &TgaImage, parent_depth: u8) ->
                     out.push(c[2]);
                     out.push(c[1]);
                     out.push(c[0]);
+                }
+            }
+            15 | 16 => {
+                for c in data.chunks_exact(4) {
+                    out.extend_from_slice(&pack_a1r5g5b5([c[0], c[1], c[2], c[3]], parent_depth));
                 }
             }
             8 if stamp.format == TgaPixelFormat::Rgba => {

@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of silently replacing the pending picture / concatenating /
   `InvalidData`.
 - `tests/registry.rs` (feature-gated) pins the above.
+- **15 / 16-bit true-colour encode path**: `EncodeOptions::
+  true_colour_depth: Option<TrueColourDepth>` (`Bits15` / `Bits16`,
+  `with_true_colour_depth`) writes an `Rgb24` / `Rgba` image at 15 / 16
+  bits per pixel (§C.2 `ARRRRRGG GGGBBBBB`, little-endian). The 5-bit
+  quantiser (`v >> 3`) is the exact inverse of the decoder's expansion
+  (`v << 3 | v >> 2`), so a 15 / 16-bit file round-trips `decode` →
+  `encode` byte-exactly and a 5-bit-exact picture `encode` → `decode`
+  bit-exactly; any other picture loses its low three bits (lossy,
+  explicit, never the default). `Bits16` stores the alpha's top bit as
+  the attribute bit (an `Rgba` source declares 1 attribute bit, or
+  `alpha_bits`; an `Rgb24` source stores the bit set and declares 0);
+  `Bits15` clears it and decodes opaque. `Gray8` / `Pal8` ignore the
+  option. Postage stamps follow a 15 / 16-bit parent depth.
+  `tests/depth16.rs` pins the identities.
 
 ## [0.0.5](https://github.com/OxideAV/oxideav-tga/compare/v0.0.4...v0.0.5) - 2026-10-04
 

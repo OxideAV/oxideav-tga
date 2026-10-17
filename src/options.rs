@@ -155,6 +155,45 @@ pub enum RowOrder {
     BottomUp,
 }
 
+/// On-disk depth of a true-colour (`Rgb24` / `Rgba`) image when it is
+/// written as a 16-bit TGA (§C.2 `ARRRRRGG GGGBBBBB`, little-endian)
+/// instead of at its layout's 24 / 32 bits.
+///
+/// Each 8-bit channel is quantised to its top five bits (`v >> 3`),
+/// the exact inverse of the decoder's 5 → 8 expansion
+/// (`v << 3 | v >> 2`): a picture that came from a 15 / 16-bit file —
+/// or any picture whose channels are 5-bit-exact — round-trips
+/// bit-exactly; any other picture loses its low three bits (lossy,
+/// chosen explicitly, never by default). With
+/// [`Bits16`](Self::Bits16) the attribute bit is the alpha's top bit
+/// (`a >= 0x80`, decoding back to `0xFF` / `0x00`) and an `Rgba` image
+/// declares 1 attribute bit; with [`Bits15`](Self::Bits15) the top bit
+/// is clear and the file declares none (decodes opaque). `Gray8` /
+/// `Pal8` images ignore the option (their depth is 8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TrueColourDepth {
+    /// 15-bit `0RRRRRGG GGGBBBBB`: no attribute bit, always opaque.
+    Bits15,
+    /// 16-bit `ARRRRRGG GGGBBBBB`: the top bit is the alpha.
+    Bits16,
+}
+
+impl TrueColourDepth {
+    /// The header's Image Pixel Size byte (15 / 16).
+    pub fn bits(self) -> u8 {
+        match self {
+            Self::Bits15 => 15,
+            Self::Bits16 => 16,
+        }
+    }
+
+    /// `true` for the depth whose top bit carries alpha.
+    pub fn has_alpha(self) -> bool {
+        matches!(self, Self::Bits16)
+    }
+}
+
 /// Behaviour of [`crate::encode`] / [`crate::encode_rgb8`] /
 /// [`crate::encode_rgba8`] / [`crate::encode_to`].
 ///
@@ -172,6 +211,8 @@ pub enum RowOrder {
 /// |---|---|---|---|
 /// | `Rgb24` | 2 / 10 | 24 | 0 |
 /// | `Rgba` | 2 / 10 | 32 | 8 (or [`alpha_bits`](Self::alpha_bits)) |
+/// | `Rgb24` / `Rgba`, [`true_colour_depth`](Self::true_colour_depth) `Bits16` | 2 / 10 | 16 | 1 for `Rgba` (or `alpha_bits`), 0 for `Rgb24` |
+/// | `Rgb24` / `Rgba`, [`true_colour_depth`](Self::true_colour_depth) `Bits15` | 2 / 10 | 15 | 0 |
 /// | `Gray8` | 3 / 11 | 8 | 0 |
 /// | `Pal8` | 1 / 9 | 8 | 0 (the colour map carries alpha) |
 ///
@@ -198,6 +239,13 @@ pub struct EncodeOptions {
     /// layout is written as given. A decode of such a file yields
     /// `Rgb24`, not `Rgba`.
     pub drop_opaque_alpha: bool,
+    /// Write a true-colour (`Rgb24` / `Rgba`) image at 15 / 16 bits
+    /// per pixel instead of its layout's 24 / 32. `None` (default)
+    /// keeps the layout's depth. The 5-bit quantisation is the exact
+    /// inverse of the decoder's expansion, so a picture decoded from a
+    /// 15 / 16-bit file round-trips bit-exactly; see
+    /// [`TrueColourDepth`]. Ignored for `Gray8` / `Pal8`.
+    pub true_colour_depth: Option<TrueColourDepth>,
     /// Colour-map entry size for a `Pal8` image. `None` (default) picks
     /// the narrowest lossless width: 24-bit BGR when every entry is
     /// opaque, 32-bit BGRA otherwise. 15 / 16-bit entries quantise each
@@ -234,6 +282,7 @@ impl Default for EncodeOptions {
             row_order: RowOrder::TopDown,
             alpha_bits: None,
             drop_opaque_alpha: false,
+            true_colour_depth: None,
             palette_entry_size: None,
             image_id: Vec::new(),
             screen_origin: ImageOrigin::ORIGIN,
@@ -272,6 +321,12 @@ impl EncodeOptions {
     /// Set the opaque-alpha auto-depth rule.
     pub fn with_drop_opaque_alpha(mut self, drop: bool) -> Self {
         self.drop_opaque_alpha = drop;
+        self
+    }
+
+    /// Set (or clear) the 15 / 16-bit true-colour depth.
+    pub fn with_true_colour_depth(mut self, depth: impl Into<Option<TrueColourDepth>>) -> Self {
+        self.true_colour_depth = depth.into();
         self
     }
 
@@ -338,6 +393,7 @@ mod tests {
         assert_eq!(o.row_order, RowOrder::TopDown);
         assert_eq!(o.alpha_bits, None);
         assert!(!o.drop_opaque_alpha);
+        assert!(o.true_colour_depth.is_none());
         assert!(o.extension.is_none());
         assert!(!o.footer);
     }
