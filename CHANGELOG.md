@@ -58,6 +58,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Bits15` clears it and decodes opaque. `Gray8` / `Pal8` ignore the
   option. Postage stamps follow a 15 / 16-bit parent depth.
   `tests/depth16.rs` pins the identities.
+- **TGA 2.0 metadata through the framework** (core 0.1.40 blobs). Two
+  custom blob kinds, named for the format's own structures:
+  `tga-extension-area` (`BLOB_KIND_EXTENSION_AREA`) is the §C.6 body
+  verbatim (495 bytes; `extension_area_bytes` cuts it,
+  `TgaExtensionArea::from_bytes` parses a standalone slab);
+  `tga-developer-area` (`BLOB_KIND_DEVELOPER_AREA`) is the §C.7
+  directory with offsets rebased to the blob followed by the payloads
+  (`TgaDeveloperArea::to_portable_bytes` /
+  `tags_from_portable_bytes`, markers kept). The demuxer pushes both on
+  the stream's `CodecParameters::blobs` and reports the extension
+  area's text fields as container metadata pairs
+  (`TgaExtensionArea::metadata_pairs`: `author`, `comment` — non-empty
+  lines joined with `\n` —, `date` ISO 8601, `job`, `job_time`,
+  `software`, `software_version`); the decoder attaches the same blobs
+  to the frame record; the encoder writes them back (frame blobs refine
+  stream blobs; the three table / stamp pointers describe the source
+  file and are not re-emitted; `EncodeOptions::extension` wins when
+  set). A malformed blob is a typed `InvalidData`; blobs of other kinds
+  are ignored (TGA has no carrier). The image-descriptor origin never
+  reaches pixel order on either side (pinned).
 
 ## [0.0.5](https://github.com/OxideAV/oxideav-tga/compare/v0.0.4...v0.0.5) - 2026-10-04
 

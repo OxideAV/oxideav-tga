@@ -83,6 +83,21 @@ pub mod types;
 /// Codec id for TGA image frames.
 pub const CODEC_ID_STR: &str = "tga";
 
+/// Name of the custom metadata blob kind carrying a file's TGA 2.0
+/// extension area (§C.6) on the registry path: the 495-byte body
+/// verbatim ([`extension_area_bytes`] / [`TgaExtensionArea::from_bytes`]).
+/// The framework demuxer pushes it on the stream, the decoder on the
+/// frame record, and the encoder writes it back (minus the three
+/// table / stamp pointers, which describe the source file's layout).
+pub const BLOB_KIND_EXTENSION_AREA: &str = "tga-extension-area";
+
+/// Name of the custom metadata blob kind carrying a file's TGA 2.0
+/// developer area (§C.7) on the registry path, in the self-contained
+/// form of [`TgaDeveloperArea::to_portable_bytes`]: the tag directory
+/// with offsets rebased to the blob, then the payloads. The encoder
+/// re-emits every tag from it.
+pub const BLOB_KIND_DEVELOPER_AREA: &str = "tga-developer-area";
+
 // ---- The image-crate contract (IMAGE_CRATE_API) ----
 pub use api::{
     decode, decode_from, decode_rgb8, decode_rgba8, decode_with, encode, encode_rgb8, encode_rgba8,
@@ -112,16 +127,17 @@ pub use encoder::{
     ExtensionAreaInput, TGA_IMAGE_ID_MAX,
 };
 pub use types::{
-    parse_extension_area, parse_footer, AttributeBits, AttributesType, ColorMapEntrySize,
-    ColorMapType, GammaValue, ImageOrigin, ImageType, Interleaving, JobTime, KeyColor,
-    PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap,
-    TgaColourCorrectionTable, TgaDeveloperArea, TgaDeveloperTag, TgaExtensionArea, TgaFooter,
-    TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_ASCII_FIELD_MAX_CHARS, TGA_ATTRIBUTE_BITS_MAX,
-    TGA_AUTHOR_COMMENT_LINES, TGA_AUTHOR_COMMENT_LINE_BYTES, TGA_AUTHOR_COMMENT_LINE_MAX_CHARS,
-    TGA_COLOUR_CORRECTION_TABLE_ENTRIES, TGA_COLOUR_CORRECTION_TABLE_SIZE,
-    TGA_DEVELOPER_DIRECTORY_HEADER_BYTES, TGA_DEVELOPER_TAG_BYTES, TGA_EXTENSION_AREA_SIZE,
-    TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE, TGA_HEADER_SIZE, TGA_INTERLEAVING_MASK,
-    TGA_POSTAGE_STAMP_MAX, TGA_POSTAGE_STAMP_RECOMMENDED_MAX, TGA_SCAN_LINE_OFFSET_BYTES,
+    extension_area_bytes, parse_extension_area, parse_footer, AttributeBits, AttributesType,
+    ColorMapEntrySize, ColorMapType, GammaValue, ImageOrigin, ImageType, Interleaving, JobTime,
+    KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField, TgaAuthorComments,
+    TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea, TgaDeveloperTag, TgaExtensionArea,
+    TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_ASCII_FIELD_MAX_CHARS,
+    TGA_ATTRIBUTE_BITS_MAX, TGA_AUTHOR_COMMENT_LINES, TGA_AUTHOR_COMMENT_LINE_BYTES,
+    TGA_AUTHOR_COMMENT_LINE_MAX_CHARS, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
+    TGA_COLOUR_CORRECTION_TABLE_SIZE, TGA_DEVELOPER_DIRECTORY_HEADER_BYTES,
+    TGA_DEVELOPER_TAG_BYTES, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
+    TGA_HEADER_SIZE, TGA_INTERLEAVING_MASK, TGA_POSTAGE_STAMP_MAX,
+    TGA_POSTAGE_STAMP_RECOMMENDED_MAX, TGA_SCAN_LINE_OFFSET_BYTES,
 };
 
 // ---- Pre-contract names, kept for one release ----
@@ -150,7 +166,7 @@ pub use registry::__oxideav_entry;
 pub use registry::register_runtime;
 #[cfg(feature = "registry")]
 pub use registry::{
-    image_into_video_frame, image_into_video_frame_with, make_decoder,
-    make_decoder_with_display_options, make_encoder, register, register_codecs,
-    register_containers, register_registries, ACCEPTED_PIXEL_FORMATS,
+    developer_area_blob_kind, extension_area_blob_kind, image_into_video_frame,
+    image_into_video_frame_with, make_decoder, make_decoder_with_display_options, make_encoder,
+    register, register_codecs, register_containers, register_registries, ACCEPTED_PIXEL_FORMATS,
 };

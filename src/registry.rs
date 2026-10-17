@@ -19,15 +19,71 @@
 //! * The `From<TgaError> for oxideav_core::Error` conversion.
 
 use oxideav_core::{
-    CodecCapabilities, CodecId, CodecInfo, CodecParameters, CodecRegistry, ColorPrimaries,
-    ColorSignal, ContainerRegistry, Decoder, Encoder, Frame, MatrixCoefficients, Packet,
-    PixelFormat, RuntimeContext, TimeBase, TransferCharacteristics, VideoFrame, VideoPlane,
+    BlobKind, CodecCapabilities, CodecId, CodecInfo, CodecParameters, CodecRegistry,
+    ColorPrimaries, ColorSignal, ContainerRegistry, Decoder, Encoder, Frame, MatrixCoefficients,
+    MetadataBlob, Packet, PixelFormat, RuntimeContext, TimeBase, TransferCharacteristics,
+    VideoFrame, VideoPlane,
 };
 
 use crate::container;
+use crate::encoder::ExtensionAreaInput;
 use crate::error::TgaError;
 use crate::image::{ColorInfo, ColorRange, Palette, Plane, TgaImage, TgaPixelFormat};
 use crate::options::{DecodeOptions, EncodeOptions};
+use crate::types::{TgaDeveloperArea, TgaExtensionArea};
+
+/// The `tga-extension-area` blob kind (see [`crate::BLOB_KIND_EXTENSION_AREA`]).
+pub fn extension_area_blob_kind() -> BlobKind {
+    BlobKind::from_static(crate::BLOB_KIND_EXTENSION_AREA)
+}
+
+/// The `tga-developer-area` blob kind (see [`crate::BLOB_KIND_DEVELOPER_AREA`]).
+pub fn developer_area_blob_kind() -> BlobKind {
+    BlobKind::from_static(crate::BLOB_KIND_DEVELOPER_AREA)
+}
+
+/// The TGA 2.0 structures the encoder re-emits from the blobs it was
+/// handed: `frame` blobs first (they refine the stream's), then
+/// `stream` blobs. An extension-area blob that does not parse, or a
+/// developer-area blob that does not unpack, is a typed `InvalidData`.
+fn extension_from_blobs(
+    stream: &[MetadataBlob],
+    frame: &[MetadataBlob],
+) -> oxideav_core::Result<Option<ExtensionAreaInput>> {
+    let find = |kind: &BlobKind| {
+        frame
+            .iter()
+            .find(|b| b.is(kind))
+            .or_else(|| stream.iter().find(|b| b.is(kind)))
+    };
+    let mut ext = match find(&extension_area_blob_kind()) {
+        Some(blob) => {
+            let area = TgaExtensionArea::from_bytes(&blob.data).ok_or_else(|| {
+                oxideav_core::Error::invalid(format!(
+                    "TGA encoder: `{}` blob holds {} bytes; the §C.6 extension area is {} bytes",
+                    crate::BLOB_KIND_EXTENSION_AREA,
+                    blob.data.len(),
+                    crate::types::TGA_EXTENSION_AREA_SIZE
+                ))
+            })?;
+            Some(ExtensionAreaInput::from_area(&area))
+        }
+        None => None,
+    };
+    if let Some(blob) = find(&developer_area_blob_kind()) {
+        let tags = TgaDeveloperArea::tags_from_portable_bytes(&blob.data).ok_or_else(|| {
+            oxideav_core::Error::invalid(format!(
+                "TGA encoder: `{}` blob is not a portable developer area (truncated directory or payload)",
+                crate::BLOB_KIND_DEVELOPER_AREA
+            ))
+        })?;
+        if !tags.is_empty() {
+            ext.get_or_insert_with(ExtensionAreaInput::default)
+                .developer_tags = tags;
+        }
+    }
+    Ok(ext)
+}
 
 /// Convert a [`TgaError`] into the framework-shared `oxideav_core::Error`
 /// so trait impls in this crate can use `?` on errors returned by the
@@ -416,11 +472,15 @@ impl Decoder for TgaDecoder {
         // record even when every entry decodes opaque.
         let map_has_alpha = crate::header(&packet.data)
             .is_ok_and(|h| h.cmap_type == 1 && matches!(h.cmap_entry_size, 16 | 32));
-        self.pending = Some(image_into_video_frame_with(
-            image,
-            packet.pts,
-            map_has_alpha,
-        ));
+        let mut frame = image_into_video_frame_with(image, packet.pts, map_has_alpha);
+        // The picture's own TGA 2.0 structures ride the frame record
+        // (the demuxer put the same on the stream; a frame blob refines
+        // a stream blob of its kind).
+        let (blobs, _) = container::file_metadata(&packet.data);
+        if !blobs.is_empty() {
+            frame.set_blobs(blobs);
+        }
+        self.pending = Some(frame);
         Ok(())
     }
     fn receive_frame(&mut self) -> oxideav_core::Result<Frame> {
@@ -516,6 +576,12 @@ impl Encoder for TgaEncoder {
         }
         let image = TgaImage::from_video_frame(vf, &self.in_params)?;
         let mut opts = self.opts.clone();
+        // Metadata: the extension / developer areas handed as blobs
+        // (frame record first, then the stream parameters) are written
+        // back; an explicit `EncodeOptions::extension` wins.
+        if opts.extension.is_none() {
+            opts.extension = extension_from_blobs(&self.in_params.blobs, &vf.blobs())?;
+        }
         // The record decides the colour-map entry width when the
         // caller pinned none: a record means the map carries an
         // attribute byte, no record means a 24-bit map.

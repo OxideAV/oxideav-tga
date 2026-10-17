@@ -2311,11 +2311,6 @@ pub fn parse_extension_area(input: &[u8], offset: u32) -> Option<TgaExtensionAre
         return None;
     }
     let off = offset as usize;
-    // Need at least 2 bytes to read extension_size.
-    if input.len() < off + 2 {
-        return None;
-    }
-    let ext_size = read_u16_le(input, off);
     // Defensive: reject if extension area wouldn't fit in the buffer.
     // The spec layout is 495 bytes; we accept smaller too if the file
     // claims a smaller extension_size, but the canonical-offset fields
@@ -2323,61 +2318,140 @@ pub fn parse_extension_area(input: &[u8], offset: u32) -> Option<TgaExtensionAre
     if input.len() < off + TGA_EXTENSION_AREA_SIZE {
         return None;
     }
-    let buf = &input[off..off + TGA_EXTENSION_AREA_SIZE];
+    TgaExtensionArea::from_bytes(&input[off..off + TGA_EXTENSION_AREA_SIZE])
+}
 
-    let read_string = |slice: &[u8]| -> String {
-        let end = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
-        String::from_utf8_lossy(&slice[..end]).into_owned()
-    };
+/// Byte slice of `input` holding the extension area body the footer
+/// points at — the 495 bytes [`parse_extension_area`] reads — or
+/// `None` when the file has no footer, no extension area, or the area
+/// does not fit. This slab is the format-native form the registry
+/// path carries as the `tga-extension-area` metadata blob.
+pub fn extension_area_bytes(input: &[u8]) -> Option<&[u8]> {
+    let footer = parse_footer(input)?;
+    let off = footer.extension_area_offset as usize;
+    if off == 0 || input.len() < off + TGA_EXTENSION_AREA_SIZE {
+        return None;
+    }
+    let body = &input[off..off + TGA_EXTENSION_AREA_SIZE];
+    TgaExtensionArea::from_bytes(body).map(|_| body)
+}
 
-    let author_name = read_string(&buf[2..43]);
-    let author_comment = [
-        read_string(&buf[43..124]),
-        read_string(&buf[124..205]),
-        read_string(&buf[205..286]),
-        read_string(&buf[286..367]),
-    ];
-    let timestamp = TgaTimestamp {
-        month: read_u16_le(buf, 367),
-        day: read_u16_le(buf, 369),
-        year: read_u16_le(buf, 371),
-        hour: read_u16_le(buf, 373),
-        minute: read_u16_le(buf, 375),
-        second: read_u16_le(buf, 377),
-    };
-    let job_name = read_string(&buf[379..420]);
-    let job_time = (
-        read_u16_le(buf, 420),
-        read_u16_le(buf, 422),
-        read_u16_le(buf, 424),
-    );
-    let software_id = read_string(&buf[426..467]);
-    let software_version = (read_u16_le(buf, 467), buf[469] as char);
-    let key_color = [buf[470], buf[471], buf[472], buf[473]];
-    let pixel_aspect_ratio = (read_u16_le(buf, 474), read_u16_le(buf, 476));
-    let gamma = (read_u16_le(buf, 478), read_u16_le(buf, 480));
-    let colour_correction_offset = read_u32_le(buf, 482);
-    let postage_stamp_offset = read_u32_le(buf, 486);
-    let scan_line_offset = read_u32_le(buf, 490);
-    let attributes_type = buf[494];
+impl TgaExtensionArea {
+    /// Parse a standalone extension-area body (the 495-byte §C.6 slab,
+    /// as [`extension_area_bytes`] cuts it, or the
+    /// `tga-extension-area` metadata blob): `None` when `body` is
+    /// shorter than [`TGA_EXTENSION_AREA_SIZE`]. Bytes past the slab
+    /// are ignored. The three table / stamp offsets are read verbatim
+    /// and only meaningful against the file the slab came from.
+    pub fn from_bytes(body: &[u8]) -> Option<Self> {
+        if body.len() < TGA_EXTENSION_AREA_SIZE {
+            return None;
+        }
+        let buf = &body[..TGA_EXTENSION_AREA_SIZE];
+        let ext_size = read_u16_le(buf, 0);
 
-    Some(TgaExtensionArea {
-        extension_size: ext_size,
-        author_name,
-        author_comment,
-        timestamp,
-        job_name,
-        job_time,
-        software_id,
-        software_version,
-        key_color,
-        pixel_aspect_ratio,
-        gamma,
-        colour_correction_offset,
-        postage_stamp_offset,
-        scan_line_offset,
-        attributes_type,
-    })
+        let read_string = |slice: &[u8]| -> String {
+            let end = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+            String::from_utf8_lossy(&slice[..end]).into_owned()
+        };
+
+        let author_name = read_string(&buf[2..43]);
+        let author_comment = [
+            read_string(&buf[43..124]),
+            read_string(&buf[124..205]),
+            read_string(&buf[205..286]),
+            read_string(&buf[286..367]),
+        ];
+        let timestamp = TgaTimestamp {
+            month: read_u16_le(buf, 367),
+            day: read_u16_le(buf, 369),
+            year: read_u16_le(buf, 371),
+            hour: read_u16_le(buf, 373),
+            minute: read_u16_le(buf, 375),
+            second: read_u16_le(buf, 377),
+        };
+        let job_name = read_string(&buf[379..420]);
+        let job_time = (
+            read_u16_le(buf, 420),
+            read_u16_le(buf, 422),
+            read_u16_le(buf, 424),
+        );
+        let software_id = read_string(&buf[426..467]);
+        let software_version = (read_u16_le(buf, 467), buf[469] as char);
+        let key_color = [buf[470], buf[471], buf[472], buf[473]];
+        let pixel_aspect_ratio = (read_u16_le(buf, 474), read_u16_le(buf, 476));
+        let gamma = (read_u16_le(buf, 478), read_u16_le(buf, 480));
+        let colour_correction_offset = read_u32_le(buf, 482);
+        let postage_stamp_offset = read_u32_le(buf, 486);
+        let scan_line_offset = read_u32_le(buf, 490);
+        let attributes_type = buf[494];
+
+        Some(TgaExtensionArea {
+            extension_size: ext_size,
+            author_name,
+            author_comment,
+            timestamp,
+            job_name,
+            job_time,
+            software_id,
+            software_version,
+            key_color,
+            pixel_aspect_ratio,
+            gamma,
+            colour_correction_offset,
+            postage_stamp_offset,
+            scan_line_offset,
+            attributes_type,
+        })
+    }
+
+    /// The text fields as ordered `(key, value)` pairs — what the
+    /// framework demuxer reports as container metadata. Only set
+    /// fields appear: `author` (§C.6.1), `comment` (§C.6.2, the
+    /// non-empty lines joined with `\n`), `date` (§C.6.3 as ISO 8601
+    /// `YYYY-MM-DDTHH:MM:SS`, no zone), `job` (§C.6.4 name),
+    /// `job_time` (§C.6.5 `HH:MM:SS`), `software` (§C.6.6 id),
+    /// `software_version` (§C.6.7, e.g. `1.23b`).
+    pub fn metadata_pairs(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let author = self.author_name.trim_end_matches(['\0', ' ']);
+        if !author.is_empty() {
+            out.push(("author".to_string(), author.to_string()));
+        }
+        let comment: Vec<&str> = self
+            .author_comment
+            .iter()
+            .map(|l| l.trim_end_matches(['\0', ' ']))
+            .filter(|l| !l.is_empty())
+            .collect();
+        if !comment.is_empty() {
+            out.push(("comment".to_string(), comment.join("\n")));
+        }
+        if let Some(date) = self.timestamp.iso8601() {
+            out.push(("date".to_string(), date));
+        }
+        let job = self.job_name.trim_end_matches(['\0', ' ']);
+        if !job.is_empty() {
+            out.push(("job".to_string(), job.to_string()));
+        }
+        let jt = self.job_time_typed();
+        if !jt.is_unset() {
+            out.push(("job_time".to_string(), jt.hms_string()));
+        }
+        let software = self.software_id.trim_end_matches(['\0', ' ']);
+        if !software.is_empty() {
+            out.push(("software".to_string(), software.to_string()));
+        }
+        let (num, letter) = self.software_version;
+        if num != 0 {
+            let mut v = format!("{}.{:02}", num / 100, num % 100);
+            if letter != ' ' && letter != '\0' {
+                v.push(letter);
+            }
+            out.push(("software_version".to_string(), v));
+        }
+        out
+    }
 }
 
 /// Detect + parse the 26-byte TGA 2.0 footer at the tail of `input`.
@@ -3002,6 +3076,75 @@ impl TgaDeveloperArea {
             out.extend_from_slice(&tag.to_bytes());
         }
         out
+    }
+
+    /// Serialise the directory **and** every payload into one
+    /// self-contained byte string: the §C.7 directory (`u16` count, then
+    /// `(u16 tag, u32 offset, u32 size)` records) with each offset
+    /// rebased to the start of the returned buffer, followed by the
+    /// payloads in directory order. Marker tags (offset `0`) stay
+    /// `(0, 0)`. This is the format-native form the registry path
+    /// carries as the `tga-developer-area` metadata blob, independent
+    /// of the file layout the tags came from; `input` is the file the
+    /// directory was parsed from (`parse` bounds-checked every payload
+    /// against it, so a record that no longer fits is written as a
+    /// marker). [`Self::tags_from_portable_bytes`] reads it back.
+    pub fn to_portable_bytes(&self, input: &[u8]) -> Vec<u8> {
+        let dir = self.directory_byte_size();
+        let payloads: Vec<&[u8]> = self
+            .tags
+            .iter()
+            .map(|t| self.payload(input, t).unwrap_or(&[]))
+            .collect();
+        let total: usize = payloads.iter().map(|p| p.len()).sum();
+        let mut out = Vec::with_capacity(dir + total);
+        out.extend_from_slice(&(self.tags.len() as u16).to_le_bytes());
+        let mut cursor = dir;
+        for (tag, payload) in self.tags.iter().zip(&payloads) {
+            let (offset, size) = if payload.is_empty() {
+                (0u32, 0u32)
+            } else {
+                let o = cursor as u32;
+                cursor += payload.len();
+                (o, payload.len() as u32)
+            };
+            out.extend_from_slice(&TgaDeveloperTag::new(tag.tag_id, offset, size).to_bytes());
+        }
+        for payload in payloads {
+            out.extend_from_slice(payload);
+        }
+        out
+    }
+
+    /// Read a [`Self::to_portable_bytes`] buffer back into the tag
+    /// payloads an encoder re-emits (`tag_id` + payload bytes, an empty
+    /// payload for a marker tag). `None` when the count or a record is
+    /// truncated or a record's range falls outside `bytes`.
+    pub fn tags_from_portable_bytes(
+        bytes: &[u8],
+    ) -> Option<Vec<crate::encoder::DeveloperTagInput>> {
+        if bytes.len() < TGA_DEVELOPER_DIRECTORY_HEADER_BYTES {
+            return None;
+        }
+        let n = usize::from(read_u16_le(bytes, 0));
+        let dir = TGA_DEVELOPER_DIRECTORY_HEADER_BYTES + n * TGA_DEVELOPER_TAG_BYTES;
+        if bytes.len() < dir {
+            return None;
+        }
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let at = TGA_DEVELOPER_DIRECTORY_HEADER_BYTES + i * TGA_DEVELOPER_TAG_BYTES;
+            let tag_id = read_u16_le(bytes, at);
+            let offset = read_u32_le(bytes, at + 2) as usize;
+            let size = read_u32_le(bytes, at + 6) as usize;
+            let payload = if offset == 0 {
+                Vec::new()
+            } else {
+                bytes.get(offset..offset.checked_add(size)?)?.to_vec()
+            };
+            out.push(crate::encoder::DeveloperTagInput { tag_id, payload });
+        }
+        Some(out)
     }
 
     /// Parse the developer-area tag directory referenced by

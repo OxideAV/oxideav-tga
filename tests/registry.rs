@@ -406,3 +406,266 @@ fn from_tga_image_attaches_the_record_only_for_translucent_palettes() {
     assert_eq!(forced.palette_alpha(), Some(&[255u8][..]));
     assert_eq!(forced.pts, Some(3));
 }
+
+// ---- metadata: extension area + developer area as blobs, text fields as pairs ----
+
+mod metadata {
+    use super::*;
+    use oxideav_core::{BlobKind, MetadataBlob};
+    use oxideav_tga::{
+        encode_tga_with_extension, extension_area_bytes, parse_tga_developer_area,
+        parse_tga_extension_area, DeveloperTagInput, ExtensionAreaInput, RowOrder,
+        TgaDeveloperArea, TgaTimestamp, BLOB_KIND_DEVELOPER_AREA, BLOB_KIND_EXTENSION_AREA,
+    };
+
+    fn ext_kind() -> BlobKind {
+        BlobKind::from_static(BLOB_KIND_EXTENSION_AREA)
+    }
+    fn dev_kind() -> BlobKind {
+        BlobKind::from_static(BLOB_KIND_DEVELOPER_AREA)
+    }
+
+    fn picture() -> TgaImage {
+        TgaImage::from_rgb8(3, 2, (0..18).collect()).unwrap()
+    }
+
+    fn rich() -> ExtensionAreaInput {
+        ExtensionAreaInput {
+            author_name: "Ada".to_string(),
+            author_comment: [
+                "one".to_string(),
+                "two".to_string(),
+                String::new(),
+                String::new(),
+            ],
+            timestamp: TgaTimestamp {
+                month: 10,
+                day: 17,
+                year: 2026,
+                hour: 9,
+                minute: 30,
+                second: 5,
+            },
+            job_name: "job".to_string(),
+            job_time: (0, 5, 0),
+            software_id: "oxideav".to_string(),
+            software_version: (10, 'a'),
+            key_color: [255, 1, 2, 3],
+            pixel_aspect_ratio: (1, 1),
+            gamma: (220, 100),
+            attributes_type: 3,
+            developer_tags: vec![
+                DeveloperTagInput {
+                    tag_id: 1,
+                    payload: b"payload-one".to_vec(),
+                },
+                DeveloperTagInput {
+                    tag_id: 2,
+                    payload: Vec::new(),
+                },
+            ],
+            ..ExtensionAreaInput::default()
+        }
+    }
+
+    fn rich_file(order: RowOrder) -> Vec<u8> {
+        let base = encode(
+            &picture(),
+            &EncodeOptions::default()
+                .with_rle(false)
+                .with_row_order(order),
+        )
+        .unwrap();
+        encode_tga_with_extension(&base, &rich()).unwrap()
+    }
+
+    fn open(bytes: &[u8]) -> Box<dyn oxideav_core::Demuxer> {
+        let ctx = oxideav_core::RuntimeContext::new();
+        oxideav_tga::container::open_demuxer(Box::new(Cursor::new(bytes.to_vec())), &ctx.codecs)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_demuxer_pushes_both_blobs_and_the_text_pairs() {
+        let file = rich_file(RowOrder::TopDown);
+        let dmx = open(&file);
+        let p = &dmx.streams()[0].params;
+        assert_eq!(p.blobs.len(), 2);
+        let ext = p.blob(&ext_kind()).unwrap();
+        assert_eq!(ext.data.as_slice(), extension_area_bytes(&file).unwrap());
+        assert!(!ext.kind.is_well_known());
+        let dev = p.blob(&dev_kind()).unwrap();
+        assert_eq!(
+            TgaDeveloperArea::tags_from_portable_bytes(&dev.data).unwrap(),
+            rich().developer_tags
+        );
+        assert_eq!(
+            dmx.metadata(),
+            &[
+                ("author".to_string(), "Ada".to_string()),
+                ("comment".to_string(), "one\ntwo".to_string()),
+                ("date".to_string(), "2026-10-17T09:30:05".to_string()),
+                ("job".to_string(), "job".to_string()),
+                ("job_time".to_string(), "00:05:00".to_string()),
+                ("software".to_string(), "oxideav".to_string()),
+                ("software_version".to_string(), "0.10a".to_string()),
+            ]
+        );
+        // A TGA 1.0 file carries neither.
+        let plain = encode(&picture(), &EncodeOptions::default()).unwrap();
+        let dmx = open(&plain);
+        assert!(dmx.streams()[0].params.blobs.is_empty());
+        assert!(dmx.metadata().is_empty());
+    }
+
+    #[test]
+    fn the_decoder_attaches_the_same_blobs_to_the_frame_record() {
+        let file = rich_file(RowOrder::TopDown);
+        let v = decode_registry(&file);
+        let blobs = v.blobs();
+        assert_eq!(blobs.len(), 2);
+        assert_eq!(
+            v.blob(&ext_kind()).unwrap().data.as_slice(),
+            extension_area_bytes(&file).unwrap()
+        );
+        assert!(v.blob(&dev_kind()).is_some());
+        assert_eq!(
+            v.image_plane_count(),
+            1,
+            "blobs are a side-channel record, not a plane"
+        );
+        assert_eq!(v.planes[0].data, picture().data());
+        let plain = encode(&picture(), &EncodeOptions::default()).unwrap();
+        assert!(decode_registry(&plain).blobs().is_empty());
+    }
+
+    #[test]
+    fn the_encoder_writes_the_blobs_back_from_the_stream_parameters() {
+        let file = rich_file(RowOrder::TopDown);
+        let dmx = open(&file);
+        let v = decode_registry(&file);
+        let frame_without_record = VideoFrame {
+            pts: None,
+            planes: vec![v.planes[0].clone()],
+        };
+        // Stream-level only (the frame carries no record).
+        let mut p = params(3, 2, PixelFormat::Rgb24);
+        p.blobs = dmx.streams()[0].params.blobs.clone();
+        let out = encode_registry(&frame_without_record, &p).unwrap();
+        let area = parse_tga_extension_area(&out).unwrap();
+        let want = parse_tga_extension_area(&file).unwrap();
+        assert_eq!(area.author_name, want.author_name);
+        assert_eq!(area.author_comment, want.author_comment);
+        assert_eq!(area.timestamp, want.timestamp);
+        assert_eq!(area.job_name, want.job_name);
+        assert_eq!(area.job_time, want.job_time);
+        assert_eq!(area.software_id, want.software_id);
+        assert_eq!(area.software_version, want.software_version);
+        assert_eq!(area.key_color, want.key_color);
+        assert_eq!(area.pixel_aspect_ratio, want.pixel_aspect_ratio);
+        assert_eq!(area.gamma, want.gamma);
+        assert_eq!(area.attributes_type, want.attributes_type);
+        let dev = parse_tga_developer_area(&out).unwrap();
+        assert_eq!(
+            TgaDeveloperArea::tags_from_portable_bytes(&dev.to_portable_bytes(&out)).unwrap(),
+            rich().developer_tags
+        );
+        // The re-read file reports the same pairs.
+        assert_eq!(open(&out).metadata(), dmx.metadata());
+        assert_eq!(decode(&out).unwrap().data(), picture().data());
+    }
+
+    #[test]
+    fn frame_blobs_refine_stream_blobs_and_the_frame_record_alone_suffices() {
+        let file = rich_file(RowOrder::TopDown);
+        let v = decode_registry(&file);
+        // Frame record alone.
+        let out = encode_registry(&v, &params(3, 2, PixelFormat::Rgb24)).unwrap();
+        assert_eq!(parse_tga_extension_area(&out).unwrap().author_name, "Ada");
+        assert_eq!(parse_tga_developer_area(&out).unwrap().len(), 2);
+        // A frame blob overrides a stream blob of the same kind.
+        let other = encode_tga_with_extension(
+            &encode(&picture(), &EncodeOptions::default()).unwrap(),
+            &ExtensionAreaInput {
+                author_name: "Bob".to_string(),
+                ..ExtensionAreaInput::default()
+            },
+        )
+        .unwrap();
+        let mut p = params(3, 2, PixelFormat::Rgb24);
+        p.blobs = vec![MetadataBlob::new(
+            ext_kind(),
+            extension_area_bytes(&other).unwrap().to_vec(),
+        )];
+        let out = encode_registry(&v, &p).unwrap();
+        assert_eq!(
+            parse_tga_extension_area(&out).unwrap().author_name,
+            "Ada",
+            "the frame's own area wins"
+        );
+        // Stream blob alone with a frame carrying none → Bob.
+        let bare = VideoFrame {
+            pts: None,
+            planes: vec![v.planes[0].clone()],
+        };
+        let out = encode_registry(&bare, &p).unwrap();
+        assert_eq!(parse_tga_extension_area(&out).unwrap().author_name, "Bob");
+    }
+
+    #[test]
+    fn malformed_blobs_are_typed_invalid_data() {
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 1,
+                data: vec![0],
+            }],
+        }
+        .with_blob(MetadataBlob::new(ext_kind(), vec![0; 10]));
+        match encode_registry(&frame, &params(1, 1, PixelFormat::Gray8)) {
+            Err(oxideav_core::Error::InvalidData(msg)) => assert!(msg.contains("495"), "{msg}"),
+            other => panic!("expected InvalidData, got {other:?}"),
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 1,
+                data: vec![0],
+            }],
+        }
+        .with_blob(MetadataBlob::new(dev_kind(), vec![1, 0, 1]));
+        assert!(matches!(
+            encode_registry(&frame, &params(1, 1, PixelFormat::Gray8)),
+            Err(oxideav_core::Error::InvalidData(_))
+        ));
+        // Blobs of other kinds are ignored (TGA has no carrier for them).
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 1,
+                data: vec![0],
+            }],
+        }
+        .with_blob(MetadataBlob::new(BlobKind::EXIF, vec![1, 2, 3]));
+        let out = encode_registry(&frame, &params(1, 1, PixelFormat::Gray8)).unwrap();
+        assert!(parse_tga_extension_area(&out).is_none());
+    }
+
+    #[test]
+    fn the_descriptor_origin_never_leaks_into_pixel_order() {
+        let top = rich_file(RowOrder::TopDown);
+        let bottom = rich_file(RowOrder::BottomUp);
+        assert_ne!(top, bottom, "the files differ in storage order");
+        let vt = decode_registry(&top);
+        let vb = decode_registry(&bottom);
+        assert_eq!(vt.planes[0].data, vb.planes[0].data);
+        assert_eq!(vt.planes[0].data, picture().data());
+        assert_eq!(vt.blob(&ext_kind()), vb.blob(&ext_kind()));
+        // Through the encoder (top-down default) and back: same picture.
+        for v in [&vt, &vb] {
+            let out = encode_registry(v, &params(3, 2, PixelFormat::Rgb24)).unwrap();
+            assert!(oxideav_tga::info(&out).unwrap().top_down);
+            assert_eq!(decode_registry(&out).planes[0].data, picture().data());
+        }
+    }
+}

@@ -11,14 +11,46 @@
 use std::io::{Read, SeekFrom, Write};
 
 use oxideav_core::{
-    CodecId, CodecParameters, CodecResolver, Error, MediaType, Packet, Result, StreamInfo, TimeBase,
+    BlobKind, CodecId, CodecParameters, CodecResolver, Error, MediaType, MetadataBlob, Packet,
+    Result, StreamInfo, TimeBase,
 };
 use oxideav_core::{
     ContainerRegistry, Demuxer, Muxer, ProbeData, ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE,
 };
 
 use crate::decoder::{native_format, validate_header};
-use crate::types::parse_footer;
+use crate::types::{extension_area_bytes, parse_footer, TgaDeveloperArea, TgaExtensionArea};
+
+/// The TGA 2.0 structures of a file as the registry path carries them:
+/// the extension area as the `tga-extension-area` blob plus its text
+/// fields as `(key, value)` pairs, the developer area as the
+/// self-contained `tga-developer-area` blob. Empty for a TGA 1.0 file
+/// or a marker-only footer. Shared by the demuxer (stream level) and
+/// the decoder (frame record).
+pub(crate) fn file_metadata(input: &[u8]) -> (Vec<MetadataBlob>, Vec<(String, String)>) {
+    let mut blobs = Vec::new();
+    let mut pairs = Vec::new();
+    if let Some(body) = extension_area_bytes(input) {
+        blobs.push(MetadataBlob::new(
+            BlobKind::from_static(crate::BLOB_KIND_EXTENSION_AREA),
+            body.to_vec(),
+        ));
+        if let Some(area) = TgaExtensionArea::from_bytes(body) {
+            pairs = area.metadata_pairs();
+        }
+    }
+    if let Some(footer) = parse_footer(input) {
+        if let Some(dev) = TgaDeveloperArea::parse(input, footer.developer_directory_offset) {
+            if !dev.is_empty() {
+                blobs.push(MetadataBlob::new(
+                    BlobKind::from_static(crate::BLOB_KIND_DEVELOPER_AREA),
+                    dev.to_portable_bytes(input),
+                ));
+            }
+        }
+    }
+    (blobs, pairs)
+}
 
 pub fn register(reg: &mut ContainerRegistry) {
     reg.register_demuxer("tga", open_demuxer);
@@ -71,6 +103,11 @@ pub fn open_demuxer(
         v.image_type,
         header.depth,
     )));
+    // TGA 2.0 structures: the extension area and developer area ride
+    // the stream as format-native blobs; the extension area's text
+    // fields are the container metadata.
+    let (blobs, metadata) = file_metadata(&buf);
+    params.blobs = blobs;
     let stream = StreamInfo {
         index: 0,
         params,
@@ -80,12 +117,17 @@ pub fn open_demuxer(
     };
     Ok(Box::new(TgaDemuxer {
         streams: vec![stream],
+        metadata,
         data: Some(buf),
     }))
 }
 
 struct TgaDemuxer {
     streams: Vec<StreamInfo>,
+    /// `author` / `comment` / `date` / `job` / `job_time` / `software` /
+    /// `software_version` from the extension area
+    /// ([`TgaExtensionArea::metadata_pairs`]).
+    metadata: Vec<(String, String)>,
     /// `None` once the sole packet has been emitted.
     data: Option<Vec<u8>>,
 }
@@ -96,6 +138,9 @@ impl Demuxer for TgaDemuxer {
     }
     fn streams(&self) -> &[StreamInfo] {
         &self.streams
+    }
+    fn metadata(&self) -> &[(String, String)] {
+        &self.metadata
     }
     fn next_packet(&mut self) -> Result<Packet> {
         match self.data.take() {
