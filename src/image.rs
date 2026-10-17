@@ -368,6 +368,12 @@ impl Palette {
     pub fn has_alpha(&self) -> bool {
         self.entries.iter().any(|e| e[3] != 255)
     }
+
+    /// One alpha byte per entry, in entry order — the shape of the
+    /// framework's palette-alpha record (`VideoFrame::palette_alpha`).
+    pub fn to_alpha(&self) -> Vec<u8> {
+        self.entries.iter().map(|e| e[3]).collect()
+    }
 }
 
 /// Decoded TGA image in its native layout, as returned by

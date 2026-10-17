@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Palette alpha on the registry path** (core 0.1.40 `VideoFrame`
+  palette-alpha record). The framework decoder attaches the record
+  beside the palette for every colour map with 16 / 32-bit entries (the
+  §C.2 attribute bit / byte, one alpha byte per entry — attached even
+  when every entry is opaque, so the frame states what the file
+  declared); 15 / 24-bit maps attach none (no record means opaque).
+  `From<TgaImage> for VideoFrame` attaches it when any entry is
+  translucent; `image_into_video_frame_with(image, pts, alpha_record)`
+  forces it. `TgaImage::from_video_frame` reads it back (`Palette::
+  from_rgb(rgb, frame.palette_alpha())`: uncovered entries opaque) and
+  the registry encoder writes a 32-bit colour map from a frame that
+  carries the record, a 24-bit map from one that does not, unless
+  `palette_entry_size` pins a width. Index pixels declare 0 attribute
+  bits. `Palette::to_alpha()` is the record's shape.
+- **The registry encoder declares its layouts**:
+  `oxideav_tga::ACCEPTED_PIXEL_FORMATS` = `Bgra`, `Rgba`, `Argb`,
+  `Abgr`, `Bgr24`, `Rgb24`, `Pal8`, `Gray8` (8 layouts) is what
+  `CodecCapabilities::accepted_pixel_formats` lists; the BGR /
+  alpha-first orders are swizzled into the two true-colour layouts
+  (`Bgra` / `Bgr24` are the on-disk order) with row padding honoured.
+  Any other layout (16-bit, planar, YCbCr, grey + alpha — TGA's
+  grayscale types are 8-bit luma with no alpha carriage) is a typed
+  `Error::Unsupported` naming the accepted set, from `make_encoder`
+  when the parameters carry the layout and from `send_frame` /
+  `from_video_frame` otherwise — never a silent conversion. The
+  encoder's `output_params().pixel_format` is the layout the written
+  file decodes to (`Rgba` for a `Bgra` input), which is what the
+  demuxer labels its stream.
+- **Single picture, typed**: a second `send_frame` on the encoder, a
+  second `write_packet` on the muxer, and a muxer opened with any
+  number of streams but one (the gateway's mixed-geometry
+  `encode_frames`) are `Error::Unsupported` naming the geometries,
+  instead of silently replacing the pending picture / concatenating /
+  `InvalidData`.
+- `tests/registry.rs` (feature-gated) pins the above.
+
 ## [0.0.5](https://github.com/OxideAV/oxideav-tga/compare/v0.0.4...v0.0.5) - 2026-10-04
 
 ### Other

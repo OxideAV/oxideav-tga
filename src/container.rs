@@ -111,20 +111,42 @@ impl Demuxer for TgaDemuxer {
     }
 }
 
+/// One video stream, one packet: TGA holds exactly one picture. A
+/// stream set of any other size — the gateway's mixed-geometry
+/// `encode_frames` opens one stream per distinct picture size — is a
+/// typed `Error::Unsupported` naming the geometries; so is a second
+/// packet.
 pub fn open_muxer(output: Box<dyn WriteSeek>, streams: &[StreamInfo]) -> Result<Box<dyn Muxer>> {
     if streams.len() != 1 {
-        return Err(Error::invalid(
-            "TGA muxer: expected exactly one video stream",
-        ));
+        let geoms: Vec<String> = streams
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}x{}",
+                    s.params.width.unwrap_or(0),
+                    s.params.height.unwrap_or(0)
+                )
+            })
+            .collect();
+        return Err(Error::unsupported(format!(
+            "TGA muxer: TGA holds one picture; got {} streams ({}) — write one file per picture",
+            streams.len(),
+            geoms.join(", ")
+        )));
     }
     if streams[0].params.media_type != MediaType::Video {
         return Err(Error::invalid("TGA muxer: stream must be video"));
     }
-    Ok(Box::new(TgaMuxer { output }))
+    Ok(Box::new(TgaMuxer {
+        output,
+        written: false,
+    }))
 }
 
 struct TgaMuxer {
     output: Box<dyn WriteSeek>,
+    /// The one packet has been written.
+    written: bool,
 }
 
 impl Muxer for TgaMuxer {
@@ -135,7 +157,13 @@ impl Muxer for TgaMuxer {
         Ok(())
     }
     fn write_packet(&mut self, packet: &Packet) -> Result<()> {
+        if self.written {
+            return Err(Error::unsupported(
+                "TGA muxer: TGA holds one picture; a second packet has no carriage",
+            ));
+        }
         self.output.write_all(&packet.data)?;
+        self.written = true;
         Ok(())
     }
     fn write_trailer(&mut self) -> Result<()> {

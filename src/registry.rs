@@ -60,6 +60,104 @@ pub fn from_core_pixel_format(pf: PixelFormat) -> oxideav_core::Result<TgaPixelF
     })
 }
 
+/// Every framework layout the registry encoder accepts — what
+/// `CodecCapabilities::accepted_pixel_formats` declares, so the
+/// gateway's ladder offers exactly these and nothing is converted
+/// silently. The RGB-ordered ones map 1:1 onto [`TgaPixelFormat`]; the
+/// BGR / alpha-first orders (`Bgra`, `Bgr24`, `Argb`, `Abgr`) are byte
+/// swizzles of the same two true-colour layouts and reach the wire at
+/// the same depth (`Bgra` / `Bgr24` *are* the on-disk order). Any other
+/// layout is a typed `Error::Unsupported` from [`make_encoder`] /
+/// `send_frame` — 16-bit, planar, YCbCr, grey + alpha (TGA has no
+/// carriage for a grey alpha plane; its grayscale types are 8-bit luma).
+pub const ACCEPTED_PIXEL_FORMATS: [PixelFormat; 8] = [
+    PixelFormat::Bgra,
+    PixelFormat::Rgba,
+    PixelFormat::Argb,
+    PixelFormat::Abgr,
+    PixelFormat::Bgr24,
+    PixelFormat::Rgb24,
+    PixelFormat::Pal8,
+    PixelFormat::Gray8,
+];
+
+/// Byte order of a true-colour framework pixel relative to the TGA
+/// in-memory order (`Rgb24` / `Rgba`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Swizzle {
+    /// Already `R G B [A]`.
+    Identity,
+    /// `B G R`.
+    Bgr,
+    /// `B G R A`.
+    Bgra,
+    /// `A R G B`.
+    Argb,
+    /// `A B G R`.
+    Abgr,
+}
+
+/// The TGA layout a framework layout is encoded as, plus the swizzle
+/// that turns its pixels into that layout's byte order. Typed
+/// `Unsupported` for every layout outside [`ACCEPTED_PIXEL_FORMATS`].
+fn accepted_layout(pf: PixelFormat) -> oxideav_core::Result<(TgaPixelFormat, Swizzle)> {
+    Ok(match pf {
+        PixelFormat::Rgba => (TgaPixelFormat::Rgba, Swizzle::Identity),
+        PixelFormat::Bgra => (TgaPixelFormat::Rgba, Swizzle::Bgra),
+        PixelFormat::Argb => (TgaPixelFormat::Rgba, Swizzle::Argb),
+        PixelFormat::Abgr => (TgaPixelFormat::Rgba, Swizzle::Abgr),
+        PixelFormat::Rgb24 => (TgaPixelFormat::Rgb24, Swizzle::Identity),
+        PixelFormat::Bgr24 => (TgaPixelFormat::Rgb24, Swizzle::Bgr),
+        PixelFormat::Gray8 => (TgaPixelFormat::Gray8, Swizzle::Identity),
+        PixelFormat::Pal8 => (TgaPixelFormat::Pal8, Swizzle::Identity),
+        other => {
+            return Err(oxideav_core::Error::unsupported(format!(
+                "TGA encoder: pixel format {other:?} has no TGA carriage; accepted: {}",
+                accepted_names()
+            )))
+        }
+    })
+}
+
+fn accepted_names() -> String {
+    ACCEPTED_PIXEL_FORMATS
+        .iter()
+        .map(|f| format!("{f:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Re-order the visible pixels of every row of a packed plane into
+/// the TGA in-memory order, in place; row padding past the visible
+/// width is left alone so the stride is unchanged. `data` must hold
+/// `stride × (height − 1) + width × bpp` bytes (validated by the
+/// caller).
+fn swizzle_plane(data: &mut [u8], stride: usize, width: usize, height: usize, swz: Swizzle) {
+    let bpp = match swz {
+        Swizzle::Identity => return,
+        Swizzle::Bgr => 3,
+        _ => 4,
+    };
+    for y in 0..height {
+        let row = &mut data[y * stride..y * stride + width * bpp];
+        for px in row.chunks_exact_mut(bpp) {
+            match swz {
+                Swizzle::Identity => {}
+                Swizzle::Bgr | Swizzle::Bgra => px.swap(0, 2),
+                Swizzle::Argb => {
+                    let a = px[0];
+                    px.copy_within(1..4, 0);
+                    px[3] = a;
+                }
+                Swizzle::Abgr => {
+                    let (a, b, g, r) = (px[0], px[1], px[2], px[3]);
+                    px.copy_from_slice(&[r, g, b, a]);
+                }
+            }
+        }
+    }
+}
+
 /// The 1:1 name mapping from [`TgaPixelFormat`] to the framework enum.
 pub fn to_core_pixel_format(pf: TgaPixelFormat) -> PixelFormat {
     match pf {
@@ -111,9 +209,17 @@ pub fn from_color_signal(s: &ColorSignal) -> ColorInfo {
 
 // ---- Frame bridge ----
 
-fn stamp_frame_side_channels(frame: &mut VideoFrame, image: &TgaImage) {
+/// Attach the side-channel records: the palette for `Pal8` (plus the
+/// palette-alpha record when the palette has a non-opaque entry, or
+/// when `alpha_record` says the colour map carried an attribute
+/// channel at all) and the colour signal when it says more than TGA's
+/// default.
+fn stamp_frame_side_channels(frame: &mut VideoFrame, image: &TgaImage, alpha_record: bool) {
     if let (TgaPixelFormat::Pal8, Some(p)) = (image.format, &image.palette) {
         frame.set_palette(p.to_rgb());
+        if alpha_record || p.has_alpha() {
+            frame.set_palette_alpha(p.to_alpha());
+        }
     }
     let c = image.color;
     if c.primaries != ColorInfo::UNSPECIFIED
@@ -125,10 +231,25 @@ fn stamp_frame_side_channels(frame: &mut VideoFrame, image: &TgaImage) {
 }
 
 /// [`TgaImage`] → `VideoFrame` with `pts` stamped: the single packed
-/// plane, the palette side-channel for `Pal8` (RGB only — the
-/// framework's palette record has no alpha), and the colour-signal
+/// plane, the palette side-channel for `Pal8` — with the palette-alpha
+/// record beside it when any entry is not opaque (an all-opaque palette
+/// attaches no record: no record means opaque) — and the colour-signal
 /// side-channel when the image signals more than TGA's default.
-pub fn image_into_video_frame(mut image: TgaImage, pts: Option<i64>) -> VideoFrame {
+pub fn image_into_video_frame(image: TgaImage, pts: Option<i64>) -> VideoFrame {
+    image_into_video_frame_with(image, pts, false)
+}
+
+/// [`image_into_video_frame`] with the palette-alpha record forced on
+/// for `Pal8` (`alpha_record`) — what the framework decoder does for a
+/// colour map whose entries carry an attribute channel (16 / 32-bit
+/// entries, §C.2) even when every entry decodes opaque, so the record
+/// states what the file declared and the encoder writes the same
+/// entry width back.
+pub fn image_into_video_frame_with(
+    mut image: TgaImage,
+    pts: Option<i64>,
+    alpha_record: bool,
+) -> VideoFrame {
     let stride = image.stride();
     let data = if image.planes.is_empty() {
         Vec::new()
@@ -139,7 +260,7 @@ pub fn image_into_video_frame(mut image: TgaImage, pts: Option<i64>) -> VideoFra
         pts,
         planes: vec![VideoPlane { stride, data }],
     };
-    stamp_frame_side_channels(&mut frame, &image);
+    stamp_frame_side_channels(&mut frame, &image, alpha_record);
     frame
 }
 
@@ -160,10 +281,15 @@ impl From<&TgaImage> for VideoFrame {
 impl TgaImage {
     /// Rebuild an image from a framework frame and the stream
     /// parameters that describe it (`width`, `height` required;
-    /// `pixel_format` defaults to `Rgba`). For `Pal8` the palette comes
-    /// from the frame's palette side-channel (opaque entries); the
-    /// frame's colour-signal side-channel, when attached, becomes
-    /// `color`. The geometry is validated.
+    /// `pixel_format` defaults to `Rgba`). Every layout in
+    /// [`ACCEPTED_PIXEL_FORMATS`] is taken: the BGR / alpha-first
+    /// orders are swizzled into `Rgb24` / `Rgba`; anything else is
+    /// `Error::Unsupported`. For `Pal8` the palette comes from the
+    /// frame's palette side-channel and its alpha from the
+    /// palette-alpha record (entries the record does not cover are
+    /// opaque; no record means opaque); the frame's colour-signal
+    /// side-channel, when attached, becomes `color`. The geometry is
+    /// validated.
     pub fn from_video_frame(frame: &VideoFrame, params: &CodecParameters) -> crate::Result<Self> {
         let width = params
             .width
@@ -171,20 +297,34 @@ impl TgaImage {
         let height = params
             .height
             .ok_or_else(|| TgaError::invalid("TGA: missing height"))?;
-        let pix = from_core_pixel_format(params.pixel_format.unwrap_or(PixelFormat::Rgba))
+        let (pix, swz) = accepted_layout(params.pixel_format.unwrap_or(PixelFormat::Rgba))
             .map_err(|e| TgaError::unsupported(e.to_string()))?;
         let plane = frame
             .image_planes()
             .first()
             .ok_or_else(|| TgaError::invalid("TGA: frame has no planes"))?;
+        // `new` validates the geometry first, so a short frame is a
+        // typed error before any row is touched.
         let mut img = TgaImage::new(
             width,
             height,
             pix,
             vec![Plane::new(plane.stride, plane.data.clone())],
         )?;
+        if swz != Swizzle::Identity {
+            let stride = plane.stride;
+            swizzle_plane(
+                &mut img.planes[0].data,
+                stride,
+                width as usize,
+                height as usize,
+                swz,
+            );
+        }
         if pix == TgaPixelFormat::Pal8 {
-            img.palette = frame.palette().map(|rgb| Palette::from_rgb(rgb, None));
+            img.palette = frame
+                .palette()
+                .map(|rgb| Palette::from_rgb(rgb, frame.palette_alpha()));
             img.validate()?;
         }
         if let Some(sig) = frame.color_signal() {
@@ -271,7 +411,16 @@ impl Decoder for TgaDecoder {
             Some(opts) => crate::display::decode_tga_for_display(&packet.data, &opts)?,
             None => crate::decoder::decode_image(&packet.data, &DecodeOptions::default())?,
         };
-        self.pending = Some(image_into_video_frame(image, packet.pts));
+        // A colour map with 16 / 32-bit entries carries an attribute
+        // channel (§C.2); the frame states so through the palette-alpha
+        // record even when every entry decodes opaque.
+        let map_has_alpha = crate::header(&packet.data)
+            .is_ok_and(|h| h.cmap_type == 1 && matches!(h.cmap_entry_size, 16 | 32));
+        self.pending = Some(image_into_video_frame_with(
+            image,
+            packet.pts,
+            map_has_alpha,
+        ));
         Ok(())
     }
     fn receive_frame(&mut self) -> oxideav_core::Result<Frame> {
@@ -294,28 +443,47 @@ impl Decoder for TgaDecoder {
 
 // ---- Encoder trait impl + factory ----
 
-/// Factory registered with the codec registry: one `Rgba` / `Rgb24` /
-/// `Gray8` / `Pal8` frame in, one complete TGA file out, written with
-/// [`EncodeOptions::default`] (RLE, top-down) through [`crate::encode`].
+/// Factory registered with the codec registry: one frame in any layout
+/// of [`ACCEPTED_PIXEL_FORMATS`] in, one complete TGA file out, written
+/// with [`EncodeOptions::default`] (RLE, top-down) through
+/// [`crate::encode`]. A `pixel_format` outside the accepted set is a
+/// typed `Error::Unsupported` here, before any frame is sent; a `Pal8`
+/// frame carrying a palette-alpha record is written with a 32-bit
+/// colour map (the record's alpha in the attribute byte), one without
+/// a record with a 24-bit map. TGA holds one picture: a second frame
+/// is `Error::Unsupported`.
 pub fn make_encoder(params: &CodecParameters) -> oxideav_core::Result<Box<dyn Encoder>> {
     let mut out_params = CodecParameters::video(CodecId::new(crate::CODEC_ID_STR));
     out_params.width = params.width;
     out_params.height = params.height;
-    out_params.pixel_format = params.pixel_format;
+    // The stream decodes to the TGA in-memory layout: the label says
+    // what a decoder of the written file emits, not the input's byte
+    // order.
+    out_params.pixel_format = match params.pixel_format {
+        Some(pf) => Some(to_core_pixel_format(accepted_layout(pf)?.0)),
+        None => None,
+    };
     Ok(Box::new(TgaEncoder {
         codec_id: CodecId::new(crate::CODEC_ID_STR),
+        in_params: params.clone(),
         out_params,
         opts: EncodeOptions::default(),
         pending: None,
+        sent: false,
         eof: false,
     }))
 }
 
 struct TgaEncoder {
     codec_id: CodecId,
+    /// The caller's parameters: the input layout (`accepted_layout`
+    /// decides the swizzle) and geometry.
+    in_params: CodecParameters,
     out_params: CodecParameters,
     opts: EncodeOptions,
     pending: Option<Vec<u8>>,
+    /// A frame has been accepted — TGA holds exactly one picture.
+    sent: bool,
     eof: bool,
 }
 
@@ -335,13 +503,31 @@ impl Encoder for TgaEncoder {
                 ))
             }
         };
-        if self.out_params.pixel_format.is_none() {
+        if self.in_params.pixel_format.is_none() {
             return Err(oxideav_core::Error::invalid(
                 "TGA encoder: pixel_format missing in CodecParameters",
             ));
         }
-        let image = TgaImage::from_video_frame(vf, &self.out_params)?;
-        self.pending = Some(crate::encoder::encode_image(&image, &self.opts)?);
+        if self.sent {
+            return Err(oxideav_core::Error::unsupported(
+                "TGA encoder: TGA holds one picture; a second frame has no carriage \
+                 (write one file per picture)",
+            ));
+        }
+        let image = TgaImage::from_video_frame(vf, &self.in_params)?;
+        let mut opts = self.opts.clone();
+        // The record decides the colour-map entry width when the
+        // caller pinned none: a record means the map carries an
+        // attribute byte, no record means a 24-bit map.
+        if image.format == TgaPixelFormat::Pal8 && opts.palette_entry_size.is_none() {
+            opts.palette_entry_size = Some(if vf.palette_alpha().is_some() {
+                crate::types::ColorMapEntrySize::Bits32
+            } else {
+                crate::types::ColorMapEntrySize::Bits24
+            });
+        }
+        self.pending = Some(crate::encoder::encode_image(&image, &opts)?);
+        self.sent = true;
         Ok(())
     }
     fn receive_packet(&mut self) -> oxideav_core::Result<Packet> {
@@ -374,12 +560,7 @@ pub fn register_codecs(reg: &mut CodecRegistry) {
         .with_intra_only(true)
         .with_lossless(true)
         .with_max_size(65535, 65535)
-        .with_pixel_formats(vec![
-            PixelFormat::Rgba,
-            PixelFormat::Rgb24,
-            PixelFormat::Gray8,
-            PixelFormat::Pal8,
-        ]);
+        .with_pixel_formats(ACCEPTED_PIXEL_FORMATS.to_vec());
     reg.register(
         CodecInfo::new(CodecId::new(crate::CODEC_ID_STR))
             .capabilities(caps)

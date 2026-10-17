@@ -150,6 +150,7 @@ pub use registry::__oxideav_entry;
 pub use registry::register_runtime;
 #[cfg(feature = "registry")]
 pub use registry::{
-    make_decoder, make_decoder_with_display_options, make_encoder, register, register_codecs,
-    register_containers, register_registries,
+    image_into_video_frame, image_into_video_frame_with, make_decoder,
+    make_decoder_with_display_options, make_encoder, register, register_codecs,
+    register_containers, register_registries, ACCEPTED_PIXEL_FORMATS,
 };
