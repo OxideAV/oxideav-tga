@@ -742,6 +742,31 @@ pub fn encode_tga_with_extension(base_tga: &[u8], ext: &ExtensionAreaInput) -> R
     Ok(out)
 }
 
+/// Copy bytes `2..470` of a §C.6 slab (author name, the four comment
+/// lines, date / time stamp, job name, job time, software ID, software
+/// version) over the extension area `file` carries, so an area
+/// re-emitted from a `tga-extension-area` blob keeps those bytes
+/// verbatim: the typed path re-encodes the strings, which normalises
+/// an unterminated 41-byte field or non-ASCII bytes. The numeric tail
+/// (key colour, aspect, gamma, pointers, attributes type) stays the
+/// writer's. No-op when `file` has no extension area or `slab` is
+/// short.
+#[cfg(feature = "registry")]
+pub(crate) fn overlay_extension_text_fields(file: &mut [u8], slab: &[u8]) {
+    const TEXT: std::ops::Range<usize> = 2..470;
+    let Some(footer) = crate::types::parse_footer(file) else {
+        return;
+    };
+    let off = footer.extension_area_offset as usize;
+    if off == 0
+        || file.len() < off + TGA_EXTENSION_AREA_SIZE
+        || slab.len() < TGA_EXTENSION_AREA_SIZE
+    {
+        return;
+    }
+    file[off + TEXT.start..off + TEXT.end].copy_from_slice(&slab[TEXT]);
+}
+
 fn write_extension_area_skeleton(out: &mut Vec<u8>, ext: &ExtensionAreaInput) {
     let start = out.len();
     // Pre-fill 495 bytes of zero so we can patch fields by offset.

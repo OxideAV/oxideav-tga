@@ -88,16 +88,104 @@ oxideav_tga::register(&mut ctx);               // codec "tga" + container "tga" 
   colour signal is stamped (TGA defines no colour space; the sRGB-like
   default is a documented convention). Convert through `oxideav-pixfmt`,
   or use `decode_rgba8` standalone;
-  `make_decoder_with_display_options(TgaDisplayOptions)` finalises each
-  frame through the display pipeline below instead. The encoder accepts
-  `Rgba` / `Rgb24` / `Gray8` / `Pal8` (+ palette side-channel) frames
-  and writes them with `EncodeOptions::default()`.
+  `make_decoder_with_display_options(TgaDisplayOptions)` (or the
+  `display` decoder option) finalises each frame through the display
+  pipeline below instead. The encoder writes one picture per file with
+  `EncodeOptions::default()` unless the option schema says otherwise.
+* **Declared layouts** — `CodecCapabilities::accepted_pixel_formats`
+  is `oxideav_tga::ACCEPTED_PIXEL_FORMATS` (8 layouts); anything else
+  is a typed `Error::Unsupported` naming the set, from `make_encoder`
+  when the parameters carry the layout, never a silent conversion.
+  The label the encoder reports (`output_params().pixel_format`) and
+  the demuxer declares is what the file decodes to.
+
+  | Accepted input | Written as | Depth on the wire | Decodes back as |
+  | --- | --- | --- | --- |
+  | `Bgra` (the on-disk order), `Rgba`, `Argb`, `Abgr` | 32-bit true colour, 8 attribute bits | 32 (or 15 / 16 with `true_colour_depth`) | `Rgba` |
+  | `Bgr24` (the on-disk order), `Rgb24` | 24-bit true colour | 24 (or 15 / 16) | `Rgb24` (`Rgba` for 15 / 16) |
+  | `Pal8` + palette record | colour-mapped, 8-bit indices | 24-bit map, or 32-bit when the frame carries a palette-alpha record (`palette_entry_size` pins 15 / 16 / 24 / 32) | `Pal8` + palette (+ alpha record for 16 / 32-bit maps) |
+  | `Gray8` | black-and-white | 8 | `Gray8` |
+  | `Ya8`, `Gray16Le`, `Rgb48Le`, `Rgba64Le`, any YCbCr / planar | — | refused: TGA has no carriage (its grayscale types are 8-bit luma without alpha; core has no 16-bit packed-RGB label) | — |
+
+  RLE is an option (`rle`), not a layout; both compressions decode to
+  the same frame.
+* **Palette alpha** (core 0.1.40 palette-alpha record). Decoding: a
+  colour map with 16 / 32-bit entries (the §C.2 attribute bit / byte)
+  attaches the record beside the palette — one alpha byte per entry,
+  even when every entry is opaque, so the frame states what the file
+  declared; 15 / 24-bit maps attach none (no record means opaque).
+  Encoding: a `Pal8` frame with a record is written with a 32-bit
+  colour map carrying the record's alpha (entries the record does not
+  cover are opaque), one without a record with a 24-bit map; index
+  pixels declare 0 attribute bits. `From<TgaImage> for VideoFrame`
+  attaches the record when any entry is translucent;
+  `image_into_video_frame_with(image, pts, alpha_record)` forces it;
+  `Palette::to_alpha()` is the record's shape.
+* **Metadata**. The demuxer pushes the TGA 2.0 structures on the
+  stream's `CodecParameters::blobs` as two format-native custom kinds,
+  the decoder attaches the same to the frame record, and the encoder
+  writes them back (frame blobs refine stream blobs;
+  `EncodeOptions::extension` wins when set; blobs of other kinds are
+  ignored — TGA has no ICC / Exif / XMP carrier):
+  `tga-extension-area` (`BLOB_KIND_EXTENSION_AREA`) is the §C.6 body
+  verbatim, 495 bytes (`extension_area_bytes`,
+  `TgaExtensionArea::from_bytes`), written back with its text bytes
+  verbatim and the three table / stamp pointers dropped (they describe
+  the source file's layout); `tga-developer-area`
+  (`BLOB_KIND_DEVELOPER_AREA`) is the §C.7 directory with offsets
+  rebased to the blob followed by the payloads
+  (`TgaDeveloperArea::to_portable_bytes` / `tags_from_portable_bytes`,
+  marker tags kept). A developer area alone is written with an
+  extension area whose fields are unset (the writer emits the two
+  together). A malformed blob is a typed `InvalidData`. The demuxer's
+  `metadata()` reports the extension area's text fields as pairs
+  (`TgaExtensionArea::metadata_pairs`): `author`, `comment` (non-empty
+  lines joined with `\n`), `date` (ISO 8601, no zone), `job`,
+  `job_time` (`HH:MM:SS`), `software`, `software_version` (`1.23b`).
+  The image-descriptor origin never reaches pixel order on either side.
+* **Options** (`CodecInfo::encoder_options` / `decoder_options`, parsed
+  strictly from `CodecParameters::options`; unknown names and
+  out-of-range values are typed `InvalidData` at construction). There is
+  **no `quality`** — TGA is lossless; the gateway forwards
+  `SaveOptions::quality` only to schemas that declare it.
+
+  | Encoder (`TgaEncoderOptions`) | Kind | Default | Field |
+  | --- | --- | --- | --- |
+  | `rle` | bool | `true` | `EncodeOptions::rle` |
+  | `row_order` | `top-down` / `bottom-up` | `top-down` | `row_order` |
+  | `alpha_bits` | u32 `0..=15` | the layout's count | `alpha_bits` |
+  | `drop_opaque_alpha` | bool | `false` | `drop_opaque_alpha` |
+  | `true_colour_depth` | `native` / `15` / `16` | `native` | `true_colour_depth` |
+  | `palette_entry_size` | `auto` / `15` / `16` / `24` / `32` | `auto` | `palette_entry_size` |
+  | `image_id` | string ≤ 255 bytes | empty | `image_id` |
+  | `screen_origin_x` / `screen_origin_y` | u32 `0..=65535` | `0` | `screen_origin` |
+  | `footer` | bool | `false` | `footer` |
+
+  | Decoder (`TgaDecoderOptions`) | Kind | Default | Effect |
+  | --- | --- | --- | --- |
+  | `strict` | bool | `false` | `DecodeOptions::strict` |
+  | `max_pixels` | u32 (`0` = unlimited) | `0` | `DecodeOptions::max_pixels` |
+  | `max_bytes` | u32 (`0` = unlimited) | 1 GiB | `DecodeOptions::max_bytes` |
+  | `display` | bool | `false` | finalise through `decode_tga_for_display` (alpha resolution → tone → key colour → aspect) |
+
+  The stream's `DecoderLimits` (`max_pixels_per_frame`,
+  `max_alloc_bytes_per_frame`) cap the geometry too — the tighter wins,
+  before any plane is allocated (`Error::ResourceExhausted`).
+* **Single picture.** A second `send_frame` on the encoder, a second
+  `write_packet` on the muxer, and a muxer opened with any number of
+  streams but one (the gateway's mixed-geometry `encode_frames` opens
+  one stream per picture size) are `Error::Unsupported` naming the
+  geometries — one file per picture, never a resize.
 * Frame bridge: `From<TgaImage> for VideoFrame` (palette → the frame's
-  RGB palette side-channel, colour → the colour-signal side-channel
-  when specified), `TgaImage::from_video_frame(&VideoFrame,
-  &CodecParameters) -> Result` and `TryFrom<(&VideoFrame,
-  &CodecParameters)>`; `TgaPixelFormat` ↔ `oxideav_core::PixelFormat`
-  map 1:1 by name (`From` / `TryFrom`).
+  RGB palette side-channel + the alpha record when translucent, colour
+  → the colour-signal side-channel when specified),
+  `TgaImage::from_video_frame(&VideoFrame, &CodecParameters) -> Result`
+  (every accepted layout; BGR / alpha-first orders swizzled, row
+  padding honoured) and `TryFrom<(&VideoFrame, &CodecParameters)>`;
+  `TgaPixelFormat` ↔ `oxideav_core::PixelFormat` map 1:1 by name
+  (`From` / `TryFrom`). `TgaError::LimitExceeded` maps to
+  `Error::ResourceExhausted`, `Unsupported` / `InvalidData` to their
+  namesakes.
 * `oxideav_meta::register_all` dispatches here through the
   `oxideav_core::register!` entry point.
 
@@ -125,6 +213,7 @@ conversion; `encode_rgb8` → `Rgb24`, `encode_rgba8` → `Rgba`):
 | `Pal8` + palette  | 9 / 1                           | 8-bit indices + 15/16/24/32-bit colour map |
 | `Rgb24`           | 10 / 2                          | 24 (BGR), 0 attribute bits              |
 | `Rgba`            | 10 / 2                          | 32 (BGRA), 8 attribute bits (or `alpha_bits`) |
+| `Rgb24` / `Rgba` + `true_colour_depth` | 10 / 2         | 15 / 16 (`ARRRRRGG GGGBBBBB`, little-endian); 1 attribute bit for 16-bit `Rgba` (or `alpha_bits`), 0 otherwise |
 | `Gray8`           | 11 / 3                          | 8                                       |
 
 * 15 / 16-bit true-colour pixels (`ARRRRRGG GGGBBBBB`, little-endian)
@@ -132,10 +221,20 @@ conversion; `encode_rgb8` → `Rgb24`, `encode_rgba8` → `Rgba`):
   at decode time exactly as 15 / 16-bit colour-map entries are: each
   5-bit channel becomes 8 bits by repeating its top three bits
   (`v << 3 | v >> 2`, so `0b11111` → `0xFF`), the 16-bit attribute bit
-  becomes alpha `0xFF` / `0x00`, 15-bit is always opaque. There is no
-  15 / 16-bit true-colour *encode* path (a `Pal8` image may still be
-  written with a 15 / 16-bit colour map via `palette_entry_size`;
-  that quantises).
+  becomes alpha `0xFF` / `0x00`, 15-bit is always opaque. The encode
+  path back is `EncodeOptions::true_colour_depth` (`TrueColourDepth::
+  Bits15 / Bits16`): each channel's top five bits (`v >> 3`) — the
+  exact inverse of the expansion — so a 15 / 16-bit file round-trips
+  `decode` → `encode` byte-exactly and a 5-bit-exact picture
+  `encode` → `decode` bit-exactly; any other picture loses its low
+  three bits (lossy, explicit, never the default). `Bits16` stores the
+  alpha's top bit as the attribute bit; `Bits15` clears it. A `Pal8`
+  image may likewise be written with a 15 / 16-bit colour map via
+  `palette_entry_size` (the same quantiser).
+* A colour map declaring more than 256 entries (the header's length
+  field is 16-bit) decodes to the 256 an 8-bit index can address — no
+  index reaches the rest — so every decoded `Pal8` image encodes again
+  (`parse_tga_color_map` still exposes the whole declared table).
 * `Pal8` indices are rebased at decode so `0` is the first stored
   colour-map entry (the header's Color Map Origin is folded in); an
   index below the origin or past the map is `InvalidData`, so
@@ -172,6 +271,7 @@ behaviour is a field:
 | `row_order: RowOrder` | `TopDown` | descriptor bit 5; `BottomUp` stores the last row first |
 | `alpha_bits: Option<u8>` | `None` (= 8) | descriptor attribute-bit count for `Rgba`; `0` = "TARGA-32", fourth byte not alpha |
 | `drop_opaque_alpha: bool` | `false` | write a uniformly opaque `Rgba` image at 24 bits |
+| `true_colour_depth: Option<TrueColourDepth>` | `None` | write `Rgb24` / `Rgba` at 15 / 16 bits per pixel (5-bit channels, the exact inverse of the decode expansion; lossy unless the picture is 5-bit-exact) |
 | `palette_entry_size: Option<ColorMapEntrySize>` | `None` | colour-map entry width; `None` picks the narrowest lossless (24 opaque / 32 with alpha); 15 / 16 quantise |
 | `image_id: Vec<u8>` | empty | §C.3 Image Identification Field, 0..=255 bytes |
 | `screen_origin: ImageOrigin` | `(0, 0)` | §5.1 / §5.2 lower-left on-screen placement |
@@ -199,6 +299,15 @@ scan line, so a §C.6.9 scan-line table can always describe the output.
   re-emits it when `EncodeOptions::extension` is `None`
   (`ExtensionAreaInput::from_area`; the three table / stamp pointers
   are not carried — supply them explicitly).
+  `TgaExtensionArea::metadata_pairs()` renders the text fields as
+  `(key, value)` pairs (`author`, `comment`, `date`, `job`, `job_time`,
+  `software`, `software_version`); `extension_area_bytes` cuts the
+  495-byte body a file carries and `TgaExtensionArea::from_bytes`
+  parses a standalone body — the `tga-extension-area` blob of the
+  registry path. `TgaDeveloperArea::to_portable_bytes` /
+  `tags_from_portable_bytes` are the self-contained form of the §C.7
+  developer area (directory rebased to the buffer, then payloads) —
+  the `tga-developer-area` blob.
 * `ColorInfo { range, primaries, transfer, matrix }`: TGA signals no
   colour space, so `decode` always fills `ColorInfo::tga_default()` —
   full range, identity matrix (`0`), unspecified primaries and transfer
@@ -696,11 +805,16 @@ area body to the output — the byte-level form of
 
 ## Fuzzing
 
-Five cargo-fuzz harnesses live under `fuzz/`. `.github/workflows/fuzz.yml`
+Six cargo-fuzz harnesses live under `fuzz/`. `.github/workflows/fuzz.yml`
 runs them daily, sharing a 30-minute budget (the reusable workflow
 auto-discovers `fuzz/fuzz_targets/*.rs` and splits the time evenly). No
 external oracle is reachable (the clean-room wall bars third-party TGA
-implementations), so no target compares pixels against another decoder.
+implementations), so no target compares pixels against another decoder;
+the identity targets compare against what the crate itself must
+reproduce. Round 477 ran every target ≥ 10 minutes locally; the
+`registry_bridge` identity found one defect (a colour map declaring more
+than 256 entries decoded but could not be re-encoded — fixed by keeping
+the 256 addressable entries).
 
 * `decode_tga` — attacker-supplied bytes through the contract API
   (`probe` / `info` / `header` / `decode` / `decode_with` under a 16 MiB
@@ -708,8 +822,11 @@ implementations), so no target compares pixels against another decoder.
   structural `parse_tga_*` reader (footer / extension area / postage
   stamp / §C.6.8 colour-correction table / §C.6.9 scan-line table +
   `compute_tga_scan_line_table` + `parse_tga_scan_line` / §C.7 developer
-  area / Image ID / colour map / border colour) and the composed display
-  pipeline across its option toggles. Purely panic-free: every call
+  area / Image ID / colour map / border colour), the blob halves
+  (`extension_area_bytes` / `TgaExtensionArea::from_bytes` /
+  `metadata_pairs`; the developer area's portable form read from
+  arbitrary bytes and written from a parsed directory, which must read
+  back) and the composed display pipeline across its option toggles. Purely panic-free: every call
   returns `Ok` or `Err`. A 16 MiB declared-raster cap gates the
   *unlimited* `decode` (a `u16 × u16 × 4` header can declare 16 GiB);
   `decode_with` runs under the same cap on every input to prove the
@@ -720,8 +837,18 @@ implementations), so no target compares pixels against another decoder.
   `Rgb24` / `Gray8` / `Pal8` with a 24- or 32-bit colour map) across the
   lossless `EncodeOptions` axes — `rle`, `row_order`, `alpha_bits`,
   `image_id`, `screen_origin`, `footer`, a gamma that must come back
-  through the extension area — plus `probe` / `info` agreement on the
+  through the extension area, `true_colour_depth` `Bits16` on a
+  5-bit-exact `Rgba` picture — plus `probe` / `info` agreement on the
   encoder's own output.
+* `registry_bridge` — the framework path as an identity: arbitrary
+  bytes through `make_decoder` (native layout, palette + palette-alpha
+  records, extension / developer-area blobs, label / plane agreement
+  with `open_demuxer`), then every decodable input back through the
+  demuxer's stream parameters + `make_encoder` and decoded again: plane
+  bytes, palette, alpha record, typed extension fields and developer
+  tags equal; the swizzled input orders (`Bgra` / `Argb` / `Abgr` /
+  `Bgr24`) reach the same file as `Rgba` / `Rgb24`; the option schemas
+  keep the identity on the lossless axes and refuse `quality`.
 * `roundtrip_identity` / `encode_roundtrip` — the pre-contract writers
   (deprecated wrappers) through the decoder: bit-exact identity for the
   lossless ones (RGBA / RGB24 / Gray8 / default palette / explicit
@@ -788,3 +915,16 @@ benchmark this is roughly a 70 % reduction in wall-clock time
 * Application-level semantics for developer-area tag IDs — the spec
   declines to enumerate well-known IDs, so the parser surfaces tags
   + payload byte ranges and leaves interpretation to the caller.
+* Truthful registry labels for two shapes `oxideav_core::PixelFormat`
+  cannot name: 15 / 16-bit true-colour pixels (emitted as the
+  documented `Rgba` expansion; a 16-bit packed-RGB label would carry
+  them as stored) and a 32-bit file whose descriptor declares 0
+  attribute bits (emitted as `Rgba` with the stored fourth byte; a
+  padded-RGB label would say the byte is not alpha — the `display`
+  decoder option resolves it to opaque).
+* A developer area alone (no extension area) is written back with an
+  all-unset extension area beside it: the writer emits the two
+  structures together.
+* Postage stamp, colour-correction table and scan-line table are not
+  carried through the registry's blobs (they are bound to the source
+  file's layout; the scan-line table is recomputable).

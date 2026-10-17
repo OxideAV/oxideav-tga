@@ -42,20 +42,30 @@ pub fn developer_area_blob_kind() -> BlobKind {
     BlobKind::from_static(crate::BLOB_KIND_DEVELOPER_AREA)
 }
 
+/// The blob of `kind` the encoder honours: the frame's first (it
+/// refines the stream's), else the stream's.
+fn find_blob<'a>(
+    stream: &'a [MetadataBlob],
+    frame: &'a [MetadataBlob],
+    kind: &BlobKind,
+) -> Option<&'a MetadataBlob> {
+    frame
+        .iter()
+        .find(|b| b.is(kind))
+        .or_else(|| stream.iter().find(|b| b.is(kind)))
+}
+
 /// The TGA 2.0 structures the encoder re-emits from the blobs it was
-/// handed: `frame` blobs first (they refine the stream's), then
-/// `stream` blobs. An extension-area blob that does not parse, or a
-/// developer-area blob that does not unpack, is a typed `InvalidData`.
+/// handed (see [`find_blob`]). An extension-area blob that does not
+/// parse, or a developer-area blob that does not unpack, is a typed
+/// `InvalidData`. A developer area alone still needs an extension
+/// area on the wire (the writer emits the two together), so one with
+/// every field unset is written for it.
 fn extension_from_blobs(
     stream: &[MetadataBlob],
     frame: &[MetadataBlob],
 ) -> oxideav_core::Result<Option<ExtensionAreaInput>> {
-    let find = |kind: &BlobKind| {
-        frame
-            .iter()
-            .find(|b| b.is(kind))
-            .or_else(|| stream.iter().find(|b| b.is(kind)))
-    };
+    let find = |kind: &BlobKind| find_blob(stream, frame, kind);
     let mut ext = match find(&extension_area_blob_kind()) {
         Some(blob) => {
             let area = TgaExtensionArea::from_bytes(&blob.data).ok_or_else(|| {
@@ -913,9 +923,18 @@ impl Encoder for TgaEncoder {
         let mut opts = self.opts.clone();
         // Metadata: the extension / developer areas handed as blobs
         // (frame record first, then the stream parameters) are written
-        // back; an explicit `EncodeOptions::extension` wins.
+        // back — the text bytes of the extension area verbatim; an
+        // explicit `EncodeOptions::extension` wins.
+        let frame_blobs = vf.blobs();
+        let mut slab = None;
         if opts.extension.is_none() {
-            opts.extension = extension_from_blobs(&self.in_params.blobs, &vf.blobs())?;
+            opts.extension = extension_from_blobs(&self.in_params.blobs, &frame_blobs)?;
+            slab = find_blob(
+                &self.in_params.blobs,
+                &frame_blobs,
+                &extension_area_blob_kind(),
+            )
+            .map(|b| b.data.clone());
         }
         // The record decides the colour-map entry width when the
         // caller pinned none: a record means the map carries an
@@ -927,7 +946,11 @@ impl Encoder for TgaEncoder {
                 crate::types::ColorMapEntrySize::Bits24
             });
         }
-        self.pending = Some(crate::encoder::encode_image(&image, &opts)?);
+        let mut bytes = crate::encoder::encode_image(&image, &opts)?;
+        if let Some(slab) = slab {
+            crate::encoder::overlay_extension_text_fields(&mut bytes, &slab);
+        }
+        self.pending = Some(bytes);
         self.sent = true;
         Ok(())
     }

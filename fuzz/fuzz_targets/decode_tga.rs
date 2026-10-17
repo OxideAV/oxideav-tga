@@ -47,11 +47,12 @@
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
     compute_tga_scan_line_table, decode, decode_rgb8, decode_rgba8, decode_tga_for_display,
-    decode_tga_for_display_reported, decode_with, header, info, parse_tga_border_color,
-    parse_tga_color_map, parse_tga_colour_correction_table, parse_tga_developer_area,
-    parse_tga_extension_area, parse_tga_footer, parse_tga_image_id, parse_tga_postage_stamp,
-    parse_tga_scan_line, parse_tga_scan_line_table, probe, resolve_alpha_from_descriptor,
-    DecodeOptions, TgaDisplayOptions,
+    decode_tga_for_display_reported, decode_with, extension_area_bytes, header, info,
+    parse_tga_border_color, parse_tga_color_map, parse_tga_colour_correction_table,
+    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_image_id,
+    parse_tga_postage_stamp, parse_tga_scan_line, parse_tga_scan_line_table, probe,
+    resolve_alpha_from_descriptor, DecodeOptions, TgaDeveloperArea, TgaDisplayOptions,
+    TgaExtensionArea,
 };
 
 /// Upper bound on the declared output raster (16 MiB). Anything
@@ -77,6 +78,35 @@ fuzz_target!(|data: &[u8]| {
     let _ = parse_tga_image_id(data);
     let _ = parse_tga_color_map(data);
     let _ = parse_tga_border_color(data);
+
+    // The registry path's standalone metadata halves: the extension
+    // area as a self-describing slab (and the raw bytes as one — the
+    // blob a hostile stream could carry), its text fields as pairs,
+    // and the developer area's portable form read from arbitrary bytes
+    // and written from a parsed directory (which must read back).
+    if let Some(slab) = extension_area_bytes(data) {
+        let area = TgaExtensionArea::from_bytes(slab).expect("a slab the cutter accepted parses");
+        let _ = area.metadata_pairs();
+        assert_eq!(Some(area), parse_tga_extension_area(data));
+    }
+    if let Some(area) = TgaExtensionArea::from_bytes(data) {
+        let _ = area.metadata_pairs();
+    }
+    let _ = TgaDeveloperArea::tags_from_portable_bytes(data);
+    if let Some(dev) = parse_tga_developer_area(data) {
+        let portable = dev.to_portable_bytes(data);
+        let tags = TgaDeveloperArea::tags_from_portable_bytes(&portable)
+            .expect("the portable form the crate wrote reads back");
+        assert_eq!(tags.len(), dev.len());
+        for (tag, rec) in tags.iter().zip(&dev.tags) {
+            assert_eq!(tag.tag_id, rec.tag_id);
+            assert_eq!(
+                tag.payload.as_slice(),
+                dev.payload(data, rec).unwrap_or(&[]),
+                "payload bytes travel verbatim"
+            );
+        }
+    }
 
     // `decode_with` under a tight byte limit must fail closed (never
     // allocate) on an oversized header, whatever the rest of the file.

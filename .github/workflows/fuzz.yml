@@ -9,18 +9,27 @@ name: Fuzz
 #     byte limit and in strict mode / `decode_rgb8` / `decode_rgba8`),
 #     every structural `parse_tga_*` reader (footer / extension area /
 #     postage stamp / §C.6.8 CCT / §C.6.9 scan-line table / §C.7
-#     developer area / Image ID / colour map) and the §C.6 display
-#     pipeline. Decoder-only panic-free contract.
+#     developer area / Image ID / colour map), the blob halves
+#     (`extension_area_bytes` / `TgaExtensionArea::from_bytes` /
+#     `metadata_pairs`, the developer area's portable form) and the
+#     §C.6 display pipeline. Decoder-only panic-free contract.
 #   * contract_identity — `decode(encode(img)) == img` for every native
 #     layout (`Rgba` / `Rgb24` / `Gray8` / `Pal8` + palette) across the
 #     lossless `EncodeOptions` axes (rle, row order, alpha bits, Image
-#     ID, screen origin, footer, gamma), plus `probe` / `info`
-#     agreement on the encoder's own output.
+#     ID, screen origin, footer, gamma, 16-bit true colour on 5-bit-
+#     exact pictures), plus `probe` / `info` agreement on the encoder's
+#     own output.
 #   * roundtrip_identity / encode_roundtrip — the pre-contract writers
 #     (deprecated wrappers, byte-identical) through the decoder:
 #     bit-exact identity for the lossless ones, frame shape for all.
 #   * extension_roundtrip — `encode_tga_with_extension` offset
 #     back-patch arithmetic re-read through the extension-area readers.
+#   * registry_bridge — the framework path as an identity: arbitrary
+#     bytes through `make_decoder` (native layout, palette + palette-
+#     alpha records, extension / developer-area blobs), back through
+#     `open_demuxer`'s stream parameters + `make_encoder`, decoded
+#     again and compared; swizzled input orders reach the same file;
+#     the option schemas keep the identity and refuse `quality`.
 #
 # No external oracle is reachable (the clean-room wall bars third-party
 # TGA implementations), so no target compares pixels against another

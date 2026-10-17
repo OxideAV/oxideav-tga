@@ -948,3 +948,43 @@ mod options {
         let _ = CodecOptions::new(); // the bag type the factories parse
     }
 }
+
+mod verbatim_text {
+    use super::*;
+    use oxideav_core::MetadataBlob;
+    use oxideav_tga::{parse_tga_extension_area, TgaExtensionArea, TGA_EXTENSION_AREA_SIZE};
+
+    /// An unterminated 41-byte author field and a non-ASCII comment byte:
+    /// the typed path would normalise both; the blob path keeps the bytes.
+    #[test]
+    fn extension_text_bytes_come_back_verbatim_from_the_blob() {
+        let mut slab = vec![0u8; TGA_EXTENSION_AREA_SIZE];
+        slab[0..2].copy_from_slice(&495u16.to_le_bytes());
+        for b in &mut slab[2..43] {
+            *b = b'A';
+        }
+        slab[43] = 0xE9;
+        slab[44] = b'x';
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 1,
+                data: vec![7],
+            }],
+        }
+        .with_blob(MetadataBlob::new(
+            oxideav_tga::extension_area_blob_kind(),
+            slab.clone(),
+        ));
+        let out = encode_registry(&frame, &params(1, 1, PixelFormat::Gray8)).unwrap();
+        let written = oxideav_tga::extension_area_bytes(&out).unwrap();
+        assert_eq!(&written[2..470], &slab[2..470]);
+        let area = parse_tga_extension_area(&out).unwrap();
+        assert_eq!(area.author_name, "A".repeat(41));
+        assert_eq!(
+            TgaExtensionArea::from_bytes(&slab).unwrap().author_comment,
+            area.author_comment
+        );
+        assert_eq!(decode(&out).unwrap().data(), &[7]);
+    }
+}

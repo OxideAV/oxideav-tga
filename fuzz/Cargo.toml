@@ -32,10 +32,14 @@ cargo-fuzz = true
 # integer-overflows in debug/ASAN, indexes out of bounds, or OOMs.
 [dependencies]
 libfuzzer-sys = "0.4"
+# The registry bridge target drives the framework factories, so the
+# default `registry` feature stays on and `oxideav-core` resolves to
+# its published version (this manifest is its own workspace: the
+# umbrella's path patches do not apply, exactly as on CI).
+oxideav-core = "0.1"
 
 [dependencies.oxideav-tga]
 path = ".."
-default-features = false
 
 # Prevent this from interfering with the umbrella workspace.
 [workspace]
@@ -108,5 +112,22 @@ doc = false
 [[bin]]
 name = "contract_identity"
 path = "fuzz_targets/contract_identity.rs"
+test = false
+doc = false
+
+# Registry-path identity target: arbitrary bytes through the framework
+# `make_decoder` (the frame bridge: native layout + palette record +
+# palette-alpha record + the `tga-extension-area` / `tga-developer-area`
+# blobs), then — for every decodable input — back through the
+# `open_demuxer` stream parameters and `make_encoder`, and decoded
+# again: plane bytes, palette, palette-alpha record and the typed
+# extension / developer-area fields must come back equal (TGA is
+# lossless; the registry path is a thin adapter over the standalone
+# functions). Also drives the swizzled true-colour inputs (`Bgra` /
+# `Bgr24` / `Argb` / `Abgr`) against the `Rgba` / `Rgb24` path and the
+# option schemas with values derived from the input.
+[[bin]]
+name = "registry_bridge"
+path = "fuzz_targets/registry_bridge.rs"
 test = false
 doc = false

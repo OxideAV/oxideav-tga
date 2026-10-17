@@ -94,11 +94,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wins, before allocation). Out-of-range values are typed `InvalidData`
   at construction.
 
+- **Fuzz: `registry_bridge`** (sixth target; the fuzz crate now builds
+  with the `registry` feature against the published core). Arbitrary
+  bytes through `make_decoder`, then — for every decodable input — back
+  through `open_demuxer`'s stream parameters + `make_encoder` and
+  decoded again: plane bytes, palette, palette-alpha record, typed
+  extension-area fields and developer tags must come back equal; the
+  swizzled input orders reach the same file as `Rgba` / `Rgb24`; the
+  option schemas keep the identity and refuse `quality`. `decode_tga`
+  covers the blob halves (`extension_area_bytes`, `from_bytes`,
+  `metadata_pairs`, the developer area's portable form both ways);
+  `contract_identity` gains the 16-bit axis on 5-bit-exact pictures.
+  Every target ran ≥ 10 minutes locally in round 477.
+
 ### Changed
 
 - `From<TgaError> for oxideav_core::Error` maps `LimitExceeded` to
   `ResourceExhausted` (was `InvalidData`): a refused geometry is a
   resource decision, not malformed input.
+- The registry encoder writes the `tga-extension-area` blob's text
+  bytes (author, comments, timestamp, job, software: bytes 2..470 of
+  the §C.6 body) back **verbatim** instead of re-encoding the parsed
+  strings, so an unterminated or non-ASCII field survives a framework
+  round trip.
+
+### Fixed
+
+- A colour map declaring more than 256 entries (the header's length
+  field is 16-bit) decoded to a palette `encode` then refused (`Pal8`
+  images carry an 8-bit index); `decode` now keeps the 256 addressable
+  entries — no index can reach the rest — so every decoded image
+  encodes again (`parse_tga_color_map` still exposes the whole table).
+  Found by the new `registry_bridge` fuzz target.
 
 ## [0.0.5](https://github.com/OxideAV/oxideav-tga/compare/v0.0.4...v0.0.5) - 2026-10-04
 

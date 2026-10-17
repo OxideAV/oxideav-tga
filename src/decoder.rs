@@ -169,8 +169,16 @@ pub(crate) fn decode_image(input: &[u8], opts: &DecodeOptions) -> Result<TgaImag
         (stride as u64) * (height as u64),
     )?;
 
-    // Skip optional Image ID, then read the colour map if present.
+    // Skip optional Image ID, then read the colour map if present. An
+    // 8-bit index addresses 256 entries at most, so a longer map (the
+    // header's length field is 16-bit) is cut to the addressable ones:
+    // no index can reach the rest, and `Palette` / the framework's
+    // palette record hold at most 256.
     let (palette, cursor) = read_palette(input, header, v.image_type)?;
+    let palette = palette.map(|mut p| {
+        p.truncate(256);
+        p
+    });
 
     // Decode the pixel array in the native layout.
     let pixels = if v.image_type.is_rle() {

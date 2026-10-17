@@ -10,7 +10,11 @@
 //! * `rle` on / off, `row_order` top-down / bottom-up, `alpha_bits`
 //!   `8` / `0`, an Image ID of 0..=255 bytes, a non-zero screen
 //!   origin, a forced footer, and a `metadata.gamma` that must come
-//!   back through the extension area.
+//!   back through the extension area,
+//! * `true_colour_depth` `Bits16` on an `Rgba` picture whose channels
+//!   are 5-bit-exact and whose alpha is `0` / `255` (the quantiser is
+//!   the exact inverse of the decoder's expansion, so the identity
+//!   holds bit for bit).
 //!
 //! The decoded image must equal the input in `format`, plane bytes,
 //! palette and `metadata.gamma` (to the 1/100 the §C.6.6 SHORT pair
@@ -21,8 +25,13 @@
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
     decode, encode, info, probe, EncodeOptions, ImageOrigin, Metadata, Palette, PixelFormat,
-    RowOrder, TgaImage,
+    RowOrder, TgaImage, TrueColourDepth,
 };
+
+/// The decoder's documented 5 → 8 expansion.
+fn expand5(v: u8) -> u8 {
+    (v << 3) | (v >> 2)
+}
 
 const MAX_PIXELS: usize = 64 * 1024;
 const MAX_SIDE: u16 = 512;
@@ -46,6 +55,10 @@ fuzz_target!(|data: &[u8]| {
         u16::from_le_bytes([data[9], data[10]]),
     );
     let palette_len = usize::from(data[11]).max(1);
+    // The 16-bit axis applies to `Rgba` pictures only (the decoded
+    // layout of a 16-bit file is `Rgba`, so an `Rgb24` source would
+    // not be an identity on `format`).
+    let sixteen = flags & 0x10 != 0 && format == PixelFormat::Rgba;
     let n = w as usize * h as usize;
     if n > MAX_PIXELS {
         return;
@@ -85,13 +98,20 @@ fuzz_target!(|data: &[u8]| {
             TgaImage::new_indexed(w as u32, h as u32, indices, Palette::new(entries))
                 .expect("valid indexed image")
         }
-        other => TgaImage::packed(
-            w as u32,
-            h as u32,
-            other,
-            take(n * other.bytes_per_pixel(), 0),
-        )
-        .unwrap(),
+        other => {
+            let mut data = take(n * other.bytes_per_pixel(), 0);
+            if sixteen {
+                // 5-bit-exact channels, alpha 0 / 255: the 16-bit
+                // quantiser inverts the expansion exactly.
+                for p in data.chunks_exact_mut(4) {
+                    p[0] = expand5(p[0] >> 3);
+                    p[1] = expand5(p[1] >> 3);
+                    p[2] = expand5(p[2] >> 3);
+                    p[3] = if p[3] >= 0x80 { 0xFF } else { 0 };
+                }
+            }
+            TgaImage::packed(w as u32, h as u32, other, data).unwrap()
+        }
     };
     let gamma = if flags & 0x20 != 0 {
         Some(f32::from(data[5] % 50 + 1) / 10.0)
@@ -110,7 +130,12 @@ fuzz_target!(|data: &[u8]| {
         .with_alpha_bits(if flags & 4 != 0 { Some(0u8) } else { None })
         .with_image_id(take(id_len, n * 4))
         .with_screen_origin(origin)
-        .with_footer(flags & 8 != 0);
+        .with_footer(flags & 8 != 0)
+        .with_true_colour_depth(if sixteen {
+            Some(TrueColourDepth::Bits16)
+        } else {
+            None
+        });
 
     let bytes = encode(&img, &opts).expect("every generated image is encodable");
     assert!(probe(&bytes), "probe rejects the encoder's own output");
@@ -156,6 +181,14 @@ fuzz_target!(|data: &[u8]| {
         described.image_id_length as usize, id_len,
         "image id length"
     );
+    if sixteen {
+        assert_eq!(described.depth, 16, "16-bit on the wire");
+        assert_eq!(
+            described.attribute_bits,
+            if flags & 4 != 0 { 0 } else { 1 },
+            "one attribute bit for 16-bit Rgba unless alpha_bits pins 0"
+        );
+    }
     assert_eq!(
         oxideav_tga::header(&bytes).unwrap().image_origin(),
         origin,
