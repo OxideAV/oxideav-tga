@@ -78,6 +78,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set). A malformed blob is a typed `InvalidData`; blobs of other kinds
   are ignored (TGA has no carrier). The image-descriptor origin never
   reaches pixel order on either side (pinned).
+- **Option schemas on the registry codec.** `TgaEncoderOptions`
+  (`CodecInfo::encoder_options`) declares every lossless axis by name —
+  `rle`, `row_order` (`top-down` / `bottom-up`), `alpha_bits`,
+  `drop_opaque_alpha`, `true_colour_depth` (`native` / `15` / `16`),
+  `palette_entry_size` (`auto` / `15` / `16` / `24` / `32`), `image_id`,
+  `screen_origin_x` / `_y`, `footer` — and **no `quality`** (lossless
+  format: the key is an unknown option, `InvalidData`; the gateway only
+  forwards `quality` to schemas that declare it). `TgaDecoderOptions`
+  (`decoder_options`) declares `strict`, `max_pixels`, `max_bytes` and
+  `display` (finalise through `decode_tga_for_display`, so the registry
+  path can honour the file's own alpha declaration / tone / key colour
+  / aspect). `make_decoder` also honours the stream's `DecoderLimits`
+  (`max_pixels_per_frame`, `max_alloc_bytes_per_frame`; the tighter cap
+  wins, before allocation). Out-of-range values are typed `InvalidData`
+  at construction.
+
+### Changed
+
+- `From<TgaError> for oxideav_core::Error` maps `LimitExceeded` to
+  `ResourceExhausted` (was `InvalidData`): a refused geometry is a
+  resource decision, not malformed input.
 
 ## [0.0.5](https://github.com/OxideAV/oxideav-tga/compare/v0.0.4...v0.0.5) - 2026-10-04
 

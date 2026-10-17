@@ -168,5 +168,6 @@ pub use registry::register_runtime;
 pub use registry::{
     developer_area_blob_kind, extension_area_blob_kind, image_into_video_frame,
     image_into_video_frame_with, make_decoder, make_decoder_with_display_options, make_encoder,
-    register, register_codecs, register_containers, register_registries, ACCEPTED_PIXEL_FORMATS,
+    register, register_codecs, register_containers, register_registries, TgaDecoderOptions,
+    TgaEncoderOptions, ACCEPTED_PIXEL_FORMATS,
 };

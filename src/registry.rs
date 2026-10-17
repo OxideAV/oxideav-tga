@@ -19,18 +19,18 @@
 //! * The `From<TgaError> for oxideav_core::Error` conversion.
 
 use oxideav_core::{
-    BlobKind, CodecCapabilities, CodecId, CodecInfo, CodecParameters, CodecRegistry,
-    ColorPrimaries, ColorSignal, ContainerRegistry, Decoder, Encoder, Frame, MatrixCoefficients,
-    MetadataBlob, Packet, PixelFormat, RuntimeContext, TimeBase, TransferCharacteristics,
-    VideoFrame, VideoPlane,
+    parse_options, BlobKind, CodecCapabilities, CodecId, CodecInfo, CodecOptionsStruct,
+    CodecParameters, CodecRegistry, ColorPrimaries, ColorSignal, ContainerRegistry, Decoder,
+    Encoder, Frame, MatrixCoefficients, MetadataBlob, OptionField, OptionKind, OptionValue, Packet,
+    PixelFormat, RuntimeContext, TimeBase, TransferCharacteristics, VideoFrame, VideoPlane,
 };
 
 use crate::container;
 use crate::encoder::ExtensionAreaInput;
 use crate::error::TgaError;
 use crate::image::{ColorInfo, ColorRange, Palette, Plane, TgaImage, TgaPixelFormat};
-use crate::options::{DecodeOptions, EncodeOptions};
-use crate::types::{TgaDeveloperArea, TgaExtensionArea};
+use crate::options::{DecodeOptions, EncodeOptions, RowOrder, TrueColourDepth};
+use crate::types::{ColorMapEntrySize, ImageOrigin, TgaDeveloperArea, TgaExtensionArea};
 
 /// The `tga-extension-area` blob kind (see [`crate::BLOB_KIND_EXTENSION_AREA`]).
 pub fn extension_area_blob_kind() -> BlobKind {
@@ -93,7 +93,7 @@ impl From<TgaError> for oxideav_core::Error {
         match e {
             TgaError::InvalidData(s) => oxideav_core::Error::InvalidData(s),
             TgaError::Unsupported(s) => oxideav_core::Error::Unsupported(s),
-            TgaError::LimitExceeded(s) => oxideav_core::Error::InvalidData(s),
+            TgaError::LimitExceeded(s) => oxideav_core::Error::ResourceExhausted(s),
             TgaError::Io(e) => oxideav_core::Error::Io(e),
         }
     }
@@ -397,6 +397,331 @@ impl TryFrom<(&VideoFrame, &CodecParameters)> for TgaImage {
     }
 }
 
+// ---- Option schemas ----
+
+/// The registry encoder's declared options (`CodecInfo::encoder_options`,
+/// parsed strictly from `CodecParameters::options` at construction) —
+/// every lossless `EncodeOptions` axis by name. There is **no
+/// `quality`**: TGA is lossless, so a `quality` key is an unknown
+/// option (`InvalidData`), and the gateway, which forwards
+/// `SaveOptions::quality` only to schemas that declare it, never sends
+/// one. RLE is an option, not a layout.
+///
+/// | name | kind | default | `EncodeOptions` field |
+/// |---|---|---|---|
+/// | `rle` | bool | `true` | `rle` (image types 9 / 10 / 11 vs 1 / 2 / 3) |
+/// | `row_order` | `top-down` / `bottom-up` | `top-down` | `row_order` |
+/// | `alpha_bits` | u32 0..=15 | `8` (unset: the layout's count) | `alpha_bits` |
+/// | `drop_opaque_alpha` | bool | `false` | `drop_opaque_alpha` |
+/// | `true_colour_depth` | `native` / `15` / `16` | `native` | `true_colour_depth` |
+/// | `palette_entry_size` | `auto` / `15` / `16` / `24` / `32` | `auto` (24, or 32 with an alpha record) | `palette_entry_size` |
+/// | `image_id` | string ≤ 255 bytes | empty | `image_id` |
+/// | `screen_origin_x` / `screen_origin_y` | u32 ≤ 65535 | `0` | `screen_origin` |
+/// | `footer` | bool | `false` | `footer` |
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct TgaEncoderOptions {
+    /// `rle`.
+    pub rle: Option<bool>,
+    /// `row_order`.
+    pub row_order: Option<RowOrder>,
+    /// `alpha_bits`.
+    pub alpha_bits: Option<u8>,
+    /// `drop_opaque_alpha`.
+    pub drop_opaque_alpha: Option<bool>,
+    /// `true_colour_depth` (`None` = native 24 / 32).
+    pub true_colour_depth: Option<TrueColourDepth>,
+    /// `palette_entry_size` (`None` = auto).
+    pub palette_entry_size: Option<ColorMapEntrySize>,
+    /// `image_id`.
+    pub image_id: Option<String>,
+    /// `screen_origin_x`.
+    pub screen_origin_x: Option<u32>,
+    /// `screen_origin_y`.
+    pub screen_origin_y: Option<u32>,
+    /// `footer`.
+    pub footer: Option<bool>,
+}
+
+impl TgaEncoderOptions {
+    /// Nothing set: [`EncodeOptions::default`] on conversion.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The `EncodeOptions` these select, every unset key at its
+    /// default. `alpha_bits` above 15, a screen origin above 65535 or
+    /// an `image_id` over 255 bytes are `InvalidData`.
+    pub fn to_encode_options(&self) -> oxideav_core::Result<EncodeOptions> {
+        let mut o = EncodeOptions::default();
+        if let Some(rle) = self.rle {
+            o.rle = rle;
+        }
+        if let Some(order) = self.row_order {
+            o.row_order = order;
+        }
+        if let Some(bits) = self.alpha_bits {
+            if bits > crate::types::TGA_ATTRIBUTE_BITS_MAX {
+                return Err(oxideav_core::Error::invalid(format!(
+                    "TGA encoder: alpha_bits {bits} exceeds the descriptor's 4-bit field (0..=15)"
+                )));
+            }
+            o.alpha_bits = Some(bits);
+        }
+        if let Some(d) = self.drop_opaque_alpha {
+            o.drop_opaque_alpha = d;
+        }
+        o.true_colour_depth = self.true_colour_depth;
+        o.palette_entry_size = self.palette_entry_size;
+        if let Some(id) = &self.image_id {
+            if id.len() > crate::encoder::TGA_IMAGE_ID_MAX {
+                return Err(oxideav_core::Error::invalid(format!(
+                    "TGA encoder: image_id is {} bytes; the §C.3 field holds at most {}",
+                    id.len(),
+                    crate::encoder::TGA_IMAGE_ID_MAX
+                )));
+            }
+            o.image_id = id.as_bytes().to_vec();
+        }
+        let coord = |v: Option<u32>, name: &str| -> oxideav_core::Result<u16> {
+            match v {
+                None => Ok(0),
+                Some(v) => u16::try_from(v).map_err(|_| {
+                    oxideav_core::Error::invalid(format!(
+                        "TGA encoder: {name} {v} exceeds the header's 16-bit field"
+                    ))
+                }),
+            }
+        };
+        o.screen_origin = ImageOrigin::new(
+            coord(self.screen_origin_x, "screen_origin_x")?,
+            coord(self.screen_origin_y, "screen_origin_y")?,
+        );
+        if let Some(f) = self.footer {
+            o.footer = f;
+        }
+        Ok(o)
+    }
+}
+
+impl CodecOptionsStruct for TgaEncoderOptions {
+    const SCHEMA: &'static [OptionField] = &[
+        OptionField {
+            name: "rle",
+            kind: OptionKind::Bool,
+            default: OptionValue::Bool(true),
+            help: "§C.5 run-length image types (9 / 10 / 11) instead of uncompressed (1 / 2 / 3)",
+        },
+        OptionField {
+            name: "row_order",
+            kind: OptionKind::Enum(&["top-down", "bottom-up"]),
+            default: OptionValue::String(String::new()),
+            help: "row storage order (image-descriptor bit 5); default top-down",
+        },
+        OptionField {
+            name: "alpha_bits",
+            kind: OptionKind::U32,
+            default: OptionValue::U32(8),
+            help: "descriptor attribute-bit count override for true colour (0..=15); 0 = TARGA-32, fourth byte not alpha",
+        },
+        OptionField {
+            name: "drop_opaque_alpha",
+            kind: OptionKind::Bool,
+            default: OptionValue::Bool(false),
+            help: "write a uniformly opaque Rgba picture at 24 bits",
+        },
+        OptionField {
+            name: "true_colour_depth",
+            kind: OptionKind::Enum(&["native", "15", "16"]),
+            default: OptionValue::String(String::new()),
+            help: "true-colour depth on the wire: native (24 / 32 by layout) or 15 / 16 bits (5-bit channels, lossy unless the source is 5-bit-exact)",
+        },
+        OptionField {
+            name: "palette_entry_size",
+            kind: OptionKind::Enum(&["auto", "15", "16", "24", "32"]),
+            default: OptionValue::String(String::new()),
+            help: "colour-map entry width for Pal8: auto (24, or 32 with a palette-alpha record), or 15 / 16 (5-bit, lossy) / 24 / 32",
+        },
+        OptionField {
+            name: "image_id",
+            kind: OptionKind::String,
+            default: OptionValue::String(String::new()),
+            help: "§C.3 Image Identification Field, at most 255 bytes",
+        },
+        OptionField {
+            name: "screen_origin_x",
+            kind: OptionKind::U32,
+            default: OptionValue::U32(0),
+            help: "§5.1 on-screen lower-left X placement (0..=65535)",
+        },
+        OptionField {
+            name: "screen_origin_y",
+            kind: OptionKind::U32,
+            default: OptionValue::U32(0),
+            help: "§5.2 on-screen lower-left Y placement (0..=65535)",
+        },
+        OptionField {
+            name: "footer",
+            kind: OptionKind::Bool,
+            default: OptionValue::Bool(false),
+            help: "always append the TGA 2.0 footer, even with no extension area to point at",
+        },
+    ];
+
+    fn apply(&mut self, key: &str, value: &OptionValue) -> oxideav_core::Result<()> {
+        match key {
+            "rle" => self.rle = Some(value.as_bool()?),
+            "row_order" => {
+                self.row_order = Some(match value.as_str()? {
+                    "bottom-up" => RowOrder::BottomUp,
+                    _ => RowOrder::TopDown,
+                })
+            }
+            "alpha_bits" => {
+                let v = value.as_u32()?;
+                self.alpha_bits = Some(u8::try_from(v).map_err(|_| {
+                    oxideav_core::Error::invalid(format!(
+                        "TGA encoder: alpha_bits {v} exceeds the descriptor's 4-bit field (0..=15)"
+                    ))
+                })?);
+            }
+            "drop_opaque_alpha" => self.drop_opaque_alpha = Some(value.as_bool()?),
+            "true_colour_depth" => {
+                self.true_colour_depth = match value.as_str()? {
+                    "15" => Some(TrueColourDepth::Bits15),
+                    "16" => Some(TrueColourDepth::Bits16),
+                    _ => None,
+                }
+            }
+            "palette_entry_size" => {
+                self.palette_entry_size = match value.as_str()? {
+                    "15" => Some(ColorMapEntrySize::Bits15),
+                    "16" => Some(ColorMapEntrySize::Bits16),
+                    "24" => Some(ColorMapEntrySize::Bits24),
+                    "32" => Some(ColorMapEntrySize::Bits32),
+                    _ => None,
+                }
+            }
+            "image_id" => self.image_id = Some(value.as_str()?.to_string()),
+            "screen_origin_x" => self.screen_origin_x = Some(value.as_u32()?),
+            "screen_origin_y" => self.screen_origin_y = Some(value.as_u32()?),
+            "footer" => self.footer = Some(value.as_bool()?),
+            other => {
+                return Err(oxideav_core::Error::invalid(format!(
+                    "TGA encoder: unknown option '{other}'"
+                )))
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The registry decoder's declared options (`CodecInfo::decoder_options`).
+///
+/// | name | kind | default | effect |
+/// |---|---|---|---|
+/// | `strict` | bool | `false` | [`DecodeOptions::strict`]: §C.5 packets crossing a scan line and a non-zero §C.2 interleaving flag are errors |
+/// | `max_pixels` | u32 | `0` (unlimited) | [`DecodeOptions::max_pixels`] |
+/// | `max_bytes` | u32 | `1073741824` | [`DecodeOptions::max_bytes`] (decoded plane); `0` lifts it |
+/// | `display` | bool | `false` | finalise each frame through [`crate::decode_tga_for_display`] with [`crate::TgaDisplayOptions::default`] (alpha resolution → tone curve → key colour → pixel aspect) instead of emitting the raw samples |
+///
+/// Independently of these, the stream's `DecoderLimits`
+/// (`CodecParameters::limits`: `max_pixels_per_frame`,
+/// `max_alloc_bytes_per_frame`) cap the geometry too — the tighter of
+/// the two applies, before any plane is allocated
+/// (`Error::ResourceExhausted`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TgaDecoderOptions {
+    /// `strict`.
+    pub strict: Option<bool>,
+    /// `max_pixels` (`Some(0)` = unlimited).
+    pub max_pixels: Option<u32>,
+    /// `max_bytes` (`Some(0)` = unlimited).
+    pub max_bytes: Option<u32>,
+    /// `display`.
+    pub display: Option<bool>,
+}
+
+impl TgaDecoderOptions {
+    /// Nothing set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The `DecodeOptions` these select on top of `limits` (the
+    /// stream's `DecoderLimits`): the tighter cap wins.
+    pub fn to_decode_options(&self, limits: &oxideav_core::DecoderLimits) -> DecodeOptions {
+        let mut o = DecodeOptions::default()
+            .with_strict(self.strict.unwrap_or(false))
+            .with_max_pixels(limits.max_pixels_per_frame)
+            .with_max_bytes(
+                limits
+                    .max_alloc_bytes_per_frame
+                    .min(DecodeOptions::DEFAULT_MAX_BYTES),
+            );
+        if let Some(p) = self.max_pixels {
+            o.max_pixels = match (p, o.max_pixels) {
+                (0, l) => l,
+                (p, Some(l)) => Some(u64::from(p).min(l)),
+                (p, None) => Some(u64::from(p)),
+            };
+        }
+        if let Some(b) = self.max_bytes {
+            o.max_bytes = match (b, o.max_bytes) {
+                (0, l) => l,
+                (b, Some(l)) => Some(u64::from(b).min(l)),
+                (b, None) => Some(u64::from(b)),
+            };
+        }
+        o
+    }
+}
+
+impl CodecOptionsStruct for TgaDecoderOptions {
+    const SCHEMA: &'static [OptionField] = &[
+        OptionField {
+            name: "strict",
+            kind: OptionKind::Bool,
+            default: OptionValue::Bool(false),
+            help: "treat the spec's should-rules as errors (RLE packets crossing a scan line, non-zero interleaving flag)",
+        },
+        OptionField {
+            name: "max_pixels",
+            kind: OptionKind::U32,
+            default: OptionValue::U32(0),
+            help: "refuse pictures with more pixels than this before allocating (0 = unlimited; the stream's DecoderLimits still apply)",
+        },
+        OptionField {
+            name: "max_bytes",
+            kind: OptionKind::U32,
+            default: OptionValue::U32(DecodeOptions::DEFAULT_MAX_BYTES as u32),
+            help: "refuse pictures whose decoded plane exceeds this many bytes (0 = unlimited; the stream's DecoderLimits still apply)",
+        },
+        OptionField {
+            name: "display",
+            kind: OptionKind::Bool,
+            default: OptionValue::Bool(false),
+            help: "apply the file's own §C.6 metadata (alpha resolution, tone curve, key colour, pixel aspect) instead of emitting raw samples",
+        },
+    ];
+
+    fn apply(&mut self, key: &str, value: &OptionValue) -> oxideav_core::Result<()> {
+        match key {
+            "strict" => self.strict = Some(value.as_bool()?),
+            "max_pixels" => self.max_pixels = Some(value.as_u32()?),
+            "max_bytes" => self.max_bytes = Some(value.as_u32()?),
+            "display" => self.display = Some(value.as_bool()?),
+            other => {
+                return Err(oxideav_core::Error::invalid(format!(
+                    "TGA decoder: unknown option '{other}'"
+                )))
+            }
+        }
+        Ok(())
+    }
+}
+
 // ---- Decoder trait impl + factory ----
 
 /// Factory registered with the codec registry. Consumes one packet per
@@ -417,12 +742,17 @@ impl TryFrom<(&VideoFrame, &CodecParameters)> for TgaImage {
 /// attributes-type / key-colour / pixel-aspect metadata applied builds
 /// the decoder with [`make_decoder_with_display_options`] (or runs
 /// [`crate::decode_tga_for_display`] on the packet bytes).
-pub fn make_decoder(_params: &CodecParameters) -> oxideav_core::Result<Box<dyn Decoder>> {
+pub fn make_decoder(params: &CodecParameters) -> oxideav_core::Result<Box<dyn Decoder>> {
+    let o: TgaDecoderOptions = parse_options(&params.options)?;
     Ok(Box::new(TgaDecoder {
         codec_id: CodecId::new(crate::CODEC_ID_STR),
         pending: None,
         eof: false,
-        display: None,
+        decode: o.to_decode_options(&params.limits),
+        display: o
+            .display
+            .unwrap_or(false)
+            .then(crate::display::TgaDisplayOptions::default),
     }))
 }
 
@@ -444,6 +774,7 @@ pub fn make_decoder_with_display_options(
         codec_id: CodecId::new(crate::CODEC_ID_STR),
         pending: None,
         eof: false,
+        decode: DecodeOptions::default(),
         display: Some(options),
     }))
 }
@@ -452,6 +783,9 @@ struct TgaDecoder {
     codec_id: CodecId,
     pending: Option<VideoFrame>,
     eof: bool,
+    /// Limits + strictness for the raw path (the display path applies
+    /// the pipeline's own defaults).
+    decode: DecodeOptions,
     /// When `Some`, each decoded frame is finalized through
     /// [`crate::decode_tga_for_display`] with these options; when `None`
     /// the raw samples are emitted in the native layout.
@@ -465,7 +799,7 @@ impl Decoder for TgaDecoder {
     fn send_packet(&mut self, packet: &Packet) -> oxideav_core::Result<()> {
         let image = match self.display {
             Some(opts) => crate::display::decode_tga_for_display(&packet.data, &opts)?,
-            None => crate::decoder::decode_image(&packet.data, &DecodeOptions::default())?,
+            None => crate::decoder::decode_image(&packet.data, &self.decode)?,
         };
         // A colour map with 16 / 32-bit entries carries an attribute
         // channel (§C.2); the frame states so through the palette-alpha
@@ -523,11 +857,12 @@ pub fn make_encoder(params: &CodecParameters) -> oxideav_core::Result<Box<dyn En
         Some(pf) => Some(to_core_pixel_format(accepted_layout(pf)?.0)),
         None => None,
     };
+    let o: TgaEncoderOptions = parse_options(&params.options)?;
     Ok(Box::new(TgaEncoder {
         codec_id: CodecId::new(crate::CODEC_ID_STR),
         in_params: params.clone(),
         out_params,
-        opts: EncodeOptions::default(),
+        opts: o.to_encode_options()?,
         pending: None,
         sent: false,
         eof: false,
@@ -631,7 +966,9 @@ pub fn register_codecs(reg: &mut CodecRegistry) {
         CodecInfo::new(CodecId::new(crate::CODEC_ID_STR))
             .capabilities(caps)
             .decoder(make_decoder)
-            .encoder(make_encoder),
+            .encoder(make_encoder)
+            .encoder_options::<TgaEncoderOptions>()
+            .decoder_options::<TgaDecoderOptions>(),
     );
 }
 
