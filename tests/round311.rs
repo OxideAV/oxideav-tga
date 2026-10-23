@@ -22,8 +22,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    parse_tga, parse_tga_attribute_bits, resolve_alpha_from_descriptor, AttributeBits,
-    TgaPixelFormat, TGA_ATTRIBUTE_BITS_MAX,
+    AttributeBits, TGA_ATTRIBUTE_BITS_MAX, TgaPixelFormat, parse_tga, parse_tga_attribute_bits,
+    resolve_alpha_from_descriptor,
 };
 
 /// Build a minimal 1×1 uncompressed 32-bpp true-colour (type 2) TGA with
@@ -94,9 +94,11 @@ fn parse_attribute_bits_reads_header() {
     assert!(bits.has_alpha());
 
     let file_none = build_bgra_1px(0x20, [0x10, 0x20, 0x30, 0x40]);
-    assert!(parse_tga_attribute_bits(&file_none)
-        .expect("header present")
-        .is_none());
+    assert!(
+        parse_tga_attribute_bits(&file_none)
+            .expect("header present")
+            .is_none()
+    );
 }
 
 #[test]
@@ -165,7 +167,7 @@ fn resolver_acts_even_when_alpha_not_all_zero() {
 fn resolver_noop_on_truncated_header() {
     let mut img = parse_tga(&build_bgra_1px(0x20, [1, 2, 3, 0])).expect("decode");
     img.data_mut()[3] = 0x00; // sentinel
-                              // A buffer too short to hold a header yields None and no mutation.
+    // A buffer too short to hold a header yields None and no mutation.
     assert!(resolve_alpha_from_descriptor(&[0u8; 4], &mut img).is_none());
     assert_eq!(img.data()[3], 0x00, "no-op when header can't be read");
 }

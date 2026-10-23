@@ -6,9 +6,9 @@
 //! (`TgaDeveloperArea::to_portable_bytes` / `tags_from_portable_bytes`).
 
 use oxideav_tga::{
-    encode, encode_tga_with_extension, extension_area_bytes, parse_tga_developer_area,
-    parse_tga_extension_area, DeveloperTagInput, EncodeOptions, ExtensionAreaInput,
-    TgaDeveloperArea, TgaExtensionArea, TgaImage, TgaTimestamp, TGA_EXTENSION_AREA_SIZE,
+    DeveloperTagInput, EncodeOptions, ExtensionAreaInput, TGA_EXTENSION_AREA_SIZE,
+    TgaDeveloperArea, TgaExtensionArea, TgaImage, TgaTimestamp, encode, encode_tga_with_extension,
+    extension_area_bytes, parse_tga_developer_area, parse_tga_extension_area,
 };
 
 fn base() -> Vec<u8> {
@@ -84,10 +84,12 @@ fn metadata_pairs_carry_the_set_text_fields_only() {
     );
     // Nothing set, nothing reported.
     let empty = encode_tga_with_extension(&base(), &ExtensionAreaInput::default()).unwrap();
-    assert!(parse_tga_extension_area(&empty)
-        .unwrap()
-        .metadata_pairs()
-        .is_empty());
+    assert!(
+        parse_tga_extension_area(&empty)
+            .unwrap()
+            .metadata_pairs()
+            .is_empty()
+    );
     // A version with no letter.
     let v = ExtensionAreaInput {
         software_version: (100, ' '),

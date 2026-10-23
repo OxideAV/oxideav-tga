@@ -14,11 +14,11 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga_colour_correction_table,
-    parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer,
-    parse_tga_scan_line_table, AttributesType, DeveloperTagInput, ExtensionAreaInput,
-    TgaColourCorrectionTable, TgaDeveloperArea, TgaScanLineTable, TgaTimestamp,
-    TGA_COLOUR_CORRECTION_TABLE_ENTRIES, TGA_COLOUR_CORRECTION_TABLE_SIZE,
+    AttributesType, DeveloperTagInput, ExtensionAreaInput, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
+    TGA_COLOUR_CORRECTION_TABLE_SIZE, TgaColourCorrectionTable, TgaDeveloperArea, TgaScanLineTable,
+    TgaTimestamp, encode_tga_uncompressed, encode_tga_with_extension,
+    parse_tga_colour_correction_table, parse_tga_developer_area, parse_tga_extension_area,
+    parse_tga_footer, parse_tga_scan_line_table,
 };
 
 // ---------------------------------------------------------------------------

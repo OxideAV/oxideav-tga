@@ -36,7 +36,7 @@
 // These tests pin the pre-contract entry points (deprecated for one
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
-use oxideav_tga::{TgaScanLineTable, TGA_SCAN_LINE_OFFSET_BYTES};
+use oxideav_tga::{TGA_SCAN_LINE_OFFSET_BYTES, TgaScanLineTable};
 
 // ---------------------------------------------------------------------------
 // Constants / sentinel / Default

@@ -4,7 +4,7 @@
 //! round 477: a 277-entry map decoded but `encode` refused the palette).
 
 use oxideav_tga::{
-    decode, encode, parse_tga_color_map, EncodeOptions, TgaPixelFormat, TGA_HEADER_SIZE,
+    EncodeOptions, TGA_HEADER_SIZE, TgaPixelFormat, decode, encode, parse_tga_color_map,
 };
 
 fn long_map_file(entries: u16, first: u16) -> Vec<u8> {

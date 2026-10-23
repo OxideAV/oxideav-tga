@@ -23,7 +23,7 @@
 // These tests pin the pre-contract entry points (deprecated for one
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
-use oxideav_tga::{parse_tga, parse_tga_interleaving, Interleaving, TGA_INTERLEAVING_MASK};
+use oxideav_tga::{Interleaving, TGA_INTERLEAVING_MASK, parse_tga, parse_tga_interleaving};
 
 /// Build a minimal 1×1 uncompressed 24-bpp true-colour (type 2) TGA with
 /// a caller-chosen descriptor byte and one BGR pixel.

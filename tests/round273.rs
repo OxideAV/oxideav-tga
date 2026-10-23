@@ -20,7 +20,7 @@
 // These tests pin the pre-contract entry points (deprecated for one
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
-use oxideav_tga::{parse_tga, TgaPixelFormat};
+use oxideav_tga::{TgaPixelFormat, parse_tga};
 
 /// Build a 4×1 type-1 (uncompressed colour-mapped) TGA whose colour map
 /// declares a non-zero Color Map Origin. The on-disk palette stores
@@ -144,8 +144,7 @@ fn rle_colour_mapped_honours_origin() {
     let bytes = rle_colour_mapped_run_with_origin(100, &pal, 101);
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 4);
-    let want: Vec<u8> = std::iter::repeat([0u8, 255, 0, 255])
-        .take(4)
+    let want: Vec<u8> = std::iter::repeat_n([0u8, 255, 0, 255], 4)
         .flatten()
         .collect();
     assert_eq!(img.data(), want);

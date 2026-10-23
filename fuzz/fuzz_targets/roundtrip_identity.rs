@@ -43,10 +43,9 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_palette_with_entry_size, encode_tga_rle, encode_tga_rle_rgb24,
-    encode_tga_uncompressed, encode_tga_uncompressed_rgb24, parse_tga, ColorMapEntrySize,
-    ImageType, TgaPixelFormat,
+    ColorMapEntrySize, ImageType, TgaPixelFormat, encode_tga_grayscale, encode_tga_grayscale_rle,
+    encode_tga_palette, encode_tga_palette_rle, encode_tga_palette_with_entry_size, encode_tga_rle,
+    encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24, parse_tga,
 };
 
 const MAX_PIXELS: usize = 4 * 1024 * 1024;
@@ -159,7 +158,7 @@ impl Writer {
 /// Widen an RGB (3-byte) buffer to RGBA with `0xFF` alpha.
 fn widen_rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgb.len() / 3 * 4);
-    for chunk in rgb.chunks_exact(3) {
+    for chunk in rgb.as_chunks::<3>().0 {
         out.extend_from_slice(chunk);
         out.push(0xFF);
     }
@@ -169,7 +168,7 @@ fn widen_rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
 /// Force the alpha byte of every RGBA pixel to `0xFF`.
 fn force_opaque_rgba(rgba: &[u8]) -> Vec<u8> {
     let mut out = rgba.to_vec();
-    for px in out.chunks_exact_mut(4) {
+    for px in out.as_chunks_mut::<4>().0 {
         px[3] = 0xFF;
     }
     out

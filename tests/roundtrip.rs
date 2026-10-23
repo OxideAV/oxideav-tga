@@ -10,7 +10,7 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_rle, encode_tga_uncompressed, parse_tga, parse_tga_footer, TgaPixelFormat,
+    TgaPixelFormat, encode_tga_rle, encode_tga_uncompressed, parse_tga, parse_tga_footer,
 };
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ fn roundtrip_type10_solid_color_compresses_hard() {
     // run-length packets per row: 100 pixels per row → 1 packet header
     // + 1 pixel per row, max-128 capped runs.
     let mut rgba = vec![0u8; 100 * 100 * 4];
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px.copy_from_slice(&[123, 45, 67, 255]);
     }
     let bytes = encode_tga_rle(100, 100, &rgba).unwrap();
@@ -184,12 +184,12 @@ fn parse_type1_uncompressed_colour_mapped_24bit_palette() {
     bytes.extend_from_slice(&2u16.to_le_bytes()); // height
     bytes.push(8); // depth
     bytes.push(0x20); // descriptor — top-down
-                      // Palette: BGR per entry.
+    // Palette: BGR per entry.
     bytes.extend_from_slice(&[0x00, 0x00, 0xFF]); // 0 → red
     bytes.extend_from_slice(&[0x00, 0xFF, 0x00]); // 1 → green
     bytes.extend_from_slice(&[0xFF, 0x00, 0x00]); // 2 → blue
     bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF]); // 3 → white
-                                                  // Pixels (top-down because descriptor bit 5 set).
+    // Pixels (top-down because descriptor bit 5 set).
     bytes.extend_from_slice(&[0, 1, 2, 3, 3, 2, 1, 0]);
     let img = parse_tga(&bytes).unwrap();
     assert_eq!(img.width, 4);
@@ -261,7 +261,7 @@ fn parse_type9_rle_colour_mapped() {
     bytes.push(0x20);
     bytes.extend_from_slice(&[0x00, 0x00, 0xFF]); // 0 → red
     bytes.extend_from_slice(&[0xFF, 0x00, 0x00]); // 1 → blue
-                                                  // RLE stream: run of 3 indices `0`, then raw of 3 indices `1,0,1`.
+    // RLE stream: run of 3 indices `0`, then raw of 3 indices `1,0,1`.
     bytes.push(0x80 | 2); // run, count = 3
     bytes.push(0); // pixel = palette[0] (red)
     bytes.push(2); // raw, count = 3
@@ -385,7 +385,7 @@ fn parse_type2_bottom_up_is_flipped_to_top_down() {
     bytes.extend_from_slice(&2u16.to_le_bytes());
     bytes.push(24);
     bytes.push(0x00); // bottom-up
-                      // BGR on disk; bottom row first.
+    // BGR on disk; bottom row first.
     bytes.extend_from_slice(&[0xFF, 0x00, 0x00]); // blue (BGR)
     bytes.extend_from_slice(&[0x00, 0x00, 0xFF]); // red
     let img = parse_tga(&bytes).unwrap();

@@ -18,8 +18,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_attributes_type,
     AttributesType, ExtensionAreaInput, TgaImage, TgaPixelFormat, TgaTimestamp,
+    encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_attributes_type,
 };
 
 // ---------------------------------------------------------------------------
@@ -278,7 +278,7 @@ fn end_to_end_decode_then_normalize_premultiplied() {
 
     attr.apply_to_image(&mut img);
     // Every stored (128,0,0,128) un-premultiplies to straight (255,0,0,128).
-    for px in img.data().chunks_exact(4) {
+    for px in img.data().as_chunks::<4>().0 {
         assert_eq!(px, &[255, 0, 0, 128]);
     }
 }
@@ -302,7 +302,7 @@ fn end_to_end_decode_then_normalize_no_alpha() {
     let attr = parse_tga_attributes_type(&full).expect("recover attributes type");
     assert_eq!(attr, AttributesType::NoAlpha);
     attr.apply_to_image(&mut img);
-    for px in img.data().chunks_exact(4) {
+    for px in img.data().as_chunks::<4>().0 {
         assert_eq!(px, &[40, 80, 120, 255]);
     }
 }

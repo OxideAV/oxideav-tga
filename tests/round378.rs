@@ -22,11 +22,11 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    decode_tga_for_display, decode_tga_for_display_reported, decode_tga_frame,
-    encode_tga_grayscale, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
-    encode_tga_with_extension, parse_tga, set_image_origin, AlphaResolution, AttributesType,
-    DeveloperTagInput, ExtensionAreaInput, GammaValue, ImageOrigin, TgaDisplayOptions,
-    TgaPixelFormat, ToneApplied,
+    AlphaResolution, AttributesType, DeveloperTagInput, ExtensionAreaInput, GammaValue,
+    ImageOrigin, TgaDisplayOptions, TgaPixelFormat, ToneApplied, decode_tga_for_display,
+    decode_tga_for_display_reported, decode_tga_frame, encode_tga_grayscale,
+    encode_tga_uncompressed, encode_tga_uncompressed_rgb24, encode_tga_with_extension, parse_tga,
+    set_image_origin,
 };
 
 /// Gamma channel reference: `round((x/255)^g * 255)`, matching
@@ -121,7 +121,13 @@ fn tone_pass_applies_gamma() {
     // RGB24 input is decoded to RGBA (alpha forced 0xFF), so each pixel is 4 bytes.
     assert_eq!(disp.format, TgaPixelFormat::Rgba);
     assert!(matches!(report.tone, ToneApplied::Gamma(_)));
-    for (r, d) in raw.data().chunks_exact(4).zip(disp.data().chunks_exact(4)) {
+    for (r, d) in raw
+        .data()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(disp.data().as_chunks::<4>().0)
+    {
         assert_eq!(d[0], gamma_channel(r[0], 0.5));
         assert_eq!(d[1], gamma_channel(r[1], 0.5));
         assert_eq!(d[2], gamma_channel(r[2], 0.5));
@@ -264,7 +270,7 @@ fn colour_correction_takes_precedence_over_gamma() {
     let base = encode_tga_uncompressed_rgb24(1, 1, &rgb).unwrap();
 
     let mut cct = TgaColourCorrectionTable::default(); // identity
-                                                       // Invert red channel: entry i maps to (255-i) scaled to u16 high byte.
+    // Invert red channel: entry i maps to (255-i) scaled to u16 high byte.
     for i in 0..256 {
         cct.red[i] = ((255 - i) as u16) << 8 | ((255 - i) as u16);
     }
@@ -519,7 +525,7 @@ fn decoded_frame_bundles_image_matching_display_path() {
     let frame = decode_tga_frame(&file, &TgaDisplayOptions::default()).unwrap();
     assert_eq!(frame.image.data(), want.data());
     assert_eq!(frame.image.data()[3], 0xFF); // resolved opaque
-                                             // No placement / stamp / dev tags in this file.
+    // No placement / stamp / dev tags in this file.
     assert_eq!(frame.screen_origin, ImageOrigin::ORIGIN);
     assert!(!frame.has_screen_offset());
     assert!(!frame.has_postage_stamp());

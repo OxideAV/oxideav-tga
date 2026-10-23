@@ -37,11 +37,11 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_rle, encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
+    ExtensionAreaInput, TGA_IMAGE_ID_MAX, TgaError, TgaImage, TgaPixelFormat, encode_tga_grayscale,
+    encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle, encode_tga_rle,
+    encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
     encode_tga_with_extension, parse_tga, parse_tga_extension_area, parse_tga_footer,
-    parse_tga_image_id, parse_tga_postage_stamp, splice_image_id, ExtensionAreaInput, TgaError,
-    TgaImage, TgaPixelFormat, TGA_IMAGE_ID_MAX,
+    parse_tga_image_id, parse_tga_postage_stamp, splice_image_id,
 };
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ fn image_id_roundtrip_uncompressed_rgb24() {
     assert_eq!(img.height, 3);
     // RGB24 input is decoded as RGBA (alpha forced to 0xFF).
     assert_eq!(img.format, TgaPixelFormat::Rgba);
-    for (i, px) in img.data().chunks_exact(4).enumerate() {
+    for (i, px) in img.data().as_chunks::<4>().0.iter().enumerate() {
         let src = &rgb[i * 3..i * 3 + 3];
         assert_eq!(&px[..3], src);
         assert_eq!(px[3], 0xFF);
@@ -164,7 +164,7 @@ fn image_id_roundtrip_rle_rgb24() {
     splice_image_id(&mut base, SAMPLE_ID).unwrap();
     assert_image_id_round_trip(&base, SAMPLE_ID);
     let img = parse_tga(&base).unwrap();
-    for (i, px) in img.data().chunks_exact(4).enumerate() {
+    for (i, px) in img.data().as_chunks::<4>().0.iter().enumerate() {
         let src = &rgb[i * 3..i * 3 + 3];
         assert_eq!(&px[..3], src);
         assert_eq!(px[3], 0xFF);

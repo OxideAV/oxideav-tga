@@ -32,8 +32,8 @@ use crate::error::{Result, TgaError as Error};
 use crate::image::{Palette, TgaImage, TgaPixelFormat};
 use crate::options::{EncodeOptions, RowOrder, TrueColourDepth};
 use crate::types::{
-    ColorMapEntrySize, ImageOrigin, ImageType, TgaColourCorrectionTable, TgaDeveloperTag,
-    TgaScanLineTable, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
+    ColorMapEntrySize, ImageOrigin, ImageType, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE,
+    TGA_HEADER_SIZE, TgaColourCorrectionTable, TgaDeveloperTag, TgaScanLineTable,
 };
 
 /// The framework factory moved to [`crate::registry`]; this path stays
@@ -70,7 +70,7 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
     let mut format = image.format;
     if format == TgaPixelFormat::Rgba
         && opts.drop_opaque_alpha
-        && image.data().chunks_exact(4).all(|p| p[3] == 0xFF)
+        && image.data().as_chunks::<4>().0.iter().all(|p| p[3] == 0xFF)
     {
         format = TgaPixelFormat::Rgb24;
     }
@@ -153,18 +153,18 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
         match (image.format, depth) {
             // RGBA source written at 32 bits: BGRA.
             (TgaPixelFormat::Rgba, 32) => {
-                for p in row.chunks_exact(4) {
+                for p in row.as_chunks::<4>().0 {
                     wire_row.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
                 }
             }
             // RGBA source with uniformly opaque alpha, dropped to 24 bits.
             (TgaPixelFormat::Rgba, 24) => {
-                for p in row.chunks_exact(4) {
+                for p in row.as_chunks::<4>().0 {
                     wire_row.extend_from_slice(&[p[2], p[1], p[0]]);
                 }
             }
             (TgaPixelFormat::Rgb24, 24) => {
-                for p in row.chunks_exact(3) {
+                for p in row.as_chunks::<3>().0 {
                     wire_row.extend_from_slice(&[p[2], p[1], p[0]]);
                 }
             }
@@ -222,10 +222,10 @@ fn gamma_to_ratio(g: f32) -> (u16, u16) {
 
 /// Fill an unset extension gamma from the image's `metadata.gamma`.
 fn sync_gamma(mut ext: ExtensionAreaInput, gamma: Option<(u16, u16)>) -> ExtensionAreaInput {
-    if ext.gamma.1 == 0 {
-        if let Some(g) = gamma {
-            ext.gamma = g;
-        }
+    if ext.gamma.1 == 0
+        && let Some(g) = gamma
+    {
+        ext.gamma = g;
     }
     ext
 }
@@ -326,7 +326,7 @@ fn legacy_opts(rle: bool) -> EncodeOptions {
 }
 
 fn check_raw_len(width: u16, height: u16, bpp: usize, len: usize, what: &str) -> Result<()> {
-    if len % bpp != 0 {
+    if !len.is_multiple_of(bpp) {
         return Err(Error::invalid(format!(
             "TGA encoder: {what} input length not multiple of {bpp}"
         )));
@@ -835,7 +835,7 @@ fn write_postage_stamp(out: &mut Vec<u8>, stamp: &TgaImage, parent_depth: u8) ->
     match stamp.format {
         TgaPixelFormat::Rgba | TgaPixelFormat::Rgb24 => match parent_depth {
             32 => {
-                for c in data.chunks_exact(4) {
+                for c in data.as_chunks::<4>().0 {
                     out.push(c[2]);
                     out.push(c[1]);
                     out.push(c[0]);
@@ -843,14 +843,14 @@ fn write_postage_stamp(out: &mut Vec<u8>, stamp: &TgaImage, parent_depth: u8) ->
                 }
             }
             24 => {
-                for c in data.chunks_exact(4) {
+                for c in data.as_chunks::<4>().0 {
                     out.push(c[2]);
                     out.push(c[1]);
                     out.push(c[0]);
                 }
             }
             15 | 16 => {
-                for c in data.chunks_exact(4) {
+                for c in data.as_chunks::<4>().0 {
                     out.extend_from_slice(&pack_a1r5g5b5([c[0], c[1], c[2], c[3]], parent_depth));
                 }
             }

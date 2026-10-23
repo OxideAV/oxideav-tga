@@ -19,10 +19,10 @@
 //! * The `From<TgaError> for oxideav_core::Error` conversion.
 
 use oxideav_core::{
-    parse_options, BlobKind, CodecCapabilities, CodecId, CodecInfo, CodecOptionsStruct,
-    CodecParameters, CodecRegistry, ColorPrimaries, ColorSignal, ContainerRegistry, Decoder,
-    Encoder, Frame, MatrixCoefficients, MetadataBlob, OptionField, OptionKind, OptionValue, Packet,
-    PixelFormat, RuntimeContext, TimeBase, TransferCharacteristics, VideoFrame, VideoPlane,
+    BlobKind, CodecCapabilities, CodecId, CodecInfo, CodecOptionsStruct, CodecParameters,
+    CodecRegistry, ColorPrimaries, ColorSignal, ContainerRegistry, Decoder, Encoder, Frame,
+    MatrixCoefficients, MetadataBlob, OptionField, OptionKind, OptionValue, Packet, PixelFormat,
+    RuntimeContext, TimeBase, TransferCharacteristics, VideoFrame, VideoPlane, parse_options,
 };
 
 use crate::container;
@@ -121,7 +121,7 @@ pub fn from_core_pixel_format(pf: PixelFormat) -> oxideav_core::Result<TgaPixelF
         other => {
             return Err(oxideav_core::Error::unsupported(format!(
                 "TGA: pixel format {other:?} not supported"
-            )))
+            )));
         }
     })
 }
@@ -180,7 +180,7 @@ fn accepted_layout(pf: PixelFormat) -> oxideav_core::Result<(TgaPixelFormat, Swi
             return Err(oxideav_core::Error::unsupported(format!(
                 "TGA encoder: pixel format {other:?} has no TGA carriage; accepted: {}",
                 accepted_names()
-            )))
+            )));
         }
     })
 }
@@ -619,7 +619,7 @@ impl CodecOptionsStruct for TgaEncoderOptions {
             other => {
                 return Err(oxideav_core::Error::invalid(format!(
                     "TGA encoder: unknown option '{other}'"
-                )))
+                )));
             }
         }
         Ok(())
@@ -725,7 +725,7 @@ impl CodecOptionsStruct for TgaDecoderOptions {
             other => {
                 return Err(oxideav_core::Error::invalid(format!(
                     "TGA decoder: unknown option '{other}'"
-                )))
+                )));
             }
         }
         Ok(())
@@ -905,7 +905,7 @@ impl Encoder for TgaEncoder {
             _ => {
                 return Err(oxideav_core::Error::invalid(
                     "TGA encoder: expected video frame",
-                ))
+                ));
             }
         };
         if self.in_params.pixel_format.is_none() {
@@ -1081,7 +1081,7 @@ mod runtime_entry_tests {
 
     #[test]
     fn decoder_and_demuxer_use_the_native_layout_and_do_not_stamp_colour() {
-        use crate::{encode, EncodeOptions};
+        use crate::{EncodeOptions, encode};
         let pal = Palette::new(vec![[1, 2, 3, 255], [4, 5, 6, 255]]);
         let cases = [
             (

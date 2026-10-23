@@ -39,10 +39,10 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_extension_area,
-    parse_tga_gamma, parse_tga_key_color, parse_tga_pixel_aspect_ratio, parse_tga_software_version,
     ExtensionAreaInput, GammaValue, KeyColor, PixelAspectRatio, SoftwareVersion, TgaImage,
-    TgaPixelFormat,
+    TgaPixelFormat, encode_tga_uncompressed, encode_tga_with_extension, parse_tga,
+    parse_tga_extension_area, parse_tga_gamma, parse_tga_key_color, parse_tga_pixel_aspect_ratio,
+    parse_tga_software_version,
 };
 
 // ---------------------------------------------------------------------------

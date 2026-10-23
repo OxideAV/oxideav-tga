@@ -18,8 +18,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga_developer_area,
     DeveloperTagInput, ExtensionAreaInput, TgaDeveloperArea, TgaDeveloperTag,
+    encode_tga_uncompressed, encode_tga_with_extension, parse_tga_developer_area,
 };
 
 #[test]
@@ -85,7 +85,7 @@ fn empty_directory_payload_by_id_is_none() {
 fn encoded_developer_area_one_call_lookup() {
     // 2×2 opaque RGBA → type-2 base, attach two payload tags + one marker.
     let mut rgba: Vec<u8> = (0..2 * 2 * 4).map(|i| (i * 7) as u8).collect();
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px[3] = 0xFF;
     }
     let base = encode_tga_uncompressed(2, 2, &rgba).expect("base encodes");

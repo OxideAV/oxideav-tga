@@ -18,11 +18,11 @@
 // These tests pin the pre-contract entry points (deprecated for one
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
-use oxideav_tga::{encode_tga_rle, encode_tga_with_extension, parse_tga_footer};
 use oxideav_tga::{
-    encode_tga_uncompressed, parse_header, parse_tga, parse_tga_image_id, parse_tga_image_origin,
-    set_image_origin, splice_image_id, ExtensionAreaInput, ImageOrigin, TGA_HEADER_SIZE,
+    ExtensionAreaInput, ImageOrigin, TGA_HEADER_SIZE, encode_tga_uncompressed, parse_header,
+    parse_tga, parse_tga_image_id, parse_tga_image_origin, set_image_origin, splice_image_id,
 };
+use oxideav_tga::{encode_tga_rle, encode_tga_with_extension, parse_tga_footer};
 
 /// Tiny RGBA frame for the encoder so the header reader has a real file
 /// to walk (every encoder writes the screen-origin `(0, 0)`).

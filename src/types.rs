@@ -627,7 +627,7 @@ impl AttributesType {
         }
         match image.format {
             crate::image::TgaPixelFormat::Rgba => {
-                for px in image.data_mut().chunks_exact_mut(4) {
+                for px in image.data_mut().as_chunks_mut::<4>().0 {
                     let out = self.normalize_rgba8([px[0], px[1], px[2], px[3]]);
                     px.copy_from_slice(&out);
                 }
@@ -1091,7 +1091,7 @@ impl KeyColor {
         match image.format {
             crate::image::TgaPixelFormat::Rgba => {
                 let mut keyed = 0u32;
-                for px in image.data_mut().chunks_exact_mut(4) {
+                for px in image.data_mut().as_chunks_mut::<4>().0 {
                     if self.r == px[0] && self.g == px[1] && self.b == px[2] {
                         px[3] = 0;
                         keyed += 1;
@@ -1419,7 +1419,7 @@ impl GammaValue {
         }
         match image.format {
             crate::image::TgaPixelFormat::Rgba => {
-                for px in image.data_mut().chunks_exact_mut(4) {
+                for px in image.data_mut().as_chunks_mut::<4>().0 {
                     let out = self.apply_to_rgba8([px[0], px[1], px[2], px[3]]);
                     px.copy_from_slice(&out);
                 }
@@ -2639,13 +2639,13 @@ impl TgaColourCorrectionTable {
     pub fn apply_to_image(&self, image: &mut crate::image::TgaImage) {
         match image.format {
             crate::image::TgaPixelFormat::Rgba => {
-                for px in image.data_mut().chunks_exact_mut(4) {
+                for px in image.data_mut().as_chunks_mut::<4>().0 {
                     let out = self.correct_rgba8([px[0], px[1], px[2], px[3]]);
                     px.copy_from_slice(&out);
                 }
             }
             crate::image::TgaPixelFormat::Rgb24 => {
-                for px in image.data_mut().chunks_exact_mut(3) {
+                for px in image.data_mut().as_chunks_mut::<3>().0 {
                     px[0] = (self.red[px[0] as usize] >> 8) as u8;
                     px[1] = (self.green[px[1] as usize] >> 8) as u8;
                     px[2] = (self.blue[px[2] as usize] >> 8) as u8;

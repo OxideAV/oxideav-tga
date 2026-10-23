@@ -20,8 +20,8 @@
 //! harness completes in well under a minute on a laptop. Tune via
 //! `cargo bench -- --sample-size N` if needed.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use oxideav_tga::{decode, encode, encode_rgb8, encode_rgba8, EncodeOptions, TgaImage};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use oxideav_tga::{EncodeOptions, TgaImage, decode, encode, encode_rgb8, encode_rgba8};
 
 fn unc() -> EncodeOptions {
     EncodeOptions::default()

@@ -43,9 +43,9 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga_developer_area,
-    DeveloperTagInput, ExtensionAreaInput, TgaDeveloperArea, TgaDeveloperTag,
-    TGA_DEVELOPER_DIRECTORY_HEADER_BYTES, TGA_DEVELOPER_TAG_BYTES,
+    DeveloperTagInput, ExtensionAreaInput, TGA_DEVELOPER_DIRECTORY_HEADER_BYTES,
+    TGA_DEVELOPER_TAG_BYTES, TgaDeveloperArea, TgaDeveloperTag, encode_tga_uncompressed,
+    encode_tga_with_extension, parse_tga_developer_area,
 };
 
 // ---------------------------------------------------------------------------
@@ -383,7 +383,7 @@ fn encoded_developer_area_supports_typed_lookup() {
     // (one in each §C.7 id range) + one marker.
     let rgba: Vec<u8> = (0..2 * 2 * 4).map(|i| (i * 7) as u8).collect();
     let mut rgba = rgba;
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px[3] = 0xFF;
     }
     let base = encode_tga_uncompressed(2, 2, &rgba).expect("base encodes");

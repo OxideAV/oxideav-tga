@@ -40,8 +40,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga_footer, ExtensionAreaInput,
-    TgaFooter, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
+    ExtensionAreaInput, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE, TgaFooter, encode_tga_uncompressed,
+    encode_tga_with_extension, parse_tga_footer,
 };
 
 // ---------------------------------------------------------------------------

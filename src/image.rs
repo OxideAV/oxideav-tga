@@ -334,7 +334,9 @@ impl Palette {
     pub fn from_rgb(rgb: &[u8], alpha: Option<&[u8]>) -> Self {
         let alpha = alpha.unwrap_or(&[]);
         let entries = rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .enumerate()
             .map(|(i, e)| [e[0], e[1], e[2], alpha.get(i).copied().unwrap_or(255)])
             .collect();
@@ -736,12 +738,22 @@ impl TgaImage {
             let dst = &mut out[y * w * out_bpp..(y + 1) * w * out_bpp];
             match self.format {
                 PixelFormat::Rgba => {
-                    for (s, d) in row.chunks_exact(4).zip(dst.chunks_exact_mut(out_bpp)) {
+                    for (s, d) in row
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(dst.chunks_exact_mut(out_bpp))
+                    {
                         d.copy_from_slice(&s[..out_bpp]);
                     }
                 }
                 PixelFormat::Rgb24 => {
-                    for (s, d) in row.chunks_exact(3).zip(dst.chunks_exact_mut(out_bpp)) {
+                    for (s, d) in row
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .zip(dst.chunks_exact_mut(out_bpp))
+                    {
                         d[..3].copy_from_slice(s);
                     }
                 }
@@ -797,7 +809,7 @@ impl TgaImage {
         let mut palette: Vec<[u8; 4]> = Vec::new();
         let mut indices: Vec<u8> = Vec::with_capacity(rgba.len() / 4);
         // Linear scan is fine for the <= 256 unique-colour budget.
-        for chunk in rgba.chunks_exact(4) {
+        for chunk in rgba.as_chunks::<4>().0 {
             let p = [chunk[0], chunk[1], chunk[2], chunk[3]];
             let idx = match palette.iter().position(|q| *q == p) {
                 Some(i) => i,
@@ -845,7 +857,7 @@ impl TgaImage {
         if data.is_empty() {
             return false;
         }
-        data.chunks_exact(4).all(|p| p[3] == 0)
+        data.as_chunks::<4>().0.iter().all(|p| p[3] == 0)
     }
 
     /// Force every alpha byte of an RGBA image to `0xFF` (fully opaque);
@@ -857,7 +869,7 @@ impl TgaImage {
     pub fn force_opaque(&mut self) {
         match self.format {
             PixelFormat::Rgba => {
-                for px in self.data_mut().chunks_exact_mut(4) {
+                for px in self.data_mut().as_chunks_mut::<4>().0 {
                     px[3] = 0xFF;
                 }
             }

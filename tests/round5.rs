@@ -12,10 +12,10 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_uncompressed, encode_tga_with_extension, parse_tga,
-    parse_tga_colour_correction_table, ExtensionAreaInput, TgaColourCorrectionTable, TgaImage,
-    TgaPixelFormat, TgaTimestamp, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
-    TGA_COLOUR_CORRECTION_TABLE_SIZE,
+    ExtensionAreaInput, TGA_COLOUR_CORRECTION_TABLE_ENTRIES, TGA_COLOUR_CORRECTION_TABLE_SIZE,
+    TgaColourCorrectionTable, TgaImage, TgaPixelFormat, TgaTimestamp, encode_tga_grayscale,
+    encode_tga_uncompressed, encode_tga_with_extension, parse_tga,
+    parse_tga_colour_correction_table,
 };
 
 // ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ fn end_to_end_decode_then_apply_cct() {
 
     recovered.apply_to_image(&mut img);
     // Every pixel was (10,20,30,255) → (42,52,62,255).
-    for px in img.data().chunks_exact(4) {
+    for px in img.data().as_chunks::<4>().0 {
         assert_eq!(px, &[42, 52, 62, 255]);
     }
 }

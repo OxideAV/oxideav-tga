@@ -5,8 +5,8 @@
 //! `encode` → `decode`.
 
 use oxideav_tga::{
-    decode, encode, info, EncodeOptions, ImageType, Palette, RowOrder, TgaImage, TgaPixelFormat,
-    TrueColourDepth, TGA_HEADER_SIZE,
+    EncodeOptions, ImageType, Palette, RowOrder, TGA_HEADER_SIZE, TgaImage, TgaPixelFormat,
+    TrueColourDepth, decode, encode, info,
 };
 
 /// 5 → 8 expansion the decoder documents: repeat the top three bits.
@@ -37,7 +37,7 @@ fn hand_built_16bit() -> Vec<u8> {
     f[14] = 2;
     f[16] = 16;
     f[17] = 0x01; // bottom-up, 1 attribute bit
-                  // Pixels in storage order (bottom row first): A R G B as 5-5-5 + bit.
+    // Pixels in storage order (bottom row first): A R G B as 5-5-5 + bit.
     let px = |a: bool, r: u16, g: u16, b: u16| -> [u8; 2] {
         (((a as u16) << 15) | (r << 10) | (g << 5) | b).to_le_bytes()
     };
@@ -149,7 +149,7 @@ fn bits15_has_no_attribute_bit_and_decodes_opaque() {
             .with_true_colour_depth(TrueColourDepth::Bits15),
     )
     .unwrap();
-    for px in uncompressed[TGA_HEADER_SIZE..].chunks_exact(2) {
+    for px in uncompressed[TGA_HEADER_SIZE..].as_chunks::<2>().0 {
         assert_eq!(px[1] & 0x80, 0);
     }
 }
@@ -186,7 +186,7 @@ fn rgb24_at_16_bits_declares_no_attribute_bits_and_decodes_opaque_rgba() {
     // An opaque source sets the stored attribute bit (a reader that
     // honours the bit sees the picture opaque), even though the header
     // declares no attribute bits for an `Rgb24` source.
-    assert!(back.data().chunks_exact(4).all(|p| p[3] == 0xFF));
+    assert!(back.data().as_chunks::<4>().0.iter().all(|p| p[3] == 0xFF));
     // ... and `alpha_bits` can override the declared count for an Rgba source.
     let rgba = TgaImage::from_rgba8(1, 1, vec![0, 0, 0, 255]).unwrap();
     let bytes = encode(
@@ -270,7 +270,7 @@ fn drop_opaque_alpha_composes_with_16_bits() {
 
 #[test]
 fn a_16bit_postage_stamp_follows_the_parent_depth() {
-    use oxideav_tga::{encode_tga_with_extension, parse_tga_postage_stamp, ExtensionAreaInput};
+    use oxideav_tga::{ExtensionAreaInput, encode_tga_with_extension, parse_tga_postage_stamp};
     let img = five_bit_rgba(8, 8, 5);
     let base = encode(
         &img,

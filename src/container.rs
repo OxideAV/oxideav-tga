@@ -15,11 +15,11 @@ use oxideav_core::{
     Result, StreamInfo, TimeBase,
 };
 use oxideav_core::{
-    ContainerRegistry, Demuxer, Muxer, ProbeData, ProbeScore, ReadSeek, WriteSeek, MAX_PROBE_SCORE,
+    ContainerRegistry, Demuxer, MAX_PROBE_SCORE, Muxer, ProbeData, ProbeScore, ReadSeek, WriteSeek,
 };
 
 use crate::decoder::{native_format, validate_header};
-use crate::types::{extension_area_bytes, parse_footer, TgaDeveloperArea, TgaExtensionArea};
+use crate::types::{TgaDeveloperArea, TgaExtensionArea, extension_area_bytes, parse_footer};
 
 /// The TGA 2.0 structures of a file as the registry path carries them:
 /// the extension area as the `tga-extension-area` blob plus its text
@@ -39,15 +39,14 @@ pub(crate) fn file_metadata(input: &[u8]) -> (Vec<MetadataBlob>, Vec<(String, St
             pairs = area.metadata_pairs();
         }
     }
-    if let Some(footer) = parse_footer(input) {
-        if let Some(dev) = TgaDeveloperArea::parse(input, footer.developer_directory_offset) {
-            if !dev.is_empty() {
-                blobs.push(MetadataBlob::new(
-                    BlobKind::from_static(crate::BLOB_KIND_DEVELOPER_AREA),
-                    dev.to_portable_bytes(input),
-                ));
-            }
-        }
+    if let Some(footer) = parse_footer(input)
+        && let Some(dev) = TgaDeveloperArea::parse(input, footer.developer_directory_offset)
+        && !dev.is_empty()
+    {
+        blobs.push(MetadataBlob::new(
+            BlobKind::from_static(crate::BLOB_KIND_DEVELOPER_AREA),
+            dev.to_portable_bytes(input),
+        ));
     }
     (blobs, pairs)
 }

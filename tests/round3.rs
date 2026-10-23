@@ -22,10 +22,11 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_rle, encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
+    ExtensionAreaInput, TgaImage, TgaPixelFormat, TgaTimestamp, encode_tga_grayscale,
+    encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle, encode_tga_rle,
+    encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24,
     encode_tga_with_extension, parse_tga, parse_tga_extension_area, parse_tga_footer,
-    parse_tga_postage_stamp, ExtensionAreaInput, TgaImage, TgaPixelFormat, TgaTimestamp,
+    parse_tga_postage_stamp,
 };
 
 // ---------------------------------------------------------------------------
@@ -161,7 +162,12 @@ fn rgb24_uncompressed_roundtrips_through_rgba_decoder() {
     assert_eq!(img.height, 6);
     assert_eq!(img.format, TgaPixelFormat::Rgba);
     // Promoted to alpha=0xFF.
-    for (rgb_pix, rgba_pix) in rgb.chunks_exact(3).zip(img.data().chunks_exact(4)) {
+    for (rgb_pix, rgba_pix) in rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(img.data().as_chunks::<4>().0)
+    {
         assert_eq!(rgb_pix[0], rgba_pix[0]);
         assert_eq!(rgb_pix[1], rgba_pix[1]);
         assert_eq!(rgb_pix[2], rgba_pix[2]);
@@ -179,7 +185,12 @@ fn rgb24_rle_roundtrips_through_rgba_decoder() {
     assert_eq!(img.width, 16);
     assert_eq!(img.height, 8);
     assert_eq!(img.format, TgaPixelFormat::Rgba);
-    for (rgb_pix, rgba_pix) in rgb.chunks_exact(3).zip(img.data().chunks_exact(4)) {
+    for (rgb_pix, rgba_pix) in rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(img.data().as_chunks::<4>().0)
+    {
         assert_eq!(rgb_pix[0], rgba_pix[0]);
         assert_eq!(rgb_pix[1], rgba_pix[1]);
         assert_eq!(rgb_pix[2], rgba_pix[2]);
@@ -191,7 +202,7 @@ fn rgb24_rle_roundtrips_through_rgba_decoder() {
 fn rgb24_rle_runs_compress() {
     // Solid-colour image: one packet per row.
     let mut rgb = vec![0u8; 32 * 8 * 3];
-    for px in rgb.chunks_exact_mut(3) {
+    for px in rgb.as_chunks_mut::<3>().0 {
         px.copy_from_slice(&[12, 34, 56]);
     }
     let raw = encode_tga_uncompressed_rgb24(32, 8, &rgb).unwrap();
@@ -203,7 +214,7 @@ fn rgb24_rle_runs_compress() {
         raw.len()
     );
     let img = parse_tga(&rle).unwrap();
-    for px in img.data().chunks_exact(4) {
+    for px in img.data().as_chunks::<4>().0 {
         assert_eq!(px, &[12, 34, 56, 0xFF]);
     }
 }

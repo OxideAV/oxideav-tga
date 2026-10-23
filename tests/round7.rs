@@ -26,9 +26,9 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    parse_tga, parse_tga_attributes_type, parse_tga_colour_correction_table,
+    TgaError, parse_tga, parse_tga_attributes_type, parse_tga_colour_correction_table,
     parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_postage_stamp,
-    parse_tga_scan_line_table, TgaError,
+    parse_tga_scan_line_table,
 };
 
 // ---------------------------------------------------------------------------

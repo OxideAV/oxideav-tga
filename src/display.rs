@@ -81,8 +81,8 @@ use crate::decoder::{
 use crate::error::Result;
 use crate::image::TgaImage;
 use crate::types::{
-    read_header, AttributeBits, AttributesType, GammaValue, ImageOrigin, PixelAspectRatio,
-    TgaDeveloperArea,
+    AttributeBits, AttributesType, GammaValue, ImageOrigin, PixelAspectRatio, TgaDeveloperArea,
+    read_header,
 };
 
 /// Which spec §C.6 metadata passes [`decode_tga_for_display`] should run
@@ -287,12 +287,11 @@ pub fn decode_tga_for_display_reported(
     }
 
     // -- Pass 3: key colour ------------------------------------------------
-    if options.apply_key_color {
-        if let Some(key) = parse_tga_extension_area(input).map(|e| e.key_color_typed()) {
-            if !key.is_unset() {
-                report.keyed_pixels = key.key_out_image(&mut image);
-            }
-        }
+    if options.apply_key_color
+        && let Some(key) = parse_tga_extension_area(input).map(|e| e.key_color_typed())
+        && !key.is_unset()
+    {
+        report.keyed_pixels = key.key_out_image(&mut image);
     }
 
     // -- Pass 4: pixel aspect (geometry; last) ----------------------------
@@ -350,11 +349,12 @@ fn apply_tone(input: &[u8], image: &mut TgaImage) -> ToneApplied {
         table.apply_to_image(image);
         return ToneApplied::ColourCorrection;
     }
-    if let Some(gamma) = parse_tga_extension_area(input).map(|e| e.gamma_typed()) {
-        if !gamma.is_unset() && !gamma.is_identity() {
-            gamma.apply_to_image(image);
-            return ToneApplied::Gamma(gamma);
-        }
+    if let Some(gamma) = parse_tga_extension_area(input).map(|e| e.gamma_typed())
+        && !gamma.is_unset()
+        && !gamma.is_identity()
+    {
+        gamma.apply_to_image(image);
+        return ToneApplied::Gamma(gamma);
     }
     ToneApplied::None
 }

@@ -26,8 +26,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_palette, encode_tga_palette_rle, encode_tga_palette_with_entry_size, parse_header,
-    parse_tga, ColorMapEntrySize, ImageType, TgaPixelFormat,
+    ColorMapEntrySize, ImageType, TgaPixelFormat, encode_tga_palette, encode_tga_palette_rle,
+    encode_tga_palette_with_entry_size, parse_header, parse_tga,
 };
 
 // ---------------------------------------------------------------------------

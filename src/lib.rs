@@ -119,25 +119,25 @@ pub use decoder::{
     resolve_alpha_from_descriptor, resolve_alpha_with_targa32_fallback,
 };
 pub use display::{
-    decode_tga_for_display, decode_tga_for_display_reported, decode_tga_frame, AlphaResolution,
-    TgaDecodedFrame, TgaDisplayOptions, TgaDisplayReport, ToneApplied,
+    AlphaResolution, TgaDecodedFrame, TgaDisplayOptions, TgaDisplayReport, ToneApplied,
+    decode_tga_for_display, decode_tga_for_display_reported, decode_tga_frame,
 };
 pub use encoder::{
-    encode_tga_with_extension, set_image_origin, splice_image_id, DeveloperTagInput,
-    ExtensionAreaInput, TGA_IMAGE_ID_MAX,
+    DeveloperTagInput, ExtensionAreaInput, TGA_IMAGE_ID_MAX, encode_tga_with_extension,
+    set_image_origin, splice_image_id,
 };
 pub use types::{
-    extension_area_bytes, parse_extension_area, parse_footer, AttributeBits, AttributesType,
-    ColorMapEntrySize, ColorMapType, GammaValue, ImageOrigin, ImageType, Interleaving, JobTime,
-    KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TgaAsciiField, TgaAuthorComments,
-    TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea, TgaDeveloperTag, TgaExtensionArea,
-    TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, TGA_ASCII_FIELD_MAX_CHARS,
-    TGA_ATTRIBUTE_BITS_MAX, TGA_AUTHOR_COMMENT_LINES, TGA_AUTHOR_COMMENT_LINE_BYTES,
-    TGA_AUTHOR_COMMENT_LINE_MAX_CHARS, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
-    TGA_COLOUR_CORRECTION_TABLE_SIZE, TGA_DEVELOPER_DIRECTORY_HEADER_BYTES,
-    TGA_DEVELOPER_TAG_BYTES, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE,
-    TGA_HEADER_SIZE, TGA_INTERLEAVING_MASK, TGA_POSTAGE_STAMP_MAX,
-    TGA_POSTAGE_STAMP_RECOMMENDED_MAX, TGA_SCAN_LINE_OFFSET_BYTES,
+    AttributeBits, AttributesType, ColorMapEntrySize, ColorMapType, GammaValue, ImageOrigin,
+    ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion,
+    TGA_ASCII_FIELD_MAX_CHARS, TGA_ATTRIBUTE_BITS_MAX, TGA_AUTHOR_COMMENT_LINE_BYTES,
+    TGA_AUTHOR_COMMENT_LINE_MAX_CHARS, TGA_AUTHOR_COMMENT_LINES,
+    TGA_COLOUR_CORRECTION_TABLE_ENTRIES, TGA_COLOUR_CORRECTION_TABLE_SIZE,
+    TGA_DEVELOPER_DIRECTORY_HEADER_BYTES, TGA_DEVELOPER_TAG_BYTES, TGA_EXTENSION_AREA_SIZE,
+    TGA_FOOTER_MAGIC, TGA_FOOTER_SIZE, TGA_HEADER_SIZE, TGA_INTERLEAVING_MASK,
+    TGA_POSTAGE_STAMP_MAX, TGA_POSTAGE_STAMP_RECOMMENDED_MAX, TGA_SCAN_LINE_OFFSET_BYTES,
+    TgaAsciiField, TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea,
+    TgaDeveloperTag, TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp,
+    extension_area_bytes, parse_extension_area, parse_footer,
 };
 
 // ---- Pre-contract names, kept for one release ----
@@ -166,8 +166,8 @@ pub use registry::__oxideav_entry;
 pub use registry::register_runtime;
 #[cfg(feature = "registry")]
 pub use registry::{
-    developer_area_blob_kind, extension_area_blob_kind, image_into_video_frame,
-    image_into_video_frame_with, make_decoder, make_decoder_with_display_options, make_encoder,
-    register, register_codecs, register_containers, register_registries, TgaDecoderOptions,
-    TgaEncoderOptions, ACCEPTED_PIXEL_FORMATS,
+    ACCEPTED_PIXEL_FORMATS, TgaDecoderOptions, TgaEncoderOptions, developer_area_blob_kind,
+    extension_area_blob_kind, image_into_video_frame, image_into_video_frame_with, make_decoder,
+    make_decoder_with_display_options, make_encoder, register, register_codecs,
+    register_containers, register_registries,
 };

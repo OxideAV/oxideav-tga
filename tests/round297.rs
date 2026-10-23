@@ -22,9 +22,9 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_rle, encode_tga_with_extension, parse_tga_postage_stamp,
-    parse_tga_postage_stamp_dimensions, ExtensionAreaInput, PostageStamp, TgaImage, TgaPixelFormat,
-    TGA_POSTAGE_STAMP_MAX, TGA_POSTAGE_STAMP_RECOMMENDED_MAX,
+    ExtensionAreaInput, PostageStamp, TGA_POSTAGE_STAMP_MAX, TGA_POSTAGE_STAMP_RECOMMENDED_MAX,
+    TgaImage, TgaPixelFormat, encode_tga_rle, encode_tga_with_extension, parse_tga_postage_stamp,
+    parse_tga_postage_stamp_dimensions,
 };
 
 fn rgba_diag(width: u32, height: u32) -> Vec<u8> {
@@ -136,9 +136,11 @@ fn dimensions_none_for_plain_v1_and_no_stamp_files() {
         ..Default::default()
     };
     let with_ext = encode_tga_with_extension(&base, &ext).unwrap();
-    assert!(parse_tga_postage_stamp_dimensions(&with_ext)
-        .unwrap()
-        .is_none());
+    assert!(
+        parse_tga_postage_stamp_dimensions(&with_ext)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

@@ -31,10 +31,10 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
+    ExtensionAreaInput, TGA_HEADER_SIZE, TgaError, TgaImage, TgaPixelFormat, TgaScanLineTable,
     compute_tga_scan_line_table, encode_tga_grayscale, encode_tga_grayscale_rle,
     encode_tga_palette, encode_tga_palette_rle, encode_tga_rle, encode_tga_uncompressed,
     encode_tga_with_extension, parse_tga, parse_tga_scan_line, parse_tga_scan_line_table,
-    ExtensionAreaInput, TgaError, TgaImage, TgaPixelFormat, TgaScanLineTable, TGA_HEADER_SIZE,
 };
 
 // ---------------------------------------------------------------------------

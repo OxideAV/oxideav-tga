@@ -13,10 +13,10 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_extension_area,
-    parse_tga_footer, parse_tga_postage_stamp, ExtensionAreaInput, TgaImage, TgaPixelFormat,
-    TgaTimestamp,
+    ExtensionAreaInput, TgaImage, TgaPixelFormat, TgaTimestamp, encode_tga_grayscale,
+    encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle, encode_tga_uncompressed,
+    encode_tga_with_extension, parse_tga, parse_tga_extension_area, parse_tga_footer,
+    parse_tga_postage_stamp,
 };
 
 // ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ fn parse_extension_area_hand_crafted() {
     // 495-byte extension area, hand-built per spec §C.6.
     let mut ext = vec![0u8; 495];
     ext[0..2].copy_from_slice(&495u16.to_le_bytes()); // extension_size
-                                                      // author_name @ 2 (41 bytes incl. terminator)
+    // author_name @ 2 (41 bytes incl. terminator)
     ext[2..7].copy_from_slice(b"Mark\0");
     // author_comment[0] @ 43 (81 bytes incl. terminator)
     ext[43..50].copy_from_slice(b"Hello!\0");
@@ -266,7 +266,7 @@ fn parse_extension_area_hand_crafted() {
     ext[373..375].copy_from_slice(&12u16.to_le_bytes()); // hour
     ext[375..377].copy_from_slice(&34u16.to_le_bytes()); // minute
     ext[377..379].copy_from_slice(&56u16.to_le_bytes()); // second
-                                                         // job_name @ 379
+    // job_name @ 379
     ext[379..386].copy_from_slice(b"render\0");
     // job_time @ 420
     ext[420..422].copy_from_slice(&1u16.to_le_bytes());

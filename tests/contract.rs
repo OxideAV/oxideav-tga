@@ -8,10 +8,10 @@
 use std::io::Cursor;
 
 use oxideav_tga::{
-    decode, decode_from, decode_rgb8, decode_rgba8, decode_with, encode, encode_rgb8, encode_rgba8,
-    encode_to, header, info, probe, ColorInfo, ColorMapEntrySize, ColorRange, DecodeOptions,
-    EncodeOptions, Error, ImageOrigin, ImageType, Metadata, Palette, PixelFormat, Plane, RowOrder,
-    TgaError, TgaImage, TgaPixelFormat, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
+    ColorInfo, ColorMapEntrySize, ColorRange, DecodeOptions, EncodeOptions, Error, ImageOrigin,
+    ImageType, Metadata, Palette, PixelFormat, Plane, RowOrder, TGA_FOOTER_SIZE, TGA_HEADER_SIZE,
+    TgaError, TgaImage, TgaPixelFormat, decode, decode_from, decode_rgb8, decode_rgba8,
+    decode_with, encode, encode_rgb8, encode_rgba8, encode_to, header, info, probe,
 };
 
 fn seeded(len: usize, seed: u32) -> Vec<u8> {
@@ -70,7 +70,7 @@ fn probe_is_total_and_discriminating() {
     let f = encode(&rgb(3, 2), &EncodeOptions::default()).unwrap();
     assert!(probe(&f));
     assert!(probe(&f[..TGA_HEADER_SIZE])); // header plausibility alone
-                                           // A footer alone is the strong signal, even on an otherwise bogus body.
+    // A footer alone is the strong signal, even on an otherwise bogus body.
     let mut junk = vec![0xFFu8; 40];
     junk.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
     junk.extend_from_slice(b"TRUEVISION-XFILE.\0");
@@ -183,7 +183,13 @@ fn decode_returns_native_layouts_and_conversions_are_exact() {
         assert_eq!(rgb8.stride(), 21);
         assert_eq!(rgba8.stride(), 28);
         // rgb8 is rgba8 minus alpha
-        for (a, b) in rgba8.data.chunks_exact(4).zip(rgb8.data.chunks_exact(3)) {
+        for (a, b) in rgba8
+            .data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgb8.data.as_chunks::<3>().0)
+        {
             assert_eq!(&a[..3], b);
         }
         assert_eq!(back.try_to_rgba8().unwrap(), back.to_rgba8());
@@ -366,7 +372,7 @@ fn lossless_round_trip_every_layout_every_axis() {
 #[test]
 fn rgba_is_written_at_32_bits_even_when_opaque() {
     let mut img = rgba(4, 2);
-    for p in img.data_mut().chunks_exact_mut(4) {
+    for p in img.data_mut().as_chunks_mut::<4>().0 {
         p[3] = 0xFF;
     }
     let f = encode(&img, &EncodeOptions::default()).unwrap();

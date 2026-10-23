@@ -58,10 +58,10 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    encode_tga_with_extension, parse_tga_colour_correction_table, parse_tga_extension_area,
-    parse_tga_footer, parse_tga_scan_line_table, DeveloperTagInput, ExtensionAreaInput,
+    DeveloperTagInput, ExtensionAreaInput, TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
     TgaColourCorrectionTable, TgaImage, TgaPixelFormat, TgaScanLineTable,
-    TGA_COLOUR_CORRECTION_TABLE_ENTRIES,
+    encode_tga_with_extension, parse_tga_colour_correction_table, parse_tga_extension_area,
+    parse_tga_footer, parse_tga_scan_line_table,
 };
 
 /// Maximum side length for the base image. Keeps the raster tiny — the

@@ -19,8 +19,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga, parse_tga_extension_area,
-    ExtensionAreaInput, KeyColor, TgaImage, TgaPixelFormat,
+    ExtensionAreaInput, KeyColor, TgaImage, TgaPixelFormat, encode_tga_uncompressed,
+    encode_tga_with_extension, parse_tga, parse_tga_extension_area,
 };
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
@@ -97,7 +97,7 @@ fn key_out_image_keys_all_pixels_for_solid_match() {
     let mut img = rgba_image(3, 2, data);
     let key = KeyColor::from_argb([0x00, key_rgb[0], key_rgb[1], key_rgb[2]]);
     assert_eq!(key.key_out_image(&mut img), 6);
-    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0));
+    assert!(img.data().as_chunks::<4>().0.iter().all(|p| p[3] == 0));
 }
 
 #[test]
@@ -134,10 +134,18 @@ fn carry_then_apply_roundtrip_through_extension_area() {
     assert_eq!(keyed, 2, "two green pixels keyed out");
 
     // The two green pixels are now transparent; red and blue are opaque.
-    let transparent: Vec<bool> = img.data().chunks_exact(4).map(|p| p[3] == 0).collect();
+    let transparent: Vec<bool> = img
+        .data()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| p[3] == 0)
+        .collect();
     let green_match: Vec<bool> = img
         .data()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| p[0] == key_rgb[0] && p[1] == key_rgb[1] && p[2] == key_rgb[2])
         .collect();
     for (t, g) in transparent.iter().zip(green_match.iter()) {

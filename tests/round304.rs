@@ -22,7 +22,7 @@
 // These tests pin the pre-contract entry points (deprecated for one
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
-use oxideav_tga::{encode_tga_palette, parse_tga, parse_tga_color_map, TgaColorMap};
+use oxideav_tga::{TgaColorMap, encode_tga_palette, parse_tga, parse_tga_color_map};
 
 /// Parameters for a minimal hand-built TGA header + color map. Lets us
 /// produce a Data Type 0 (no-image) palette-only file (`image_type = 0`)
@@ -130,7 +130,7 @@ fn reads_color_map_from_encoder_palette_file() {
     // entry the parser surfaced — the public color map agrees with the
     // decoder's internal palette.
     let img = parse_tga(&base).unwrap();
-    for px in img.data().chunks_exact(4) {
+    for px in img.data().as_chunks::<4>().0 {
         let rgba = [px[0], px[1], px[2], px[3]];
         assert!(
             map.entries.contains(&rgba),

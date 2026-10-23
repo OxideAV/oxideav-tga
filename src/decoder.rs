@@ -33,11 +33,11 @@ use crate::error::{Result, TgaError as Error};
 use crate::image::{ImageInfo, Palette, TgaImage, TgaPixelFormat};
 use crate::options::DecodeOptions;
 use crate::types::{
-    parse_extension_area, parse_footer, read_header, AttributeBits, AttributesType, ColorMapType,
-    GammaValue, ImageOrigin, ImageType, Interleaving, JobTime, KeyColor, PixelAspectRatio,
-    PostageStamp, SoftwareVersion, TgaAsciiField, TgaAuthorComments, TgaColorMap,
-    TgaColourCorrectionTable, TgaDeveloperArea, TgaExtensionArea, TgaFooter, TgaHeader,
-    TgaScanLineTable, TgaTimestamp, TGA_HEADER_SIZE,
+    AttributeBits, AttributesType, ColorMapType, GammaValue, ImageOrigin, ImageType, Interleaving,
+    JobTime, KeyColor, PixelAspectRatio, PostageStamp, SoftwareVersion, TGA_HEADER_SIZE,
+    TgaAsciiField, TgaAuthorComments, TgaColorMap, TgaColourCorrectionTable, TgaDeveloperArea,
+    TgaExtensionArea, TgaFooter, TgaHeader, TgaScanLineTable, TgaTimestamp, parse_extension_area,
+    parse_footer, read_header,
 };
 
 /// The framework factories moved to [`crate::registry`]; these paths stay
@@ -1146,10 +1146,10 @@ pub fn parse_tga_border_color(input: &[u8]) -> Result<Option<[u8; 4]>> {
     let header = read_header(input).ok_or_else(|| Error::invalid("TGA: header truncated"))?;
     // Only an *unmapped* image type with a present map carries a TIPS
     // border colour; for a colour-mapped type the map is the palette.
-    if let Some(image_type) = ImageType::from_u8(header.image_type_raw) {
-        if image_type.is_colour_mapped() {
-            return Ok(None);
-        }
+    if let Some(image_type) = ImageType::from_u8(header.image_type_raw)
+        && image_type.is_colour_mapped()
+    {
+        return Ok(None);
     }
     match parse_tga_color_map(input)? {
         Some(map) => Ok(map.entries.first().copied()),
@@ -1219,7 +1219,7 @@ fn decode_palette(cmap: &[u8], entry_size: u8, entry_bytes: usize) -> Result<Vec
                 return Err(Error::unsupported(format!(
                     "TGA: palette entry size {} bits not supported",
                     other
-                )))
+                )));
             }
         };
         palette.push(rgba);
@@ -1234,11 +1234,7 @@ fn expand_a1r5g5b5(v: u16, entry_size: u8) -> [u8; 4] {
     let g5 = ((v >> 5) & 0x1F) as u8;
     let b5 = (v & 0x1F) as u8;
     let a = if entry_size == 16 {
-        if (v & 0x8000) != 0 {
-            0xFF
-        } else {
-            0
-        }
+        if (v & 0x8000) != 0 { 0xFF } else { 0 }
     } else {
         0xFF
     };
@@ -1375,7 +1371,7 @@ fn emit_pixel(image_type: ImageType, depth: u8, src: &[u8], out: &mut Vec<u8>) -
             other => {
                 return Err(Error::unsupported(format!(
                     "TGA: true-colour pixel depth {other} not supported"
-                )))
+                )));
             }
         },
         ImageType::UncompressedGrayscale | ImageType::RleGrayscale => {
@@ -1386,7 +1382,7 @@ fn emit_pixel(image_type: ImageType, depth: u8, src: &[u8], out: &mut Vec<u8>) -
         // but as with the depth `match` above the contract is
         // returned-error, not panic.
         ImageType::None => {
-            return Err(Error::invalid("TGA: image_type == 0 reached pixel decoder"))
+            return Err(Error::invalid("TGA: image_type == 0 reached pixel decoder"));
         }
     }
     Ok(())

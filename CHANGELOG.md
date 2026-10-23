@@ -109,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- edition 2024, MSRV 1.95
 - `From<TgaError> for oxideav_core::Error` maps `LimitExceeded` to
   `ResourceExhausted` (was `InvalidData`): a refused geometry is a
   resource decision, not malformed input.

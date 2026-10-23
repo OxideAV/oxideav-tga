@@ -46,13 +46,13 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
+    DecodeOptions, TgaDeveloperArea, TgaDisplayOptions, TgaExtensionArea,
     compute_tga_scan_line_table, decode, decode_rgb8, decode_rgba8, decode_tga_for_display,
     decode_tga_for_display_reported, decode_with, extension_area_bytes, header, info,
     parse_tga_border_color, parse_tga_color_map, parse_tga_colour_correction_table,
     parse_tga_developer_area, parse_tga_extension_area, parse_tga_footer, parse_tga_image_id,
     parse_tga_postage_stamp, parse_tga_scan_line, parse_tga_scan_line_table, probe,
-    resolve_alpha_from_descriptor, DecodeOptions, TgaDeveloperArea, TgaDisplayOptions,
-    TgaExtensionArea,
+    resolve_alpha_from_descriptor,
 };
 
 /// Upper bound on the declared output raster (16 MiB). Anything
@@ -182,16 +182,16 @@ fuzz_target!(|data: &[u8]| {
 
         // Only drive the pixel-aspect resample when the file's declared
         // aspect ratio keeps the corrected raster under the same 16 MiB cap.
-        if let Some(par) = parse_tga_extension_area(data).map(|e| e.pixel_aspect_ratio_typed()) {
-            if let Some((dw, dh)) = par.corrected_display_dimensions(image.width, image.height) {
-                let bounded = (dw as u64)
-                    .checked_mul(dh as u64)
-                    .and_then(|wh| wh.checked_mul(4))
-                    .map(|n| n <= MAX_OUTPUT_BYTES)
-                    .unwrap_or(false);
-                if bounded {
-                    let _ = decode_tga_for_display(data, &TgaDisplayOptions::ALL);
-                }
+        if let Some(par) = parse_tga_extension_area(data).map(|e| e.pixel_aspect_ratio_typed())
+            && let Some((dw, dh)) = par.corrected_display_dimensions(image.width, image.height)
+        {
+            let bounded = (dw as u64)
+                .checked_mul(dh as u64)
+                .and_then(|wh| wh.checked_mul(4))
+                .map(|n| n <= MAX_OUTPUT_BYTES)
+                .unwrap_or(false);
+            if bounded {
+                let _ = decode_tga_for_display(data, &TgaDisplayOptions::ALL);
             }
         }
     }

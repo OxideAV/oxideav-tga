@@ -31,9 +31,9 @@ use oxideav_core::{
     VideoFrame, VideoPlane,
 };
 use oxideav_tga::{
-    make_decoder, make_encoder, parse_tga_developer_area, parse_tga_extension_area,
-    TgaDeveloperArea, TgaExtensionArea, BLOB_KIND_DEVELOPER_AREA, BLOB_KIND_EXTENSION_AREA,
-    CODEC_ID_STR,
+    BLOB_KIND_DEVELOPER_AREA, BLOB_KIND_EXTENSION_AREA, CODEC_ID_STR, TgaDeveloperArea,
+    TgaExtensionArea, make_decoder, make_encoder, parse_tga_developer_area,
+    parse_tga_extension_area,
 };
 
 const MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
@@ -56,7 +56,7 @@ fn encode_frame(frame: &VideoFrame, params: &CodecParameters) -> oxideav_core::R
 }
 
 /// The typed extension-area fields the encoder re-emits (pointers excluded).
-fn ext_fields(a: &TgaExtensionArea) -> impl PartialEq + std::fmt::Debug {
+fn ext_fields(a: &TgaExtensionArea) -> impl PartialEq + std::fmt::Debug + use<> {
     (
         a.author_name.clone(),
         a.author_comment.clone(),
@@ -112,9 +112,11 @@ fuzz_target!(|data: &[u8]| {
     let frame_blobs = frame.blobs();
     assert_eq!(frame_blobs.len(), stream.blobs.len());
     for b in &stream.blobs {
-        assert!(frame_blobs
-            .iter()
-            .any(|f| f.kind == b.kind && f.data == b.data));
+        assert!(
+            frame_blobs
+                .iter()
+                .any(|f| f.kind == b.kind && f.data == b.data)
+        );
     }
     let ext_kind = oxideav_core::BlobKind::from_static(BLOB_KIND_EXTENSION_AREA);
     let dev_kind = oxideav_core::BlobKind::from_static(BLOB_KIND_DEVELOPER_AREA);
@@ -148,7 +150,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Encode with the stream's parameters, decode again: identity.
     let mut enc_params = stream.clone();
-    enc_params.limits = params.limits.clone();
+    enc_params.limits = params.limits;
     let bytes = encode_frame(&frame, &enc_params)
         .expect("a frame the decoder produced encodes through the registry");
     let back = decode_frame(&bytes, &params).expect("the encoder's file decodes");
@@ -182,7 +184,8 @@ fuzz_target!(|data: &[u8]| {
     assert!(oxideav_tga::info(&bytes).unwrap().top_down);
 
     // Swizzled input orders reach the same file.
-    let swizzles: &[(PixelFormat, fn(&[u8]) -> Vec<u8>)] = match label {
+    type Swizzle = fn(&[u8]) -> Vec<u8>;
+    let swizzles: &[(PixelFormat, Swizzle)] = match label {
         PixelFormat::Rgba => &[
             (PixelFormat::Bgra, |p| vec![p[2], p[1], p[0], p[3]]),
             (PixelFormat::Argb, |p| vec![p[3], p[0], p[1], p[2]]),
@@ -195,7 +198,7 @@ fuzz_target!(|data: &[u8]| {
         let data: Vec<u8> = frame.planes[0]
             .data
             .chunks_exact(bpp)
-            .flat_map(|p| swz(p))
+            .flat_map(swz)
             .collect();
         let other = VideoFrame {
             pts: None,

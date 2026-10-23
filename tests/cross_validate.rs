@@ -17,10 +17,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_grayscale_rle, encode_tga_palette, encode_tga_palette_rle,
-    encode_tga_rle, encode_tga_uncompressed, encode_tga_with_extension, parse_tga,
-    parse_tga_extension_area, parse_tga_postage_stamp, ExtensionAreaInput, TgaImage,
-    TgaPixelFormat,
+    ExtensionAreaInput, TgaImage, TgaPixelFormat, encode_tga_grayscale, encode_tga_grayscale_rle,
+    encode_tga_palette, encode_tga_palette_rle, encode_tga_rle, encode_tga_uncompressed,
+    encode_tga_with_extension, parse_tga, parse_tga_extension_area, parse_tga_postage_stamp,
 };
 
 fn have_magick() -> bool {

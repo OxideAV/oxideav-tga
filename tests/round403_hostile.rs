@@ -11,7 +11,7 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::*;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 fn build_header(image_type: u8, depth: u8, cmap_type: u8, w: u16, h: u16, desc: u8) -> Vec<u8> {
     let mut v = vec![0u8; 18];
@@ -42,9 +42,9 @@ fn hostile_header_sweep_never_panics() {
                 for desc in [0x00u8, 0x20, 0x10, 0x30, 0xC0, 0xFF] {
                     let mut buf = build_header(image_type, depth, cmap_type, 4, 4, desc);
                     if cmap_type != 0 {
-                        buf.extend(std::iter::repeat(0x55).take(256 * 3));
+                        buf.extend(std::iter::repeat_n(0x55, 256 * 3));
                     }
-                    buf.extend(std::iter::repeat(0x80).take(4 * 4 * 4 + 64));
+                    buf.extend(std::iter::repeat_n(0x80, 4 * 4 * 4 + 64));
                     let r = catch_unwind(AssertUnwindSafe(|| {
                         let _ = parse_tga(&buf);
                         let _ = parse_tga_color_map(&buf);
@@ -110,13 +110,13 @@ fn malformed_inputs_return_typed_errors() {
         // true-colour with an impossible depth (7)
         ("depth 7", {
             let mut v = build_header(2, 7, 0, 2, 2, 0x20);
-            v.extend(std::iter::repeat(0).take(64));
+            v.extend(std::iter::repeat_n(0, 64));
             v
         }),
         // grayscale declared 24 bpp (must be 8)
         ("gray depth 24", {
             let mut v = build_header(3, 24, 0, 2, 2, 0x20);
-            v.extend(std::iter::repeat(0).take(64));
+            v.extend(std::iter::repeat_n(0, 64));
             v
         }),
         // header declares a 4×4 image but no pixel bytes follow

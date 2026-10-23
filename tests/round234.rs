@@ -49,8 +49,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_uncompressed, encode_tga_with_extension, parse_tga_extension_area,
-    parse_tga_job_time, parse_tga_timestamp, ExtensionAreaInput, JobTime, TgaTimestamp,
+    ExtensionAreaInput, JobTime, TgaTimestamp, encode_tga_uncompressed, encode_tga_with_extension,
+    parse_tga_extension_area, parse_tga_job_time, parse_tga_timestamp,
 };
 
 // ---------------------------------------------------------------------------

@@ -38,9 +38,9 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_grayscale, encode_tga_rle, encode_tga_uncompressed, encode_tga_with_extension,
-    parse_tga, resolve_alpha_with_targa32_fallback, AttributesType, ExtensionAreaInput, TgaImage,
-    TgaPixelFormat,
+    AttributesType, ExtensionAreaInput, TgaImage, TgaPixelFormat, encode_tga_grayscale,
+    encode_tga_rle, encode_tga_uncompressed, encode_tga_with_extension, parse_tga,
+    resolve_alpha_with_targa32_fallback,
 };
 
 // ---------------------------------------------------------------------------
@@ -193,9 +193,9 @@ fn resolver_no_extension_area_all_zero_alpha_forces_opaque() {
         declared.is_none(),
         "file has no extension area → no declared AttributesType"
     );
-    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0xFF));
+    assert!(img.data().as_chunks::<4>().0.iter().all(|p| p[3] == 0xFF));
     // Colour channels unchanged.
-    for (idx, p) in img.data().chunks_exact(4).enumerate() {
+    for (idx, p) in img.data().as_chunks::<4>().0.iter().enumerate() {
         let x = (idx % 4) as u8;
         let y = (idx / 4) as u8;
         assert_eq!(p[0], x);
@@ -241,7 +241,7 @@ fn resolver_declared_attributes_type_takes_precedence_over_fallback() {
 
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert_eq!(declared, Some(AttributesType::NoAlpha));
-    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0xFF));
+    assert!(img.data().as_chunks::<4>().0.iter().all(|p| p[3] == 0xFF));
 }
 
 #[test]
@@ -288,7 +288,11 @@ fn resolver_declared_premultiplied_unmultiplies_even_with_zero_alpha() {
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert_eq!(declared, Some(AttributesType::PremultipliedAlpha));
     assert!(
-        img.data().chunks_exact(4).all(|p| p == [0, 0, 0, 0]),
+        img.data()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| *p == [0, 0, 0, 0]),
         "A=0 pixels become transparent black per spec",
     );
 }
@@ -341,5 +345,5 @@ fn resolver_rle_file_with_zero_alpha_force_opaque() {
     assert!(img.all_alpha_zero());
     let declared = resolve_alpha_with_targa32_fallback(&file, &mut img);
     assert!(declared.is_none());
-    assert!(img.data().chunks_exact(4).all(|p| p[3] == 0xFF));
+    assert!(img.data().as_chunks::<4>().0.iter().all(|p| p[3] == 0xFF));
 }

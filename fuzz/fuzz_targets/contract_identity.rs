@@ -24,8 +24,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    decode, encode, info, probe, EncodeOptions, ImageOrigin, Metadata, Palette, PixelFormat,
-    RowOrder, TgaImage, TrueColourDepth,
+    EncodeOptions, ImageOrigin, Metadata, Palette, PixelFormat, RowOrder, TgaImage,
+    TrueColourDepth, decode, encode, info, probe,
 };
 
 /// The decoder's documented 5 → 8 expansion.
@@ -81,7 +81,9 @@ fuzz_target!(|data: &[u8]| {
     let mut img = match format {
         PixelFormat::Pal8 => {
             let entries: Vec<[u8; 4]> = take(palette_len * 4, 0)
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|e| {
                     [
                         e[0],
@@ -103,7 +105,7 @@ fuzz_target!(|data: &[u8]| {
             if sixteen {
                 // 5-bit-exact channels, alpha 0 / 255: the 16-bit
                 // quantiser inverts the expansion exactly.
-                for p in data.chunks_exact_mut(4) {
+                for p in data.as_chunks_mut::<4>().0 {
                     p[0] = expand5(p[0] >> 3);
                     p[1] = expand5(p[1] >> 3);
                     p[2] = expand5(p[2] >> 3);

@@ -13,8 +13,8 @@ use oxideav_core::{
     VideoPlane,
 };
 use oxideav_tga::{
-    decode, encode, ColorMapEntrySize, EncodeOptions, Palette, TgaImage, TgaPixelFormat,
-    ACCEPTED_PIXEL_FORMATS, CODEC_ID_STR,
+    ACCEPTED_PIXEL_FORMATS, CODEC_ID_STR, ColorMapEntrySize, EncodeOptions, Palette, TgaImage,
+    TgaPixelFormat, decode, encode,
 };
 
 fn id() -> CodecId {
@@ -413,9 +413,9 @@ mod metadata {
     use super::*;
     use oxideav_core::{BlobKind, MetadataBlob};
     use oxideav_tga::{
-        encode_tga_with_extension, extension_area_bytes, parse_tga_developer_area,
-        parse_tga_extension_area, DeveloperTagInput, ExtensionAreaInput, RowOrder,
-        TgaDeveloperArea, TgaTimestamp, BLOB_KIND_DEVELOPER_AREA, BLOB_KIND_EXTENSION_AREA,
+        BLOB_KIND_DEVELOPER_AREA, BLOB_KIND_EXTENSION_AREA, DeveloperTagInput, ExtensionAreaInput,
+        RowOrder, TgaDeveloperArea, TgaTimestamp, encode_tga_with_extension, extension_area_bytes,
+        parse_tga_developer_area, parse_tga_extension_area,
     };
 
     fn ext_kind() -> BlobKind {
@@ -675,7 +675,7 @@ mod metadata {
 mod options {
     use super::*;
     use oxideav_core::CodecOptions;
-    use oxideav_tga::{info, ImageType, TGA_HEADER_SIZE};
+    use oxideav_tga::{ImageType, TGA_HEADER_SIZE, info};
 
     fn with(opts: &[(&str, &str)], w: u32, h: u32, pf: PixelFormat) -> CodecParameters {
         let mut p = params(w, h, pf);
@@ -923,7 +923,14 @@ mod options {
         let targa32 = encode(&img, &EncodeOptions::default().with_alpha_bits(Some(0u8))).unwrap();
         assert_eq!(info(&targa32).unwrap().attribute_bits, 0);
         let raw = decode_registry(&targa32);
-        assert!(raw.planes[0].data.chunks_exact(4).all(|p| p[3] == 0));
+        assert!(
+            raw.planes[0]
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| p[3] == 0)
+        );
         let mut shown =
             oxideav_tga::make_decoder(&with(&[("display", "true")], 3, 2, PixelFormat::Rgba))
                 .unwrap();
@@ -934,7 +941,14 @@ mod options {
             Frame::Video(v) => v,
             _ => panic!(),
         };
-        assert!(v.planes[0].data.chunks_exact(4).all(|p| p[3] == 0xFF));
+        assert!(
+            v.planes[0]
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| p[3] == 0xFF)
+        );
     }
 
     #[test]
@@ -952,7 +966,7 @@ mod options {
 mod verbatim_text {
     use super::*;
     use oxideav_core::MetadataBlob;
-    use oxideav_tga::{parse_tga_extension_area, TgaExtensionArea, TGA_EXTENSION_AREA_SIZE};
+    use oxideav_tga::{TGA_EXTENSION_AREA_SIZE, TgaExtensionArea, parse_tga_extension_area};
 
     /// An unterminated 41-byte author field and a non-ASCII comment byte:
     /// the typed path would normalise both; the blob path keeps the bytes.

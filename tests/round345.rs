@@ -23,8 +23,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
-    encode_tga_palette, encode_tga_uncompressed, parse_header, parse_tga_border_color,
-    parse_tga_color_map, parse_tga_color_map_type, ColorMapType,
+    ColorMapType, encode_tga_palette, encode_tga_uncompressed, parse_header,
+    parse_tga_border_color, parse_tga_color_map, parse_tga_color_map_type,
 };
 
 // Tiny local helper so the test exercises the `TgaHeader::color_map_type()`

@@ -58,10 +58,10 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
+    ExtensionAreaInput, TGA_ASCII_FIELD_MAX_CHARS, TGA_AUTHOR_COMMENT_LINE_BYTES,
+    TGA_AUTHOR_COMMENT_LINE_MAX_CHARS, TGA_AUTHOR_COMMENT_LINES, TgaAsciiField, TgaAuthorComments,
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga_author_comments,
-    parse_tga_author_name, parse_tga_job_name, parse_tga_software_id, ExtensionAreaInput,
-    TgaAsciiField, TgaAuthorComments, TGA_ASCII_FIELD_MAX_CHARS, TGA_AUTHOR_COMMENT_LINES,
-    TGA_AUTHOR_COMMENT_LINE_BYTES, TGA_AUTHOR_COMMENT_LINE_MAX_CHARS,
+    parse_tga_author_name, parse_tga_job_name, parse_tga_software_id,
 };
 
 // ---------------------------------------------------------------------------

@@ -28,8 +28,8 @@
 // release; see CHANGELOG) so the deprecated wrappers stay byte-exact.
 #![allow(deprecated)]
 use oxideav_tga::{
+    ExtensionAreaInput, PostageStamp, TGA_POSTAGE_STAMP_RECOMMENDED_MAX, TgaImage, TgaPixelFormat,
     encode_tga_uncompressed, encode_tga_with_extension, parse_tga_postage_stamp,
-    ExtensionAreaInput, PostageStamp, TgaImage, TgaPixelFormat, TGA_POSTAGE_STAMP_RECOMMENDED_MAX,
 };
 
 fn rgba_image(width: u32, height: u32, data: Vec<u8>) -> TgaImage {
@@ -157,9 +157,9 @@ fn subsample_only_copies_source_colours_never_averages() {
     let img = rgba_image(200, 100, data);
     let stamp = PostageStamp::subsample(&img).expect("downscale");
     assert_eq!((stamp.width, stamp.height), (64, 32));
-    for px in stamp.data().chunks_exact(4) {
+    for px in stamp.data().as_chunks::<4>().0 {
         assert!(
-            px == a || px == b,
+            *px == a || *px == b,
             "thumbnail pixel {px:?} is not one of the two source colours"
         );
     }
@@ -217,8 +217,10 @@ fn generated_stamp_round_trips_through_extension_writer() {
     // with alpha forced to 0xFF. Compare the colour channels exactly.
     for (got, want) in recovered
         .data()
-        .chunks_exact(4)
-        .zip(expected.data().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(expected.data().as_chunks::<4>().0)
     {
         assert_eq!(&got[0..3], &want[0..3]);
     }
