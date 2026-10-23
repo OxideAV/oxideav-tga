@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/OxideAV/oxideav-tga/compare/v0.0.5...v0.0.6) - 2026-10-23
+
+### Other
+
+- edition 2024, MSRV 1.95
+- registry_bridge fuzz target (framework path as an identity), colour maps over 256 entries decode to the addressable ones, verbatim extension text on write-back, README for the round
+- encoder / decoder option schemas (every lossless axis by name, no quality), DecoderLimits honoured, LimitExceeded → ResourceExhausted
+- TGA 2.0 extension / developer areas ride the registry as format-native blobs; text fields as container metadata
+- 15 / 16-bit true-colour encode path (true_colour_depth), the exact inverse of the decode expansion
+- palette-alpha record on the registry path, declared accepted layouts with BGR / alpha-first swizzles, single-picture refusals typed
+
 ### Added
 
 - **Palette alpha on the registry path** (core 0.1.40 `VideoFrame`
