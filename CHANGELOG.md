@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/OxideAV/oxideav-tga/compare/v0.0.5...v0.0.6) - 2026-11-07
+
+### Other
+
+- API hygiene: non_exhaustive display options/report records
+- edition 2024, MSRV 1.95
+- registry_bridge fuzz target (framework path as an identity), colour maps over 256 entries decode to the addressable ones, verbatim extension text on write-back, README for the round
+- encoder / decoder option schemas (every lossless axis by name, no quality), DecoderLimits honoured, LimitExceeded → ResourceExhausted
+- TGA 2.0 extension / developer areas ride the registry as format-native blobs; text fields as container metadata
+- 15 / 16-bit true-colour encode path (true_colour_depth), the exact inverse of the decode expansion
+- palette-alpha record on the registry path, declared accepted layouts with BGR / alpha-first swizzles, single-picture refusals typed
+
 ### Changed
 
 - API hygiene: `TgaDisplayOptions`, `ToneApplied`, `AlphaResolution`, `TgaDisplayReport` and `TgaDecodedFrame` are now `#[non_exhaustive]`. Build `TgaDisplayOptions` from `ALL` / `NONE` / `Default` + `with_*`. The TGA 2.0 file-layout mirrors (`TgaHeader`, `TgaFooter`, `TgaExtensionArea`, `ExtensionAreaInput`, `TgaTimestamp`, ...) and the header-field enums (`ImageType`, `ColorMapType`, `ColorMapEntrySize`, `AttributesType`, `Interleaving`) stay exhaustive because the format fixes them.
