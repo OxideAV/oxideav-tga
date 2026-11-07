@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- API hygiene: `TgaDisplayOptions`, `ToneApplied`, `AlphaResolution`, `TgaDisplayReport` and `TgaDecodedFrame` are now `#[non_exhaustive]`. Build `TgaDisplayOptions` from `ALL` / `NONE` / `Default` + `with_*`. The TGA 2.0 file-layout mirrors (`TgaHeader`, `TgaFooter`, `TgaExtensionArea`, `ExtensionAreaInput`, `TgaTimestamp`, ...) and the header-field enums (`ImageType`, `ColorMapType`, `ColorMapEntrySize`, `AttributesType`, `Interleaving`) stay exhaustive because the format fixes them.
+
 ### Added
 
 - **Palette alpha on the registry path** (core 0.1.40 `VideoFrame`

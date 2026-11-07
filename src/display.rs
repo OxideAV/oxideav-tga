@@ -93,6 +93,7 @@ use crate::types::{
 /// — e.g. a renderer that does its own gamma management would clear
 /// [`Self::apply_tone`] while keeping [`Self::resolve_alpha`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TgaDisplayOptions {
     /// Pass 1 — resolve the alpha channel's meaning (Field 24 attributes
     /// type, else Field 5.6 header attribute bits). Un-premultiplies
@@ -171,6 +172,7 @@ impl TgaDisplayOptions {
 /// frame went through the colour-correction table, the gamma exponent, or
 /// neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ToneApplied {
     /// No tone pass ran — the file carried neither a usable colour
     /// correction table nor a usable gamma value (or the pass was gated
@@ -188,6 +190,7 @@ pub enum ToneApplied {
 /// branches of [`resolve_alpha_with_targa32_fallback`] plus the header-only
 /// fallback used when there is no TGA 2.0 extension area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AlphaResolution {
     /// The pass was gated off ([`TgaDisplayOptions::resolve_alpha`] clear).
     Skipped,
@@ -206,6 +209,7 @@ pub enum AlphaResolution {
 /// curve (if any) ran, how many pixels the key colour removed, and whether
 /// the frame was resampled for pixel aspect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TgaDisplayReport {
     /// Outcome of pass 1.
     pub alpha: AlphaResolution,
@@ -384,6 +388,7 @@ fn apply_tone(input: &[u8], image: &mut TgaImage) -> ToneApplied {
 ///   directory, if present, so a caller can pull vendor payloads without a
 ///   second file walk.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TgaDecodedFrame {
     /// The finalized, display-ready frame.
     pub image: TgaImage,
