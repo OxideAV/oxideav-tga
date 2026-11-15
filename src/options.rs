@@ -155,6 +155,23 @@ pub enum RowOrder {
     BottomUp,
 }
 
+/// Column storage order of an encoded file (image descriptor bit 4,
+/// Table 2 - Image Origin). Together with [`RowOrder`] it selects one
+/// of the four origins a file can declare: bottom left, bottom right,
+/// top left, top right.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum ColumnOrder {
+    /// Each row stored first-column-first; descriptor bit 4 clear (a
+    /// "left" origin). The default, and what nearly every file uses.
+    #[default]
+    LeftToRight,
+    /// Each row stored last-column-first; descriptor bit 4 set (a
+    /// "right" origin). The decoder mirrors such rows back, so the
+    /// picture is unchanged.
+    RightToLeft,
+}
+
 /// On-disk depth of a true-colour (`Rgb24` / `Rgba`) image when it is
 /// written as a 16-bit TGA (§C.2 `ARRRRRGG GGGBBBBB`, little-endian)
 /// instead of at its layout's 24 / 32 bits.
@@ -228,6 +245,9 @@ pub struct EncodeOptions {
     /// Row storage order (descriptor bit 5). Default
     /// [`RowOrder::TopDown`].
     pub row_order: RowOrder,
+    /// Column storage order (descriptor bit 4). Default
+    /// [`ColumnOrder::LeftToRight`].
+    pub column_order: ColumnOrder,
     /// Override the §C.2 descriptor attribute-bit count (bits 3-0) for
     /// an `Rgba` image. `None` (default) declares `8`. Setting `0` keeps
     /// the 32-bit layout but tells readers the fourth byte is not alpha
@@ -252,6 +272,14 @@ pub struct EncodeOptions {
     /// channel to 5 bits (lossy; documented on
     /// [`ColorMapEntrySize`]). Ignored for the other layouts.
     pub palette_entry_size: Option<ColorMapEntrySize>,
+    /// Colour Map Specification "First Entry Index" (header bytes 3-4)
+    /// for a `Pal8` image: the index value of the first stored colour-
+    /// map entry. Every pixel index is written as `index + origin`, the
+    /// offset [`crate::decode`] folds back out, so the decoded image is
+    /// unchanged. Default `0`. The stored indices are 8-bit, so
+    /// `origin + palette length` above 256 is
+    /// [`TgaError::InvalidData`]. Ignored for the other layouts.
+    pub color_map_origin: u16,
     /// Image Identification Field (§C.3), 0..=255 bytes written
     /// verbatim after the header. Longer input is
     /// [`TgaError::InvalidData`].
@@ -284,10 +312,12 @@ impl Default for EncodeOptions {
         Self {
             rle: true,
             row_order: RowOrder::TopDown,
+            column_order: ColumnOrder::LeftToRight,
             alpha_bits: None,
             drop_opaque_alpha: false,
             true_colour_depth: None,
             palette_entry_size: None,
+            color_map_origin: 0,
             image_id: Vec::new(),
             screen_origin: ImageOrigin::ORIGIN,
             extension: None,
@@ -313,6 +343,18 @@ impl EncodeOptions {
     /// Set the row storage order.
     pub fn with_row_order(mut self, row_order: RowOrder) -> Self {
         self.row_order = row_order;
+        self
+    }
+
+    /// Set the column storage order.
+    pub fn with_column_order(mut self, column_order: ColumnOrder) -> Self {
+        self.column_order = column_order;
+        self
+    }
+
+    /// Set the colour map's first entry index (`Pal8` images).
+    pub fn with_color_map_origin(mut self, origin: u16) -> Self {
+        self.color_map_origin = origin;
         self
     }
 

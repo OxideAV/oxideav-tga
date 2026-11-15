@@ -29,7 +29,7 @@ use crate::container;
 use crate::encoder::ExtensionAreaInput;
 use crate::error::TgaError;
 use crate::image::{ColorInfo, ColorRange, Palette, Plane, TgaImage, TgaPixelFormat};
-use crate::options::{DecodeOptions, EncodeOptions, RowOrder, TrueColourDepth};
+use crate::options::{ColumnOrder, DecodeOptions, EncodeOptions, RowOrder, TrueColourDepth};
 use crate::types::{ColorMapEntrySize, ImageOrigin, TgaDeveloperArea, TgaExtensionArea};
 
 /// The `tga-extension-area` blob kind (see [`crate::BLOB_KIND_EXTENSION_AREA`]).
@@ -421,10 +421,12 @@ impl TryFrom<(&VideoFrame, &CodecParameters)> for TgaImage {
 /// |---|---|---|---|
 /// | `rle` | bool | `true` | `rle` (image types 9 / 10 / 11 vs 1 / 2 / 3) |
 /// | `row_order` | `top-down` / `bottom-up` | `top-down` | `row_order` |
+/// | `column_order` | `left-to-right` / `right-to-left` | `left-to-right` | `column_order` |
 /// | `alpha_bits` | u32 0..=15 | `8` (unset: the layout's count) | `alpha_bits` |
 /// | `drop_opaque_alpha` | bool | `false` | `drop_opaque_alpha` |
 /// | `true_colour_depth` | `native` / `15` / `16` | `native` | `true_colour_depth` |
 /// | `palette_entry_size` | `auto` / `15` / `16` / `24` / `32` | `auto` (24, or 32 with an alpha record) | `palette_entry_size` |
+/// | `color_map_origin` | u32 ≤ 255 | `0` | `color_map_origin` |
 /// | `image_id` | string ≤ 255 bytes | empty | `image_id` |
 /// | `screen_origin_x` / `screen_origin_y` | u32 ≤ 65535 | `0` | `screen_origin` |
 /// | `footer` | bool | `false` | `footer` |
@@ -435,6 +437,10 @@ pub struct TgaEncoderOptions {
     pub rle: Option<bool>,
     /// `row_order`.
     pub row_order: Option<RowOrder>,
+    /// `column_order`.
+    pub column_order: Option<ColumnOrder>,
+    /// `color_map_origin`.
+    pub color_map_origin: Option<u32>,
     /// `alpha_bits`.
     pub alpha_bits: Option<u8>,
     /// `drop_opaque_alpha`.
@@ -469,6 +475,16 @@ impl TgaEncoderOptions {
         }
         if let Some(order) = self.row_order {
             o.row_order = order;
+        }
+        if let Some(order) = self.column_order {
+            o.column_order = order;
+        }
+        if let Some(origin) = self.color_map_origin {
+            o.color_map_origin = u16::try_from(origin).map_err(|_| {
+                oxideav_core::Error::invalid(format!(
+                    "TGA encoder: color_map_origin {origin} exceeds the header's 16-bit field"
+                ))
+            })?;
         }
         if let Some(bits) = self.alpha_bits {
             if bits > crate::types::TGA_ATTRIBUTE_BITS_MAX {
@@ -529,6 +545,18 @@ impl CodecOptionsStruct for TgaEncoderOptions {
             help: "row storage order (image-descriptor bit 5); default top-down",
         },
         OptionField {
+            name: "column_order",
+            kind: OptionKind::Enum(&["left-to-right", "right-to-left"]),
+            default: OptionValue::String(String::new()),
+            help: "column storage order (image-descriptor bit 4); default left-to-right",
+        },
+        OptionField {
+            name: "color_map_origin",
+            kind: OptionKind::U32,
+            default: OptionValue::U32(0),
+            help: "colour map First Entry Index for Pal8: stored indices are offset by it (origin + entries <= 256)",
+        },
+        OptionField {
             name: "alpha_bits",
             kind: OptionKind::U32,
             default: OptionValue::U32(8),
@@ -587,6 +615,13 @@ impl CodecOptionsStruct for TgaEncoderOptions {
                     _ => RowOrder::TopDown,
                 })
             }
+            "column_order" => {
+                self.column_order = Some(match value.as_str()? {
+                    "right-to-left" => ColumnOrder::RightToLeft,
+                    _ => ColumnOrder::LeftToRight,
+                })
+            }
+            "color_map_origin" => self.color_map_origin = Some(value.as_u32()?),
             "alpha_bits" => {
                 let v = value.as_u32()?;
                 self.alpha_bits = Some(u8::try_from(v).map_err(|_| {

@@ -108,7 +108,7 @@ pub use image::{
     ColorInfo, ColorRange, ImageInfo, Metadata, Palette, PixelFormat, Plane, RgbImage, RgbaImage,
     TgaImage, TgaPixelFormat,
 };
-pub use options::{DecodeOptions, EncodeOptions, RowOrder, TrueColourDepth};
+pub use options::{ColumnOrder, DecodeOptions, EncodeOptions, RowOrder, TrueColourDepth};
 
 // ---- TGA depth: footer / extension area / tables / display pipeline ----
 pub use decoder::{

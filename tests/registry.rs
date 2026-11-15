@@ -707,7 +707,7 @@ mod options {
             enc.iter().all(|f| f.name != "quality"),
             "lossless: no quality knob"
         );
-        assert_eq!(enc.len(), 10);
+        assert_eq!(enc.len(), 12);
         let dec = ctx
             .codecs
             .decoder_options_schema(&id())

@@ -30,7 +30,7 @@
 
 use crate::error::{Result, TgaError as Error};
 use crate::image::{Palette, TgaImage, TgaPixelFormat};
-use crate::options::{EncodeOptions, RowOrder, TrueColourDepth};
+use crate::options::{ColumnOrder, EncodeOptions, RowOrder, TrueColourDepth};
 use crate::types::{
     ColorMapEntrySize, ImageOrigin, ImageType, TGA_EXTENSION_AREA_SIZE, TGA_FOOTER_SIZE,
     TGA_HEADER_SIZE, TgaColourCorrectionTable, TgaDeveloperTag, TgaScanLineTable,
@@ -96,9 +96,24 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
             let entry = opts
                 .palette_entry_size
                 .unwrap_or_else(|| ColorMapEntrySize::smallest_lossless_for(&pal.entries));
+            // Stored indices are 8-bit: the highest one written is
+            // `origin + len - 1`.
+            if usize::from(opts.color_map_origin) + pal.len() > 256 {
+                return Err(Error::invalid(format!(
+                    "TGA encoder: colour-map origin {} + {} entries exceeds what an 8-bit index can address",
+                    opts.color_map_origin,
+                    pal.len()
+                )));
+            }
             Some((pal, entry))
         }
         _ => None,
+    };
+    // What is added to every stored index (0 for the other layouts).
+    let index_bias = if palette.is_some() {
+        opts.color_map_origin as u8
+    } else {
+        0
     };
 
     let w = width as usize;
@@ -117,7 +132,7 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
     out.push(opts.image_id.len() as u8);
     out.push(u8::from(palette.is_some()));
     out.push(image_type as u8);
-    out.extend_from_slice(&0u16.to_le_bytes()); // cmap_first
+    out.extend_from_slice(&u16::from(index_bias).to_le_bytes()); // cmap_first
     out.extend_from_slice(&(palette.map(|(p, _)| p.len() as u16).unwrap_or(0)).to_le_bytes());
     out.push(palette.map(|(_, e)| e.bits()).unwrap_or(0));
     out.extend_from_slice(&opts.screen_origin.to_bytes());
@@ -128,7 +143,8 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
         RowOrder::TopDown => 0x20,
         RowOrder::BottomUp => 0x00,
     };
-    out.push((alpha_bits & 0x0F) | origin_bit);
+    let mirror = opts.column_order == ColumnOrder::RightToLeft;
+    out.push((alpha_bits & 0x0F) | origin_bit | if mirror { 0x10 } else { 0x00 });
 
     // Image ID (§C.3), colour map (§C.4).
     out.extend_from_slice(&opts.image_id);
@@ -138,53 +154,45 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
         }
     }
 
-    // Pixel array (§C.5), one row at a time in storage order.
+    // Pixel array (§C.5), one row at a time in storage order. An
+    // uncompressed row is converted straight into the output; a
+    // run-length row goes through one reused wire-order buffer (or is
+    // packetised in place when the source bytes already are the wire
+    // bytes).
     let stride = image.stride();
     let data = image.data();
     let row_bytes = w * src_bpp;
-    let mut wire_row: Vec<u8> = Vec::with_capacity(w * out_bpp);
+    let wire_row_bytes = w * out_bpp;
+    let verbatim = !mirror
+        && index_bias == 0
+        && matches!(image.format, TgaPixelFormat::Gray8 | TgaPixelFormat::Pal8);
+    let mut wire_row: Vec<u8> = if opts.rle && !verbatim {
+        vec![0u8; wire_row_bytes]
+    } else {
+        Vec::new()
+    };
     for i in 0..h {
         let y = match opts.row_order {
             RowOrder::TopDown => i,
             RowOrder::BottomUp => h - 1 - i,
         };
         let row = &data[y * stride..y * stride + row_bytes];
-        wire_row.clear();
-        match (image.format, depth) {
-            // RGBA source written at 32 bits: BGRA.
-            (TgaPixelFormat::Rgba, 32) => {
-                for p in row.as_chunks::<4>().0 {
-                    wire_row.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
-                }
+        if !opts.rle {
+            let start = out.len();
+            out.resize(start + wire_row_bytes, 0);
+            let dst = &mut out[start..];
+            row_to_wire(image.format, depth, index_bias, row, dst);
+            if mirror {
+                reverse_pixels(dst, out_bpp);
             }
-            // RGBA source with uniformly opaque alpha, dropped to 24 bits.
-            (TgaPixelFormat::Rgba, 24) => {
-                for p in row.as_chunks::<4>().0 {
-                    wire_row.extend_from_slice(&[p[2], p[1], p[0]]);
-                }
-            }
-            (TgaPixelFormat::Rgb24, 24) => {
-                for p in row.as_chunks::<3>().0 {
-                    wire_row.extend_from_slice(&[p[2], p[1], p[0]]);
-                }
-            }
-            // 15 / 16-bit true colour: `[A]RRRRRGG GGGBBBBB` little-endian.
-            (TgaPixelFormat::Rgba | TgaPixelFormat::Rgb24, 15 | 16) => {
-                for p in row.chunks_exact(src_bpp) {
-                    let a = if src_bpp == 4 { p[3] } else { 0xFF };
-                    wire_row.extend_from_slice(&pack_a1r5g5b5([p[0], p[1], p[2], a], depth));
-                }
-            }
-            // Indices and luma go out as they are.
-            (TgaPixelFormat::Gray8 | TgaPixelFormat::Pal8, _) => wire_row.extend_from_slice(row),
-            (TgaPixelFormat::Rgba | TgaPixelFormat::Rgb24, _) => {
-                unreachable!("true colour is written at 15 / 16 / 24 / 32 bits")
-            }
-        }
-        if opts.rle {
-            rle_one_row(&wire_row, out_bpp, &mut out);
+        } else if verbatim {
+            rle_one_row(row, out_bpp, &mut out);
         } else {
-            out.extend_from_slice(&wire_row);
+            row_to_wire(image.format, depth, index_bias, row, &mut wire_row);
+            if mirror {
+                reverse_pixels(&mut wire_row, out_bpp);
+            }
+            rle_one_row(&wire_row, out_bpp, &mut out);
         }
     }
 
@@ -249,40 +257,124 @@ fn sync_gamma(mut ext: ExtensionAreaInput, gamma: Option<(u16, u16)>) -> Extensi
     ext
 }
 
+/// Reverse the order of the `bpp`-byte pixels of one row in place.
+fn reverse_pixels(row: &mut [u8], bpp: usize) {
+    match bpp {
+        1 => row.reverse(),
+        2 => row.as_chunks_mut::<2>().0.reverse(),
+        3 => row.as_chunks_mut::<3>().0.reverse(),
+        _ => row.as_chunks_mut::<4>().0.reverse(),
+    }
+}
+
+/// Convert one source row to wire order: `dst` holds exactly the row's
+/// pixels at `depth.div_ceil(8)` bytes each. `index_bias` (the colour
+/// map's first entry index) is added to every `Pal8` index; the caller
+/// has checked that no sum leaves a byte.
+fn row_to_wire(format: TgaPixelFormat, depth: u8, index_bias: u8, row: &[u8], dst: &mut [u8]) {
+    match (format, depth) {
+        // RGBA source written at 32 bits: BGRA.
+        (TgaPixelFormat::Rgba, 32) => {
+            for (d, p) in dst
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(row.as_chunks::<4>().0)
+            {
+                *d = [p[2], p[1], p[0], p[3]];
+            }
+        }
+        // RGBA source with uniformly opaque alpha, dropped to 24 bits.
+        (TgaPixelFormat::Rgba, 24) => {
+            for (d, p) in dst
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(row.as_chunks::<4>().0)
+            {
+                *d = [p[2], p[1], p[0]];
+            }
+        }
+        (TgaPixelFormat::Rgb24, 24) => {
+            for (d, p) in dst
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(row.as_chunks::<3>().0)
+            {
+                *d = [p[2], p[1], p[0]];
+            }
+        }
+        // 15 / 16-bit true colour: `[A]RRRRRGG GGGBBBBB` little-endian.
+        (TgaPixelFormat::Rgba, 15 | 16) => {
+            for (d, p) in dst
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .zip(row.as_chunks::<4>().0)
+            {
+                *d = pack_a1r5g5b5(*p, depth);
+            }
+        }
+        (TgaPixelFormat::Rgb24, 15 | 16) => {
+            for (d, p) in dst
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .zip(row.as_chunks::<3>().0)
+            {
+                *d = pack_a1r5g5b5([p[0], p[1], p[2], 0xFF], depth);
+            }
+        }
+        // Luma goes out as it is, indices offset by the map origin.
+        (TgaPixelFormat::Gray8, _) => dst.copy_from_slice(row),
+        (TgaPixelFormat::Pal8, _) => {
+            for (d, &i) in dst.iter_mut().zip(row) {
+                *d = i.wrapping_add(index_bias);
+            }
+        }
+        (TgaPixelFormat::Rgba | TgaPixelFormat::Rgb24, _) => {
+            unreachable!("true colour is written at 15 / 16 / 24 / 32 bits")
+        }
+    }
+}
+
 /// §C.5 RLE packetisation of one wire-order row of `bpp`-byte pixels:
 /// a run packet for ≥ 2 consecutive identical pixels (max 128), raw
 /// packets otherwise (max 128); packets never span rows.
 fn rle_one_row(row: &[u8], bpp: usize, out: &mut Vec<u8>) {
-    let n = row.len() / bpp;
-    let px = |i: usize| &row[i * bpp..i * bpp + bpp];
-    let mut i = 0;
-    while i < n {
-        // Look at the run-length starting at `i`.
-        let mut run = 1;
-        while i + run < n && px(i + run) == px(i) && run < 128 {
-            run += 1;
-        }
+    // Worst case: all raw packets, one count byte per 128 pixels.
+    out.reserve(row.len() + row.len() / bpp / 128 + 1);
+    match bpp {
+        1 => rle_pixels::<1>(row.as_chunks().0, out),
+        2 => rle_pixels::<2>(row.as_chunks().0, out),
+        3 => rle_pixels::<3>(row.as_chunks().0, out),
+        _ => rle_pixels::<4>(row.as_chunks().0, out),
+    }
+}
+
+/// [`rle_one_row`] on whole `N`-byte pixels.
+fn rle_pixels<const N: usize>(row: &[[u8; N]], out: &mut Vec<u8>) {
+    let mut rest = row;
+    while let Some((&first, tail)) = rest.split_first() {
+        // Length of the run of pixels equal to `first`, capped at 128.
+        let run = 1 + tail.iter().take(127).take_while(|&&p| p == first).count();
         if run >= 2 {
-            // Emit run-length packet.
             out.push(0x80 | (run as u8 - 1));
-            out.extend_from_slice(px(i));
-            i += run;
+            out.extend_from_slice(&first);
+            rest = &rest[run..];
         } else {
-            // Collect a raw run: pixels that don't begin a run of ≥ 2.
-            // Stop at length 128 OR right before a position that *does*
-            // begin a run of ≥ 2 (so we leave it for the next iteration).
-            let raw_start = i;
-            let mut raw_end = i + 1;
-            while raw_end < n && raw_end - raw_start < 128 {
-                if raw_end + 1 < n && px(raw_end + 1) == px(raw_end) {
-                    break;
-                }
-                raw_end += 1;
-            }
-            let count = raw_end - raw_start;
-            out.push(((count as u8) - 1) & 0x7F);
-            out.extend_from_slice(&row[raw_start * bpp..raw_end * bpp]);
-            i = raw_end;
+            // A raw packet: pixels up to (not including) the next
+            // position that begins a run of ≥ 2, at most 128.
+            let cap = rest.len().min(128);
+            let count = tail
+                .windows(2)
+                .take(cap - 1)
+                .position(|w| w[0] == w[1])
+                .map_or(cap, |k| k + 1);
+            out.push((count - 1) as u8);
+            out.extend_from_slice(rest[..count].as_flattened());
+            rest = &rest[count..];
         }
     }
 }
@@ -720,7 +812,7 @@ pub fn encode_tga_with_extension(base_tga: &[u8], ext: &ExtensionAreaInput) -> R
     // Postage stamp (optional).
     let postage_stamp_offset = if let Some(stamp) = &ext.postage_stamp {
         let off = out.len() as u32;
-        write_postage_stamp(&mut out, stamp, parent_depth)?;
+        write_postage_stamp(&mut out, stamp, parent_depth, stamp_index_bias(base_tga))?;
         off
     } else {
         0
@@ -833,7 +925,28 @@ fn write_str_field(out: &mut [u8], start: usize, s: &str, capacity: usize) {
     // Trailing NUL is already there from the resize.
 }
 
-fn write_postage_stamp(out: &mut Vec<u8>, stamp: &TgaImage, parent_depth: u8) -> Result<()> {
+/// What a postage stamp's colour-map indices are offset by on disk: the
+/// parent's Color Map Origin when the parent is a colour-mapped image
+/// (the stamp shares its map, and the reader folds the origin out of
+/// stamp indices exactly as it does for the main image), else `0`.
+fn stamp_index_bias(base_tga: &[u8]) -> u16 {
+    let colour_mapped = matches!(
+        ImageType::from_u8(base_tga[2]),
+        Some(ImageType::UncompressedColourMapped | ImageType::RleColourMapped)
+    );
+    if colour_mapped {
+        u16::from_le_bytes([base_tga[3], base_tga[4]])
+    } else {
+        0
+    }
+}
+
+fn write_postage_stamp(
+    out: &mut Vec<u8>,
+    stamp: &TgaImage,
+    parent_depth: u8,
+    index_bias: u16,
+) -> Result<()> {
     if stamp.width == 0 || stamp.height == 0 {
         return Err(Error::invalid("TGA encoder: postage stamp zero dimension"));
     }
@@ -904,7 +1017,19 @@ fn write_postage_stamp(out: &mut Vec<u8>, stamp: &TgaImage, parent_depth: u8) ->
             let stride = stamp.stride();
             let src = stamp.data();
             for y in 0..stamp.height as usize {
-                out.extend_from_slice(&src[y * stride..y * stride + w]);
+                let row = &src[y * stride..y * stride + w];
+                if index_bias == 0 {
+                    out.extend_from_slice(row);
+                    continue;
+                }
+                for &i in row {
+                    let stored = u8::try_from(u16::from(i) + index_bias).map_err(|_| {
+                        Error::invalid(format!(
+                            "TGA encoder: postage stamp index {i} + colour-map origin {index_bias} does not fit an 8-bit index"
+                        ))
+                    })?;
+                    out.push(stored);
+                }
             }
         }
     }
@@ -1011,4 +1136,91 @@ pub fn set_image_origin(base_tga: &mut [u8], origin: ImageOrigin) -> Result<()> 
     }
     base_tga[8..12].copy_from_slice(&origin.to_bytes());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The §C.5 packetisation rule written as the plain position walk:
+    /// a run packet for ≥ 2 consecutive identical pixels (max 128),
+    /// otherwise a raw packet that stops at 128 pixels or right before
+    /// a position that begins such a run.
+    fn packetise_by_position(row: &[u8], bpp: usize, out: &mut Vec<u8>) {
+        let n = row.len() / bpp;
+        let px = |i: usize| &row[i * bpp..i * bpp + bpp];
+        let mut i = 0;
+        while i < n {
+            let mut run = 1;
+            while i + run < n && px(i + run) == px(i) && run < 128 {
+                run += 1;
+            }
+            if run >= 2 {
+                out.push(0x80 | (run as u8 - 1));
+                out.extend_from_slice(px(i));
+                i += run;
+            } else {
+                let start = i;
+                let mut end = i + 1;
+                while end < n && end - start < 128 {
+                    if end + 1 < n && px(end + 1) == px(end) {
+                        break;
+                    }
+                    end += 1;
+                }
+                out.push((end - start - 1) as u8);
+                out.extend_from_slice(&row[start * bpp..end * bpp]);
+                i = end;
+            }
+        }
+    }
+
+    /// The slice-based packetiser emits exactly the packets of the
+    /// position walk, for every pixel size and for rows mixing long
+    /// runs (past the 128 cap), pairs, and run-free stretches.
+    #[test]
+    fn packetiser_matches_the_position_walk() {
+        let mut state = 0x9E37_79B9u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        for bpp in 1..=4usize {
+            for case in 0..400 {
+                let pixels = match case {
+                    0 => 0,
+                    1 => 1,
+                    2 => 2,
+                    _ => (next() % 700) as usize,
+                };
+                // Segment lengths drawn so runs of 1, 2, 127..=130 and
+                // several hundred all occur; few distinct values so
+                // neighbouring segments sometimes merge.
+                let mut row = Vec::with_capacity(pixels * bpp);
+                while row.len() < pixels * bpp {
+                    let len = match next() % 6 {
+                        0 | 1 => 1,
+                        2 => 2,
+                        3 => 126 + (next() % 5) as usize,
+                        4 => (next() % 9) as usize + 1,
+                        _ => (next() % 300) as usize + 1,
+                    };
+                    let v = (next() % 3) as u8;
+                    for _ in 0..len {
+                        if row.len() == pixels * bpp {
+                            break;
+                        }
+                        row.extend(std::iter::repeat_n(v, bpp));
+                    }
+                }
+                let mut expect = Vec::new();
+                packetise_by_position(&row, bpp, &mut expect);
+                let mut got = Vec::new();
+                rle_one_row(&row, bpp, &mut got);
+                assert_eq!(got, expect, "bpp {bpp}, case {case}, {pixels} pixels");
+            }
+        }
+    }
 }

@@ -7,7 +7,9 @@
 //! * layouts `Rgba` / `Rgb24` / `Gray8` / `Pal8` (palette from the
 //!   fuzz bytes, 24- or 32-bit entries — the lossless colour-map
 //!   sizes; 15 / 16-bit entries quantise and are excluded),
-//! * `rle` on / off, `row_order` top-down / bottom-up, `alpha_bits`
+//! * `rle` on / off, `row_order` top-down / bottom-up, `column_order`
+//!   left-to-right / right-to-left (the four origins), a `Pal8`
+//!   `color_map_origin` anywhere the 8-bit indices allow, `alpha_bits`
 //!   `8` / `0`, an Image ID of 0..=255 bytes, a non-zero screen
 //!   origin, a forced footer, and a `metadata.gamma` that must come
 //!   back through the extension area,
@@ -24,7 +26,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use oxideav_tga::{
-    EncodeOptions, ImageOrigin, Metadata, Palette, PixelFormat, RowOrder, TgaImage,
+    ColumnOrder, EncodeOptions, ImageOrigin, Metadata, Palette, PixelFormat, RowOrder, TgaImage,
     TrueColourDepth, decode, encode, info, probe,
 };
 
@@ -122,6 +124,9 @@ fuzz_target!(|data: &[u8]| {
     };
     img.metadata = Metadata::new().with_gamma(gamma);
 
+    // Any origin that keeps `origin + entries` within the 256 values
+    // an 8-bit index has (ignored by the other layouts).
+    let map_origin = (u16::from(data[7]) + u16::from(data[9])) % (257 - palette_len as u16);
     let opts = EncodeOptions::default()
         .with_rle(flags & 1 != 0)
         .with_row_order(if flags & 2 != 0 {
@@ -129,6 +134,12 @@ fuzz_target!(|data: &[u8]| {
         } else {
             RowOrder::TopDown
         })
+        .with_column_order(if flags & 0x80 != 0 {
+            ColumnOrder::RightToLeft
+        } else {
+            ColumnOrder::LeftToRight
+        })
+        .with_color_map_origin(map_origin)
         .with_alpha_bits(if flags & 4 != 0 { Some(0u8) } else { None })
         .with_image_id(take(id_len, n * 4))
         .with_screen_origin(origin)
@@ -191,9 +202,14 @@ fuzz_target!(|data: &[u8]| {
             "one attribute bit for 16-bit Rgba unless alpha_bits pins 0"
         );
     }
+    let head = oxideav_tga::header(&bytes).unwrap();
+    assert_eq!(head.image_origin(), origin, "screen origin");
     assert_eq!(
-        oxideav_tga::header(&bytes).unwrap().image_origin(),
-        origin,
-        "screen origin"
+        (described.top_down, described.right_to_left),
+        (flags & 2 == 0, flags & 0x80 != 0),
+        "storage origin"
     );
+    if format == PixelFormat::Pal8 {
+        assert_eq!(head.cmap_first, map_origin, "colour-map origin");
+    }
 });

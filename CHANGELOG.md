@@ -47,12 +47,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one scan (skipped when the map covers all 256 values at origin 0).
   Decoded bytes are identical; see the README for megapixels per
   second before → after.
-
-### Changed
+- **Encode writes rows in place.** An uncompressed row is converted
+  straight into the output buffer (no intermediate row copy); the
+  run-length packetiser compares whole pixels of a fixed size and scans
+  with slice iterators, and `Gray8` / `Pal8` rows are packetised from
+  the source without a copy. The packets are the same ones (a unit test
+  pins the packetiser against the plain position walk for every pixel
+  size), so encoder output is byte-identical.
 
 - API hygiene: `TgaDisplayOptions`, `ToneApplied`, `AlphaResolution`, `TgaDisplayReport` and `TgaDecodedFrame` are now `#[non_exhaustive]`. Build `TgaDisplayOptions` from `ALL` / `NONE` / `Default` + `with_*`. The TGA 2.0 file-layout mirrors (`TgaHeader`, `TgaFooter`, `TgaExtensionArea`, `ExtensionAreaInput`, `TgaTimestamp`, ...) and the header-field enums (`ImageType`, `ColorMapType`, `ColorMapEntrySize`, `AttributesType`, `Interleaving`) stay exhaustive because the format fixes them.
 
 ### Added
+
+- **All four origins on encode**: `EncodeOptions::column_order`
+  (`ColumnOrder::LeftToRight` default / `RightToLeft`, image-descriptor
+  bit 4) beside `row_order` (bit 5), so bottom-left, bottom-right,
+  top-left and top-right files can all be written; the decoder already
+  read all four. Registry option `column_order`
+  (`left-to-right` / `right-to-left`).
+- **Colour Map Origin on encode**: `EncodeOptions::color_map_origin`
+  writes the header's First Entry Index for a `Pal8` image and offsets
+  every stored index by it (`origin + entries ≤ 256`, else
+  `InvalidData`); `decode` folds it back, so the image is unchanged.
+  Registry option `color_map_origin`. A postage stamp written beside
+  such a file carries the same offset, matching what the stamp reader
+  folds out.
 
 - **Palette alpha on the registry path** (core 0.1.40 `VideoFrame`
   palette-alpha record). The framework decoder attaches the record
