@@ -271,8 +271,8 @@ fn colour_correction_takes_precedence_over_gamma() {
 
     let mut cct = TgaColourCorrectionTable::default(); // identity
     // Invert red channel: entry i maps to (255-i) scaled to u16 high byte.
-    for i in 0..256 {
-        cct.red[i] = ((255 - i) as u16) << 8 | ((255 - i) as u16);
+    for (i, r) in cct.red.iter_mut().enumerate() {
+        *r = ((255 - i) as u16) << 8 | ((255 - i) as u16);
     }
     let ext = ExtensionAreaInput {
         gamma: (1, 2),

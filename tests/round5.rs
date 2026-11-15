@@ -229,9 +229,9 @@ fn apply_inversion_to_rgba_image() {
 fn apply_to_gray8_image_uses_green_curve() {
     let mut cct = TgaColourCorrectionTable::default();
     // green[x] = (2x clamped) << 8 — a simple brighten curve.
-    for i in 0..TGA_COLOUR_CORRECTION_TABLE_ENTRIES {
+    for (i, g) in cct.green.iter_mut().enumerate() {
         let out = ((i * 2).min(255)) as u16;
-        cct.green[i] = (out << 8) | out;
+        *g = (out << 8) | out;
     }
     let mut img = TgaImage::packed(3, 1, TgaPixelFormat::Gray8, vec![10, 100, 200]).unwrap();
     cct.apply_to_image(&mut img);
@@ -293,9 +293,9 @@ fn end_to_end_decode_then_apply_cct() {
 fn end_to_end_grayscale_decode_then_apply() {
     // Darken curve on the green (=luma) channel: out[i] = i / 2.
     let mut cct = TgaColourCorrectionTable::default();
-    for i in 0..TGA_COLOUR_CORRECTION_TABLE_ENTRIES {
+    for (i, g) in cct.green.iter_mut().enumerate() {
         let out = (i / 2) as u16;
-        cct.green[i] = (out << 8) | out;
+        *g = (out << 8) | out;
     }
     let gray = vec![100u8; 9];
     let base = encode_tga_grayscale(3, 3, &gray).unwrap();
