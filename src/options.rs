@@ -267,7 +267,11 @@ pub struct EncodeOptions {
     /// record is re-emitted (its gamma likewise synchronised with
     /// `metadata.gamma`), else a minimal extension area is written when
     /// `metadata.gamma` is `Some`, else no footer at all (a TGA 1.0
-    /// file) unless [`footer`](Self::footer) asks for one.
+    /// file) unless [`footer`](Self::footer) asks for one — or the
+    /// footer-less file would end in the bytes of the footer signature
+    /// (pixel data can spell it), in which case a footer with both
+    /// offsets zero is appended so no reader mistakes pixel bytes for
+    /// one.
     pub extension: Option<ExtensionAreaInput>,
     /// Always append the 26-byte TGA 2.0 footer, even when there is no
     /// extension area to point at (a "marker-only" footer with both

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A footer-less file can no longer be read back as a TGA 2.0 file
+  whose footer is pixel data** (scheduled fuzz finding,
+  `contract_identity`). The signature in the last 18 bytes is the only
+  footer test the specification gives a reader; a `Gray8` / index plane
+  or a raw run-length packet can end in those bytes, and the eight
+  bytes before them were then taken for the extension-area and
+  developer-directory offsets (the fuzz input decoded with a gamma of
+  0.985 read out of its own pixels). `encode` now appends a footer with
+  both offsets zero whenever the footer-less output would end in the
+  signature, so the file a reader sees is unambiguous; every other
+  output is byte-identical to before.
+
 ### Changed
 
 - API hygiene: `TgaDisplayOptions`, `ToneApplied`, `AlphaResolution`, `TgaDisplayReport` and `TgaDecodedFrame` are now `#[non_exhaustive]`. Build `TgaDisplayOptions` from `ALL` / `NONE` / `Default` + `with_*`. The TGA 2.0 file-layout mirrors (`TgaHeader`, `TgaFooter`, `TgaExtensionArea`, `ExtensionAreaInput`, `TgaTimestamp`, ...) and the header-field enums (`ImageType`, `ColorMapType`, `ColorMapEntrySize`, `AttributesType`, `Interleaving`) stay exhaustive because the format fixes them.

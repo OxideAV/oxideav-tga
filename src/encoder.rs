@@ -205,8 +205,27 @@ pub(crate) fn encode_image(image: &TgaImage, opts: &EncodeOptions) -> Result<Vec
             out.extend_from_slice(&crate::types::TgaFooter::default().to_bytes());
             Ok(out)
         }
+        // A TGA 1.0 file whose last bytes happen to spell the footer
+        // signature (pixel data can: a `Gray8` plane, or a raw RLE
+        // packet, ending in "TRUEVISION-XFILE.\0") would be read as a
+        // TGA 2.0 file whose footer offsets are the eight bytes before
+        // it — arbitrary pixel data naming an extension / developer
+        // area. The signature at the tail is the only footer test the
+        // spec gives a reader, so the writer closes the ambiguity: such
+        // a file gets a real footer with both offsets zero.
+        None if ends_with_footer_signature(&out) => {
+            out.extend_from_slice(&crate::types::TgaFooter::default().to_bytes());
+            Ok(out)
+        }
         None => Ok(out),
     }
+}
+
+/// `true` when `file` is long enough to hold a footer and its final 18
+/// bytes are the footer signature — i.e. a reader will take its last 26
+/// bytes for a TGA 2.0 footer.
+fn ends_with_footer_signature(file: &[u8]) -> bool {
+    file.len() >= TGA_FOOTER_SIZE && file.ends_with(crate::types::TGA_FOOTER_MAGIC.as_slice())
 }
 
 /// A float gamma as the §C.6.6 SHORT pair: `(round(g × 100), 100)`
