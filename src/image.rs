@@ -707,9 +707,6 @@ impl TgaImage {
         let h = self.height as usize;
         let out_bpp = if alpha { 4 } else { 3 };
         let mut out = vec![0u8; w * h * out_bpp];
-        if alpha {
-            out.iter_mut().skip(3).step_by(4).for_each(|a| *a = 255);
-        }
         if w == 0 || h == 0 {
             return out;
         }
@@ -731,44 +728,65 @@ impl TgaImage {
             _ => [[0u8; 4]; 256],
         };
 
-        for y in 0..h {
+        // One whole-row kernel per (layout, output) pair, each over
+        // fixed-size pixels.
+        let mut rows_done = 0;
+        for (y, dst) in out.chunks_exact_mut(w * out_bpp).enumerate() {
             let Some(row) = src.get(y * stride..y * stride + row_bytes) else {
                 break;
             };
-            let dst = &mut out[y * w * out_bpp..(y + 1) * w * out_bpp];
-            match self.format {
-                PixelFormat::Rgba => {
-                    for (s, d) in row
-                        .as_chunks::<4>()
+            match (self.format, alpha) {
+                (PixelFormat::Rgba, true) | (PixelFormat::Rgb24, false) => {
+                    dst.copy_from_slice(row);
+                }
+                (PixelFormat::Rgba, false) => {
+                    for (d, s) in dst
+                        .as_chunks_mut::<3>()
                         .0
-                        .iter()
-                        .zip(dst.chunks_exact_mut(out_bpp))
+                        .iter_mut()
+                        .zip(row.as_chunks::<4>().0)
                     {
-                        d.copy_from_slice(&s[..out_bpp]);
+                        *d = [s[0], s[1], s[2]];
                     }
                 }
-                PixelFormat::Rgb24 => {
-                    for (s, d) in row
-                        .as_chunks::<3>()
+                (PixelFormat::Rgb24, true) => {
+                    for (d, s) in dst
+                        .as_chunks_mut::<4>()
                         .0
-                        .iter()
-                        .zip(dst.chunks_exact_mut(out_bpp))
+                        .iter_mut()
+                        .zip(row.as_chunks::<3>().0)
                     {
-                        d[..3].copy_from_slice(s);
+                        *d = [s[0], s[1], s[2], 255];
                     }
                 }
-                PixelFormat::Gray8 => {
-                    for (&g, d) in row.iter().zip(dst.chunks_exact_mut(out_bpp)) {
-                        d[0] = g;
-                        d[1] = g;
-                        d[2] = g;
+                (PixelFormat::Gray8, true) => {
+                    for (d, &g) in dst.as_chunks_mut::<4>().0.iter_mut().zip(row) {
+                        *d = [g, g, g, 255];
                     }
                 }
-                PixelFormat::Pal8 => {
-                    for (&i, d) in row.iter().zip(dst.chunks_exact_mut(out_bpp)) {
-                        d.copy_from_slice(&lut[usize::from(i)][..out_bpp]);
+                (PixelFormat::Gray8, false) => {
+                    for (d, &g) in dst.as_chunks_mut::<3>().0.iter_mut().zip(row) {
+                        *d = [g, g, g];
                     }
                 }
+                (PixelFormat::Pal8, true) => {
+                    for (d, &i) in dst.as_chunks_mut::<4>().0.iter_mut().zip(row) {
+                        *d = lut[usize::from(i)];
+                    }
+                }
+                (PixelFormat::Pal8, false) => {
+                    for (d, &i) in dst.as_chunks_mut::<3>().0.iter_mut().zip(row) {
+                        let e = lut[usize::from(i)];
+                        *d = [e[0], e[1], e[2]];
+                    }
+                }
+            }
+            rows_done = y + 1;
+        }
+        // Rows a short buffer does not hold are opaque black.
+        if alpha {
+            for d in out[rows_done * w * 4..].as_chunks_mut::<4>().0 {
+                d[3] = 255;
             }
         }
         out

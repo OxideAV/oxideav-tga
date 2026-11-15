@@ -21,7 +21,9 @@
 //! `cargo bench -- --sample-size N` if needed.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use oxideav_tga::{EncodeOptions, RowOrder, TgaImage, decode, encode, encode_rgb8, encode_rgba8};
+use oxideav_tga::{
+    EncodeOptions, RowOrder, TgaImage, decode, decode_rgba8, encode, encode_rgb8, encode_rgba8,
+};
 
 fn unc() -> EncodeOptions {
     EncodeOptions::default()
@@ -303,6 +305,11 @@ fn bench_megapixel(c: &mut Criterion) {
                 b.iter(|| black_box(encode(black_box(&image), &opts).unwrap()))
             });
         }
+        // Decode straight to packed RGBA (the layout change for 24 bpp).
+        let file = encode(&image, &EncodeOptions::default().with_rle(false)).unwrap();
+        group.bench_function(format!("decode_rgba8_raw_{name}bpp"), |b| {
+            b.iter(|| black_box(decode_rgba8(black_box(&file)).unwrap()))
+        });
         // Bottom-up storage (descriptor bit 5 clear) adds the row flip.
         let opts = EncodeOptions::default()
             .with_rle(false)

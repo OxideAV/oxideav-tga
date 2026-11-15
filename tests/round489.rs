@@ -505,3 +505,70 @@ fn postage_stamp_indices_follow_the_colour_map_origin() {
     // The stamp reader returns packed RGBA: entries 2 and 1.
     assert_eq!(read.data(), &[3, 2, 1, 255, 6, 5, 4, 255]);
 }
+
+// ---------------------------------------------------------------------------
+// Layout conversion kernels
+// ---------------------------------------------------------------------------
+
+/// `to_rgba8` / `to_rgb8` against the per-pixel definition, for every
+/// layout — including the documented fallbacks: a palette index the
+/// palette does not cover is transparent black, rows a short buffer
+/// does not hold are opaque black.
+#[test]
+fn packed_conversions_match_the_per_pixel_definition() {
+    let (w, h) = (7usize, 5usize);
+    let pal: Vec<[u8; 4]> = (0..6u8)
+        .map(|i| [i * 40, 255 - i * 40, i, 200 + i])
+        .collect();
+    let layouts = [
+        (PixelFormat::Rgba, noise(w * h * 4, 21)),
+        (PixelFormat::Rgb24, noise(w * h * 3, 22)),
+        (PixelFormat::Gray8, noise(w * h, 23)),
+        // Indices 0..=7 over a 6-entry palette: 6 and 7 are uncovered.
+        (
+            PixelFormat::Pal8,
+            noise(w * h, 24).into_iter().map(|i| i % 8).collect(),
+        ),
+    ];
+    for (format, plane) in layouts {
+        let bpp = format.bytes_per_pixel();
+        for keep_rows in [h, 3] {
+            // A caller-assembled image: a plane holding `keep_rows`
+            // whole rows and half of the next.
+            let mut img = TgaImage::packed(w as u32, h as u32, format, plane.clone()).unwrap();
+            if keep_rows < h {
+                img.planes[0]
+                    .data
+                    .truncate(keep_rows * w * bpp + (w / 2) * bpp);
+            }
+            if format == PixelFormat::Pal8 {
+                img.palette = Some(Palette::new(pal.clone()));
+            }
+            let mut rgba = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    let px = if y < keep_rows {
+                        let s = &plane[(y * w + x) * bpp..];
+                        match format {
+                            PixelFormat::Rgba => [s[0], s[1], s[2], s[3]],
+                            PixelFormat::Rgb24 => [s[0], s[1], s[2], 255],
+                            PixelFormat::Gray8 => [s[0], s[0], s[0], 255],
+                            _ => pal.get(usize::from(s[0])).copied().unwrap_or([0; 4]),
+                        }
+                    } else {
+                        [0, 0, 0, 255]
+                    };
+                    rgba.extend_from_slice(&px);
+                }
+            }
+            let rgb: Vec<u8> = rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect();
+            assert_eq!(img.to_rgba8(), rgba, "{format:?} rgba, {keep_rows} rows");
+            assert_eq!(img.to_rgb8(), rgb, "{format:?} rgb, {keep_rows} rows");
+        }
+    }
+}

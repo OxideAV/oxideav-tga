@@ -59,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the source without a copy. The packets are the same ones (a unit test
   pins the packetiser against the plain position walk for every pixel
   size), so encoder output is byte-identical.
+- **`to_rgba8` / `to_rgb8` run one whole-row kernel per layout** over
+  fixed-size pixels (same bytes, including the documented fallbacks:
+  uncovered palette index → transparent black, rows a short buffer
+  lacks → opaque black), and `decode_rgba8` / `decode_rgb8` hand over
+  the decoded plane itself when the file already is 32-bit / 24-bit
+  instead of copying it.
 
 - API hygiene: `TgaDisplayOptions`, `ToneApplied`, `AlphaResolution`, `TgaDisplayReport` and `TgaDecodedFrame` are now `#[non_exhaustive]`. Build `TgaDisplayOptions` from `ALL` / `NONE` / `Default` + `with_*`. The TGA 2.0 file-layout mirrors (`TgaHeader`, `TgaFooter`, `TgaExtensionArea`, `ExtensionAreaInput`, `TgaTimestamp`, ...) and the header-field enums (`ImageType`, `ColorMapType`, `ColorMapEntrySize`, `AttributesType`, `Interleaving`) stay exhaustive because the format fixes them.
 

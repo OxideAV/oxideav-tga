@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use crate::decoder::{decode_image, header_info, probe_bytes, validate_header};
 use crate::encoder::encode_image;
 use crate::error::{Result, TgaError as Error};
-use crate::image::{ImageInfo, RgbImage, RgbaImage, TgaImage};
+use crate::image::{ImageInfo, RgbImage, RgbaImage, TgaImage, TgaPixelFormat};
 use crate::options::{DecodeOptions, EncodeOptions};
 use crate::types::TgaHeader;
 
@@ -51,16 +51,26 @@ pub fn decode_with(bytes: &[u8], opts: &DecodeOptions) -> Result<TgaImage> {
 /// Decode straight to tightly packed 8-bit RGB (alpha dropped). See
 /// [`TgaImage::to_rgb8`] for the per-layout kernels.
 pub fn decode_rgb8(bytes: &[u8]) -> Result<RgbImage> {
-    let img = decode(bytes)?;
-    Ok(RgbImage::new(img.width, img.height, img.to_rgb8()))
+    let mut img = decode(bytes)?;
+    let (width, height) = (img.width, img.height);
+    Ok(RgbImage::new(
+        width,
+        height,
+        take_packed(&mut img, TgaPixelFormat::Rgb24).unwrap_or_else(|| img.to_rgb8()),
+    ))
 }
 
 /// Decode straight to tightly packed 8-bit RGBA (alpha `255` where the
 /// source has none; palette alpha applied). See [`TgaImage::to_rgba8`]
 /// for the per-layout kernels.
 pub fn decode_rgba8(bytes: &[u8]) -> Result<RgbaImage> {
-    let img = decode(bytes)?;
-    Ok(RgbaImage::new(img.width, img.height, img.to_rgba8()))
+    let mut img = decode(bytes)?;
+    let (width, height) = (img.width, img.height);
+    Ok(RgbaImage::new(
+        width,
+        height,
+        take_packed(&mut img, TgaPixelFormat::Rgba).unwrap_or_else(|| img.to_rgba8()),
+    ))
 }
 
 /// Read `r` to its end and [`decode`] the bytes.
@@ -113,4 +123,19 @@ fn check_raw_len(width: u32, height: u32, bpp: usize, len: usize) -> Result<()> 
         )));
     }
     Ok(())
+}
+
+/// The plane of a freshly decoded image when it already is the wanted
+/// packed layout (a decoded plane is tight: stride = width × bytes per
+/// pixel), so the caller keeps the buffer instead of copying it;
+/// `None`, with the image untouched, otherwise.
+fn take_packed(img: &mut TgaImage, want: TgaPixelFormat) -> Option<Vec<u8>> {
+    let tight = img.width as usize * want.bytes_per_pixel();
+    let len = tight * img.height as usize;
+    match img.planes.as_mut_slice() {
+        [plane] if img.format == want && plane.stride == tight && plane.data.len() == len => {
+            Some(std::mem::take(&mut plane.data))
+        }
+        _ => None,
+    }
 }
