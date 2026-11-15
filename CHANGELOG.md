@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/OxideAV/oxideav-tga/compare/v0.0.5...v0.0.6) - 2026-11-15
+
+### Other
+
+- round 489 — fuzz finding and fix, four origins and colour-map origin on encode, megapixels per second before and after
+- packed conversions: one whole-row kernel per layout; decode_rgba8 / decode_rgb8 keep the decoded plane when it already is the layout
+- 32-bit targets: developer-tag bounds summed in 64 bits, an unaddressable raster reported only after the data is seen
+- 64 K-pixel raster cap for the pre-contract writer targets; registry test for column_order
+- in-place row conversion and a slice-based packetiser; all four origins and a colour-map origin can be written
+- row-slice pixel decode straight into place, nothing allocated before the data exists
+- iterate the colour-correction curves instead of indexing them
+- a footer-less file ending in the footer signature gains an empty footer
+- API hygiene: non_exhaustive display options/report records
+- edition 2024, MSRV 1.95
+- registry_bridge fuzz target (framework path as an identity), colour maps over 256 entries decode to the addressable ones, verbatim extension text on write-back, README for the round
+- encoder / decoder option schemas (every lossless axis by name, no quality), DecoderLimits honoured, LimitExceeded → ResourceExhausted
+- TGA 2.0 extension / developer areas ride the registry as format-native blobs; text fields as container metadata
+- 15 / 16-bit true-colour encode path (true_colour_depth), the exact inverse of the decode expansion
+- palette-alpha record on the registry path, declared accepted layouts with BGR / alpha-first swizzles, single-picture refusals typed
+
 ### Fixed
 
 - **A footer-less file can no longer be read back as a TGA 2.0 file
