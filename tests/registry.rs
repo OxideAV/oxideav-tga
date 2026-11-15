@@ -768,6 +768,33 @@ mod options {
     }
 
     #[test]
+    fn column_order_option_mirrors_the_stored_rows() {
+        let f = gray_frame();
+        let p = with(
+            &[("rle", "false"), ("column_order", "right-to-left")],
+            4,
+            2,
+            PixelFormat::Gray8,
+        );
+        let bytes = encode_registry(&f, &p).unwrap();
+        let i = info(&bytes).unwrap();
+        assert!(i.top_down && i.right_to_left);
+        // Each stored row is the picture's row, last pixel first.
+        assert_eq!(&bytes[TGA_HEADER_SIZE..], &[1, 1, 1, 1, 5, 4, 3, 2]);
+        assert_eq!(decode(&bytes).unwrap().data(), f.planes[0].data.as_slice());
+        // An origin wider than the header field is refused.
+        assert!(matches!(
+            oxideav_tga::make_encoder(&with(
+                &[("color_map_origin", "70000")],
+                4,
+                2,
+                PixelFormat::Gray8
+            )),
+            Err(oxideav_core::Error::InvalidData(_))
+        ));
+    }
+
+    #[test]
     fn true_colour_depth_and_alpha_bits_options() {
         let rgba = VideoFrame {
             pts: None,

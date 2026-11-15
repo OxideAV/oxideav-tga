@@ -40,10 +40,12 @@
 //! Same logic as `decode_tga`: a hostile fuzz input could declare
 //! `width = height = 65535`, which is a legal but ~16 GiB allocation
 //! that would mask the real logic bugs we're hunting for. The
-//! harness clamps `width × height` to 16 MiB before driving any
-//! encoder, mirroring what a real demuxer's sanity limits would do.
-//! The library itself keeps no policy cap; the cap lives in the
-//! harness only.
+//! harness clamps `width × height` to 64 K pixels (sides to 512)
+//! before driving any encoder: every row / packet / palette path is
+//! reached at that size, and the multi-megapixel rasters the earlier
+//! 4 M-pixel cap allowed held the target to a few dozen executions
+//! per second. The library itself keeps no policy cap; the cap lives
+//! in the harness only.
 //!
 //! # Why no encoder-side oracle
 //!
@@ -59,16 +61,16 @@ use oxideav_tga::{
     encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24, parse_tga,
 };
 
-/// Upper bound on the declared raster (16 MiB worth of RGBA = 4 M
-/// pixels). Anything larger is a resource request, not a logic path.
-const MAX_PIXELS: usize = 4 * 1024 * 1024;
+/// Upper bound on the declared raster (64 K pixels). Anything larger
+/// is a resource request, not a logic path, and costs executions.
+const MAX_PIXELS: usize = 64 * 1024;
 
 /// Per-writer maximum side length. The TGA on-disk header carries
 /// `width` and `height` as `u16` so the format max is 65535; the
 /// product cap above is the actual constraint, so the side cap only
 /// needs to keep small inputs from skewing too far towards
 /// degenerate 1-pixel-wide rasters.
-const MAX_SIDE: u16 = 4096;
+const MAX_SIDE: u16 = 512;
 
 /// Encoder selectors, one per public writer entry point. The last four
 /// drive `encode_tga_palette_with_entry_size` so the explicit

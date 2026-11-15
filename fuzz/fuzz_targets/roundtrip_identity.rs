@@ -36,7 +36,7 @@
 //! they have no clean-room-derivable expected output without re-implementing
 //! the 5-bit quantiser in the harness, which would just be testing the test.
 //!
-//! Same 16-MiB raster cap and fuzz-tail tiling as the sibling targets. A
+//! Same 64 K-pixel raster cap and fuzz-tail tiling as the sibling targets. A
 //! `parse_tga` failure on an accepted encode is a decoder bug (the encoder
 //! produced a file it can't read back) and trips the identity assertion via
 //! the `expect`.
@@ -48,8 +48,8 @@ use oxideav_tga::{
     encode_tga_rle_rgb24, encode_tga_uncompressed, encode_tga_uncompressed_rgb24, parse_tga,
 };
 
-const MAX_PIXELS: usize = 4 * 1024 * 1024;
-const MAX_SIDE: u16 = 4096;
+const MAX_PIXELS: usize = 64 * 1024;
+const MAX_SIDE: u16 = 512;
 
 #[derive(Clone, Copy)]
 enum Writer {
