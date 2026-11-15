@@ -153,10 +153,12 @@ oxideav_tga::register(&mut ctx);               // codec "tga" + container "tga" 
   | --- | --- | --- | --- |
   | `rle` | bool | `true` | `EncodeOptions::rle` |
   | `row_order` | `top-down` / `bottom-up` | `top-down` | `row_order` |
+  | `column_order` | `left-to-right` / `right-to-left` | `left-to-right` | `column_order` |
   | `alpha_bits` | u32 `0..=15` | the layout's count | `alpha_bits` |
   | `drop_opaque_alpha` | bool | `false` | `drop_opaque_alpha` |
   | `true_colour_depth` | `native` / `15` / `16` | `native` | `true_colour_depth` |
   | `palette_entry_size` | `auto` / `15` / `16` / `24` / `32` | `auto` | `palette_entry_size` |
+  | `color_map_origin` | u32 `0..=255` | `0` | `color_map_origin` |
   | `image_id` | string ≤ 255 bytes | empty | `image_id` |
   | `screen_origin_x` / `screen_origin_y` | u32 `0..=65535` | `0` | `screen_origin` |
   | `footer` | bool | `false` | `footer` |
@@ -238,7 +240,12 @@ conversion; `encode_rgb8` → `Rgb24`, `encode_rgba8` → `Rgba`):
 * `Pal8` indices are rebased at decode so `0` is the first stored
   colour-map entry (the header's Color Map Origin is folded in); an
   index below the origin or past the map is `InvalidData`, so
-  `to_rgb8` on a decoded image is exact. The encoder writes origin `0`.
+  `to_rgb8` on a decoded image is exact. The encoder writes origin `0`
+  unless `EncodeOptions::color_map_origin` names another.
+* All four storage origins (descriptor bits 5 and 4: bottom-left,
+  bottom-right, top-left, top-right) decode to the same top-down,
+  left-to-right picture and can be written (`row_order` ×
+  `column_order`).
 * An `Rgba` image whose alpha is uniformly `0xFF` is still written at
   32 bits so that `decode(encode(img)) == img`; set
   `EncodeOptions::drop_opaque_alpha` for the pre-contract auto-depth
@@ -258,7 +265,11 @@ conversion; `encode_rgb8` → `Rgb24`, `encode_rgba8` → `Rgba`):
 (`None` = unlimited; defaults: no dimension / pixel limit — TGA
 geometry is `u16` — and 1 GiB of decoded plane) and `strict: bool`
 (default `false`). Limits are checked against the header before the
-plane is allocated (`Error::LimitExceeded`). `strict` turns the spec's
+plane is allocated (`Error::LimitExceeded`), and — limits or not — no
+plane is allocated for a raster the data cannot fill: an uncompressed
+pixel array must hold every pixel, a run-length stream at least its
+densest encoding (a count byte and one pixel per 128 pixels), else
+`Error::InvalidData`. `strict` turns the spec's
 *should* rules into errors: an RLE packet spanning a scan-line boundary
 (§C.5) and a non-zero §C.2 interleaving flag (descriptor bits 7-6).
 
@@ -269,14 +280,23 @@ behaviour is a field:
 | --- | --- | --- |
 | `rle: bool` | `true` | image types 9 / 10 / 11 (§C.5 run-length) vs 1 / 2 / 3 |
 | `row_order: RowOrder` | `TopDown` | descriptor bit 5; `BottomUp` stores the last row first |
+| `column_order: ColumnOrder` | `LeftToRight` | descriptor bit 4; `RightToLeft` stores each row's last pixel first — with `row_order`, the four origins of Table 2 |
 | `alpha_bits: Option<u8>` | `None` (= 8) | descriptor attribute-bit count for `Rgba`; `0` = "TARGA-32", fourth byte not alpha |
 | `drop_opaque_alpha: bool` | `false` | write a uniformly opaque `Rgba` image at 24 bits |
 | `true_colour_depth: Option<TrueColourDepth>` | `None` | write `Rgb24` / `Rgba` at 15 / 16 bits per pixel (5-bit channels, the exact inverse of the decode expansion; lossy unless the picture is 5-bit-exact) |
 | `palette_entry_size: Option<ColorMapEntrySize>` | `None` | colour-map entry width; `None` picks the narrowest lossless (24 opaque / 32 with alpha); 15 / 16 quantise |
+| `color_map_origin: u16` | `0` | Colour Map Specification First Entry Index for `Pal8`: stored indices are `index + origin` (`origin + entries ≤ 256`), folded back out by `decode` |
 | `image_id: Vec<u8>` | empty | §C.3 Image Identification Field, 0..=255 bytes |
 | `screen_origin: ImageOrigin` | `(0, 0)` | §5.1 / §5.2 lower-left on-screen placement |
 | `extension: Option<ExtensionAreaInput>` | `None` | explicit TGA 2.0 extension area (+ postage stamp / colour-correction table / scan-line table / developer tags) |
 | `footer: bool` | `false` | force a marker-only TGA 2.0 footer even with nothing to point at |
+
+A footer-less file whose last bytes would spell the footer signature
+(pixel data can end in `TRUEVISION-XFILE.\0`) is given a footer with
+both offsets zero regardless of `footer`: the trailing signature is the
+only footer test a reader has, and without it the eight pixel bytes
+before the signature would be read as extension-area / developer-
+directory offsets.
 
 The RLE packetiser emits a run packet for ≥ 2 consecutive identical
 pixels (max 128) and raw packets otherwise (max 128), never crossing a
@@ -814,7 +834,14 @@ the identity targets compare against what the crate itself must
 reproduce. Round 477 ran every target ≥ 10 minutes locally; the
 `registry_bridge` identity found one defect (a colour map declaring more
 than 256 entries decoded but could not be re-encoded — fixed by keeping
-the 256 addressable entries).
+the 256 addressable entries). The scheduled run later found a second
+through `contract_identity`: a footer-less `Gray8` run-length file whose
+last raw packet ended in the footer signature was read back as a TGA 2.0
+file with offsets (and a gamma) taken from its own pixels — fixed in the
+writer, which now closes such a file with an empty footer
+(`tests/round489.rs` carries the minimised input). Round 489 re-ran all
+six targets for 10 minutes each on the rewritten pixel paths with no
+further finding.
 
 * `decode_tga` — attacker-supplied bytes through the contract API
   (`probe` / `info` / `header` / `decode` / `decode_with` under a 16 MiB
@@ -836,10 +863,10 @@ the 256 addressable entries).
   bytes, palette, `metadata.gamma`) for every native layout (`Rgba` /
   `Rgb24` / `Gray8` / `Pal8` with a 24- or 32-bit colour map) across the
   lossless `EncodeOptions` axes — `rle`, `row_order`, `alpha_bits`,
-  `image_id`, `screen_origin`, `footer`, a gamma that must come back
-  through the extension area, `true_colour_depth` `Bits16` on a
-  5-bit-exact `Rgba` picture — plus `probe` / `info` agreement on the
-  encoder's own output.
+  `column_order`, `color_map_origin`, `image_id`, `screen_origin`,
+  `footer`, a gamma that must come back through the extension area,
+  `true_colour_depth` `Bits16` on a 5-bit-exact `Rgba` picture — plus
+  `probe` / `info` agreement on the encoder's own output.
 * `registry_bridge` — the framework path as an identity: arbitrary
   bytes through `make_decoder` (native layout, palette + palette-alpha
   records, extension / developer-area blobs, label / plane agreement
@@ -868,7 +895,8 @@ the 256 addressable entries).
 A `criterion` harness in `benches/codec.rs` characterises the decode +
 encode hot paths on procedurally-generated 256×256 frames. Ten
 scenarios isolate the cost of one decode or one encode call across the
-crate's standalone API surface:
+crate's standalone API surface (an eleventh group, `megapixel`, reports
+throughput — see below):
 
 | Group   | Scenario              | What it isolates                                     |
 | ------- | --------------------- | ---------------------------------------------------- |
@@ -906,6 +934,49 @@ pixel. The decoded bytes are identical across all six RLE
 image-type/depth combinations (pinned by tests); on the run-heavy decode
 benchmark this is roughly a 70 % reduction in wall-clock time
 (host-dependent). Raw-packet (high-entropy) decode is untouched.
+
+### Megapixels per second
+
+The `megapixel` group times one `decode` / `encode` call on a
+1024 × 1024 picture whose rows are half flat bands (run packets) and
+half pseudo-random texture (raw packets); criterion reports pixels per
+second.
+
+```sh
+cargo bench --bench codec -- megapixel
+```
+
+Round 489 moved both directions onto row slices: the decoder converts
+whole spans straight into the row they belong to (no per-pixel append,
+no second buffer for bottom-up files, bulk fills for run packets), the
+encoder converts rows in place in the output and packetises fixed-size
+pixels with slice scans. Output is byte-identical in both directions.
+Medians of three runs each, same toolchain (rustc 1.100), Apple-silicon
+laptop shared with other builds, so read the ratios rather than the
+absolutes:
+
+| Scenario | Before (MP/s) | After (MP/s) | Ratio |
+| --- | ---: | ---: | ---: |
+| decode, uncompressed 24 bpp | 493 | 15 226 | 31× |
+| decode, uncompressed 24 bpp, bottom-up | 479 | 8 613 | 18× |
+| decode, uncompressed 32 bpp | 461 | 10 207 | 22× |
+| decode, uncompressed 32 bpp, bottom-up | 444 | 5 346 | 12× |
+| decode, run-length 24 bpp | 753 | 4 848 | 6.4× |
+| decode, run-length 32 bpp | 755 | 7 891 | 10× |
+| encode, uncompressed 24 bpp | 1 495 | 9 980 | 6.7× |
+| encode, uncompressed 32 bpp | 1 500 | 7 164 | 4.8× |
+| encode, run-length 24 bpp | 312 | 1 409 | 4.5× |
+| encode, run-length 32 bpp | 341 | 1 260 | 3.7× |
+
+`decode_rgba8` (decode, then packed RGBA) gained the same way — one
+whole-row kernel per layout, and a 32-bit file's decoded plane is
+handed over instead of copied. Measured as a pair under heavier
+machine load than the table above:
+
+| Scenario | Before (MP/s) | After (MP/s) | Ratio |
+| --- | ---: | ---: | ---: |
+| `decode_rgba8`, uncompressed 24 bpp | 167 | 3 386 | 20× |
+| `decode_rgba8`, uncompressed 32 bpp | 116 | 5 070 | 44× |
 
 ## Lacks
 

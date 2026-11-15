@@ -16,8 +16,12 @@
 //! how long each takes on synthetic frames sized for sub-second
 //! runs at criterion's default sample count.
 //!
-//! Scenario sizes are deliberately small (256 × 256) so the whole
-//! harness completes in well under a minute on a laptop. Tune via
+//! A further `megapixel` group reports throughput (pixels per second)
+//! for decode and encode on a 1024 × 1024 picture of mixed content.
+//!
+//! Scenario sizes are deliberately small (256 × 256, one megapixel for
+//! the throughput group) so the whole harness completes in about a
+//! minute on a laptop. Tune via
 //! `cargo bench -- --sample-size N` if needed.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
