@@ -2948,7 +2948,9 @@ impl TgaDeveloperTag {
         if self.offset == 0 {
             return true;
         }
-        (self.offset as usize).saturating_add(self.size as usize) <= input_len
+        // Summed in 64 bits: two 32-bit fields cannot wrap (or
+        // saturate onto a 32-bit `usize::MAX`) there.
+        u64::from(self.offset) + u64::from(self.size) <= input_len as u64
     }
 
     /// Serialise the record into its on-disk 10-byte form (spec §C.7
@@ -3169,12 +3171,8 @@ impl TgaDeveloperArea {
             // tag_offset can legitimately be 0 (caller's convention
             // for "tag-only marker"), but if non-zero it must point
             // inside `input` and the (offset + size) must fit too.
-            if tag_offset != 0 {
-                let to = tag_offset as usize;
-                let ts = tag_size as usize;
-                if to.saturating_add(ts) > input.len() {
-                    return None;
-                }
+            if tag_offset != 0 && u64::from(tag_offset) + u64::from(tag_size) > input.len() as u64 {
+                return None;
             }
             tags.push(TgaDeveloperTag {
                 tag_id,
@@ -3192,12 +3190,7 @@ impl TgaDeveloperArea {
         if tag.offset == 0 {
             return None;
         }
-        let off = tag.offset as usize;
-        let sz = tag.size as usize;
-        if off.saturating_add(sz) > input.len() {
-            return None;
-        }
-        Some(&input[off..off + sz])
+        span_at(input, tag.offset, usize::try_from(tag.size).ok()?)
     }
 
     /// Borrow the payload bytes for the first record carrying `tag_id`,

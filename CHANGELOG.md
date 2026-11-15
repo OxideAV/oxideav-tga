@@ -33,7 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offsets are 32-bit values from the file; `offset + length` could
   wrap where `usize` is 32 bits and then index out of bounds. Every
   such span is now cut with checked slicing (absent when it does not
-  exist), and raster sizes are formed with checked multiplication.
+  exist), and raster sizes are formed with checked multiplication. A
+  developer tag's `offset + size` bound is summed in 64 bits
+  (`TgaDeveloperTag::is_well_formed_within`, the directory parser,
+  `TgaDeveloperArea::payload`): the saturating 32-bit sum accepted the
+  extreme record against a `u32::MAX`-long bound. The whole standalone
+  test suite now also passes on a 32-bit target (`wasm32-wasip1`).
 
 ### Changed
 

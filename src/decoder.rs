@@ -1364,19 +1364,25 @@ fn decode_plane(
     let height = header.height as usize;
     let wire = layout.wire_bytes();
     let native = layout.native_bytes();
-    let too_large = || Error::limit("TGA: raster exceeds the address space");
-    let pixel_count = width.checked_mul(height).ok_or_else(too_large)?;
-    let plane_len = pixel_count.checked_mul(native).ok_or_else(too_large)?;
+    // Two 16-bit sides: the product fits 32 bits on every platform.
+    let pixel_count = width * height;
     if pixel_count == 0 {
         return Ok(Vec::new());
     }
+    // The plane itself may not be addressable where `usize` is 32
+    // bits; that is only reported once the data has been seen to exist
+    // (a slice that long cannot, for an uncompressed array).
+    let plane_len = || {
+        pixel_count
+            .checked_mul(native)
+            .ok_or_else(|| Error::limit("TGA: decoded plane exceeds the address space"))
+    };
     let stride = width * native;
     let top_down = header.is_top_down();
 
     let mut out;
     if image_type.is_rle() {
-        // `pixel_count * 5 / 128 + 5` cannot overflow once
-        // `pixel_count * native` did not.
+        // At most `2^32 / 128 * 5` bytes: no overflow.
         let densest = pixel_count.div_ceil(128) * (1 + wire);
         if data.len() < densest {
             return Err(Error::invalid(format!(
@@ -1384,7 +1390,7 @@ fn decode_plane(
                 data.len()
             )));
         }
-        out = vec![0u8; plane_len];
+        out = vec![0u8; plane_len()?];
         let mut pos = 0usize; // read position in `data`
         let mut produced = 0usize; // pixels decoded so far
         let mut row = 0usize; // stored row being filled
@@ -1443,19 +1449,21 @@ fn decode_plane(
             produced += count;
         }
     } else {
-        let need = pixel_count.checked_mul(wire).ok_or_else(too_large)?;
-        let Some(src) = data.get(..need) else {
+        let Some(src) = pixel_count
+            .checked_mul(wire)
+            .and_then(|need| data.get(..need))
+        else {
             return Err(Error::invalid("TGA: pixel data truncated"));
         };
         if top_down {
             if layout == WireLayout::Byte {
                 out = src.to_vec();
             } else {
-                out = vec![0u8; plane_len];
+                out = vec![0u8; plane_len()?];
                 layout.convert(src, &mut out);
             }
         } else {
-            out = vec![0u8; plane_len];
+            out = vec![0u8; plane_len()?];
             for (dst_row, src_row) in out
                 .chunks_exact_mut(stride)
                 .rev()
