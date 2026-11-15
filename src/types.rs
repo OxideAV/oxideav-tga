@@ -2310,15 +2310,11 @@ pub fn parse_extension_area(input: &[u8], offset: u32) -> Option<TgaExtensionAre
     if offset == 0 {
         return None;
     }
-    let off = offset as usize;
     // Defensive: reject if extension area wouldn't fit in the buffer.
     // The spec layout is 495 bytes; we accept smaller too if the file
     // claims a smaller extension_size, but the canonical-offset fields
     // we read still need to fit.
-    if input.len() < off + TGA_EXTENSION_AREA_SIZE {
-        return None;
-    }
-    TgaExtensionArea::from_bytes(&input[off..off + TGA_EXTENSION_AREA_SIZE])
+    TgaExtensionArea::from_bytes(span_at(input, offset, TGA_EXTENSION_AREA_SIZE)?)
 }
 
 /// Byte slice of `input` holding the extension area body the footer
@@ -2328,11 +2324,10 @@ pub fn parse_extension_area(input: &[u8], offset: u32) -> Option<TgaExtensionAre
 /// path carries as the `tga-extension-area` metadata blob.
 pub fn extension_area_bytes(input: &[u8]) -> Option<&[u8]> {
     let footer = parse_footer(input)?;
-    let off = footer.extension_area_offset as usize;
-    if off == 0 || input.len() < off + TGA_EXTENSION_AREA_SIZE {
+    if footer.extension_area_offset == 0 {
         return None;
     }
-    let body = &input[off..off + TGA_EXTENSION_AREA_SIZE];
+    let body = span_at(input, footer.extension_area_offset, TGA_EXTENSION_AREA_SIZE)?;
     TgaExtensionArea::from_bytes(body).map(|_| body)
 }
 
@@ -2539,20 +2534,25 @@ impl TgaColourCorrectionTable {
         if offset == 0 {
             return None;
         }
-        let off = offset as usize;
-        if input.len() < off + TGA_COLOUR_CORRECTION_TABLE_SIZE {
-            return None;
-        }
+        let body = span_at(input, offset, TGA_COLOUR_CORRECTION_TABLE_SIZE)?;
         let mut alpha = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
         let mut red = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
         let mut green = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
         let mut blue = [0u16; TGA_COLOUR_CORRECTION_TABLE_ENTRIES];
-        for i in 0..TGA_COLOUR_CORRECTION_TABLE_ENTRIES {
-            let base = off + i * 8;
-            alpha[i] = read_u16_le(input, base);
-            red[i] = read_u16_le(input, base + 2);
-            green[i] = read_u16_le(input, base + 4);
-            blue[i] = read_u16_le(input, base + 6);
+        // One 8-byte record per input value: A, R, G, B.
+        for ((((e, a), r), g), b) in body
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .zip(alpha.iter_mut())
+            .zip(red.iter_mut())
+            .zip(green.iter_mut())
+            .zip(blue.iter_mut())
+        {
+            *a = u16::from_le_bytes([e[0], e[1]]);
+            *r = u16::from_le_bytes([e[2], e[3]]);
+            *g = u16::from_le_bytes([e[4], e[5]]);
+            *b = u16::from_le_bytes([e[6], e[7]]);
         }
         Some(Self {
             alpha,
@@ -2823,15 +2823,14 @@ impl TgaScanLineTable {
         if offset == 0 || height == 0 {
             return None;
         }
-        let off = offset as usize;
         let n = height as usize;
-        if input.len() < off + n * TGA_SCAN_LINE_OFFSET_BYTES {
-            return None;
-        }
-        let mut offsets = Vec::with_capacity(n);
-        for i in 0..n {
-            offsets.push(read_u32_le(input, off + i * TGA_SCAN_LINE_OFFSET_BYTES));
-        }
+        let body = span_at(input, offset, n * TGA_SCAN_LINE_OFFSET_BYTES)?;
+        let offsets = body
+            .as_chunks::<TGA_SCAN_LINE_OFFSET_BYTES>()
+            .0
+            .iter()
+            .map(|e| u32::from_le_bytes(*e))
+            .collect();
         Some(Self { offsets })
     }
 
@@ -3159,21 +3158,13 @@ impl TgaDeveloperArea {
         if offset == 0 {
             return None;
         }
-        let off = offset as usize;
-        if input.len() < off + 2 {
-            return None;
-        }
-        let n = read_u16_le(input, off) as usize;
-        let dir_bytes = 2 + n * 10;
-        if input.len() < off + dir_bytes {
-            return None;
-        }
+        let n = read_u16_le(span_at(input, offset, 2)?, 0) as usize;
+        let directory = span_at(input, offset, 2 + n * 10)?;
         let mut tags = Vec::with_capacity(n);
-        for i in 0..n {
-            let rec_off = off + 2 + i * 10;
-            let tag_id = read_u16_le(input, rec_off);
-            let tag_offset = read_u32_le(input, rec_off + 2);
-            let tag_size = read_u32_le(input, rec_off + 6);
+        for rec in directory[2..].as_chunks::<10>().0 {
+            let tag_id = read_u16_le(rec, 0);
+            let tag_offset = read_u32_le(rec, 2);
+            let tag_size = read_u32_le(rec, 6);
             // Reject tags whose payload doesn't fit in the file:
             // tag_offset can legitimately be 0 (caller's convention
             // for "tag-only marker"), but if non-zero it must point
@@ -3290,6 +3281,15 @@ impl TgaColorMap {
         let local = idx.checked_sub(self.first_index as usize)?;
         self.entries.get(local).copied()
     }
+}
+
+/// The `len` bytes of `input` starting at the file offset `offset`, or
+/// `None` when they do not all exist. Offsets come straight from the
+/// file (footer, extension area, developer directory) and may point
+/// anywhere, so the end is never formed by an addition that could wrap
+/// where `usize` is 32 bits.
+pub(crate) fn span_at(input: &[u8], offset: u32, len: usize) -> Option<&[u8]> {
+    input.get(usize::try_from(offset).ok()?..)?.get(..len)
 }
 
 #[doc(hidden)]

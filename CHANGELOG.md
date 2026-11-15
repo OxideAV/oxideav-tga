@@ -20,6 +20,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both offsets zero whenever the footer-less output would end in the
   signature, so the file a reader sees is unambiguous; every other
   output is byte-identical to before.
+- **No plane is allocated for a raster the data cannot fill.** An
+  uncompressed pixel array must hold `width × height` whole pixels and
+  a run-length stream at least the bytes of its densest encoding (one
+  run packet — a count byte and one pixel — per 128 pixels) before the
+  decoder allocates; a 65535 × 65535 header over a few bytes is now
+  `InvalidData` straight away, with every limit lifted too (it used to
+  reserve the whole declared plane first).
+- **File offsets are followed without wrapping arithmetic.** The
+  footer's extension-area / developer-directory offsets and the
+  extension area's colour-correction / postage-stamp / scan-line
+  offsets are 32-bit values from the file; `offset + length` could
+  wrap where `usize` is 32 bits and then index out of bounds. Every
+  such span is now cut with checked slicing (absent when it does not
+  exist), and raster sizes are formed with checked multiplication.
+
+### Changed
+
+- **Pixel decode works on row slices.** Rows are converted straight
+  into their final position — bottom-up files no longer decode into a
+  second buffer that is then flipped, right-to-left rows are reversed
+  in place — with whole-row BGR(A) → RGB(A) / `A1R5G5B5` conversion
+  instead of one bounds-checked append per pixel; run packets are bulk
+  fills, raw packets bulk conversions, and a packet that crosses a scan
+  line is split at the row end. Colour-map indices are range-checked in
+  one scan (skipped when the map covers all 256 values at origin 0).
+  Decoded bytes are identical; see the README for megapixels per
+  second before → after.
 
 ### Changed
 

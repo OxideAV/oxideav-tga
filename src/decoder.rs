@@ -180,30 +180,26 @@ pub(crate) fn decode_image(input: &[u8], opts: &DecodeOptions) -> Result<TgaImag
         p
     });
 
-    // Decode the pixel array in the native layout.
-    let pixels = if v.image_type.is_rle() {
-        decode_rle_pixels(header, v.image_type, &input[cursor..], opts.strict)?
-    } else {
-        decode_raw_pixels(header, v.image_type, &input[cursor..])?
-    };
-    debug_assert_eq!(pixels.len(), stride * height);
+    // Decode the pixel array in the native layout, already normalised
+    // to a top-left origin. Per the TGA 2.0 FFS image-descriptor field
+    // (Table 2 - Image Origin), bit 5 carries the top-to-bottom row
+    // ordering and bit 4 the left-to-right column ordering. We always
+    // emit top-down, left-to-right: rows land flipped when bit 5 is
+    // clear (the common bottom-up case) and columns are mirrored when
+    // bit 4 is set (rare, but spec-legal — some Truevision tooling
+    // wrote right-to-left files).
+    let pixel_data = input.get(cursor..).unwrap_or(&[]);
+    let data = decode_plane(header, v.image_type, pixel_data, opts.strict)?;
+    debug_assert_eq!(data.len(), stride * height);
 
     // Palette indices are rebased so index 0 is the first stored entry
     // (the header's Color Map Origin is folded in); every index is
     // range-checked here so `to_rgb8` is exact on the result.
-    let pixels = if let (TgaPixelFormat::Pal8, Some(pal)) = (v.format, palette.as_ref()) {
-        rebase_indices(pixels, header.cmap_first, pal.len())?
+    let data = if let (TgaPixelFormat::Pal8, Some(pal)) = (v.format, palette.as_ref()) {
+        rebase_indices(data, header.cmap_first, pal.len())?
     } else {
-        pixels
+        data
     };
-
-    // Normalise to a top-left origin. Per the TGA 2.0 FFS image-descriptor
-    // field (Table 2 - Image Origin), bit 5 carries the top-to-bottom row
-    // ordering and bit 4 the left-to-right column ordering. We always emit
-    // top-down, left-to-right, flipping rows when bit 5 is clear (the common
-    // bottom-up case) and mirroring columns when bit 4 is set (rare, but
-    // spec-legal — some Truevision tooling wrote right-to-left files).
-    let data = normalise_origin(pixels, width, height, bpp, header);
 
     let mut image =
         TgaImage::packed_unchecked(header.width as u32, header.height as u32, v.format, data);
@@ -214,54 +210,38 @@ pub(crate) fn decode_image(input: &[u8], opts: &DecodeOptions) -> Result<TgaImag
     Ok(image)
 }
 
-/// Flip rows / mirror columns as the descriptor dictates.
-pub(crate) fn normalise_origin(
-    pixels: Vec<u8>,
-    width: usize,
-    height: usize,
-    bpp: usize,
-    header: &TgaHeader,
-) -> Vec<u8> {
-    let stride = width * bpp;
-    let flip_rows = !header.is_top_down();
-    let mirror_cols = header.is_right_to_left();
-    if !flip_rows && !mirror_cols {
-        return pixels;
-    }
-    let mut out = vec![0u8; pixels.len()];
-    for y in 0..height {
-        let src_y = if flip_rows { height - 1 - y } else { y };
-        let src_row = &pixels[src_y * stride..][..stride];
-        let dst_row = &mut out[y * stride..][..stride];
-        if mirror_cols {
-            for x in 0..width {
-                let src_px = &src_row[x * bpp..][..bpp];
-                let dst_px = &mut dst_row[(width - 1 - x) * bpp..][..bpp];
-                dst_px.copy_from_slice(src_px);
-            }
-        } else {
-            dst_row.copy_from_slice(src_row);
-        }
-    }
-    out
-}
-
 /// Subtract the Color Map Origin from every index and range-check the
 /// result against the stored palette length.
 fn rebase_indices(mut indices: Vec<u8>, cmap_first: u16, palette_len: usize) -> Result<Vec<u8>> {
-    for idx in indices.iter_mut() {
-        let i = usize::from(*idx);
-        let entry = i.checked_sub(usize::from(cmap_first)).ok_or_else(|| {
+    let first = usize::from(cmap_first);
+    // The common shape — origin 0 and a map every 8-bit index can
+    // address — needs neither a check nor a rewrite.
+    if first == 0 && palette_len >= 256 {
+        return Ok(indices);
+    }
+    // Lowest and one-past-highest stored index value that names a map
+    // entry; `first >= 256` leaves the range empty.
+    let lo = first.min(256);
+    let hi = first.saturating_add(palette_len).min(256);
+    if let Some(&bad) = indices
+        .iter()
+        .find(|&&i| usize::from(i) < lo || usize::from(i) >= hi)
+    {
+        let i = usize::from(bad);
+        return Err(if i < first {
             Error::invalid(format!(
                 "TGA: palette index {i} below colour-map origin {cmap_first}"
             ))
-        })?;
-        if entry >= palette_len {
-            return Err(Error::invalid(format!(
-                "TGA: palette index {i} out of range"
-            )));
+        } else {
+            Error::invalid(format!("TGA: palette index {i} out of range"))
+        });
+    }
+    if first != 0 {
+        // Every index is `>= first` here, so `first` fits a byte.
+        let shift = first as u8;
+        for idx in indices.iter_mut() {
+            *idx -= shift;
         }
-        *idx = entry as u8;
     }
     Ok(indices)
 }
@@ -458,7 +438,11 @@ pub fn compute_tga_scan_line_table(input: &[u8]) -> Result<TgaScanLineTable> {
         }
     } else {
         let row_bytes = width * in_bpp;
-        if input.len() < pixel_start + row_bytes * height {
+        let fits = row_bytes
+            .checked_mul(height)
+            .and_then(|n| n.checked_add(pixel_start))
+            .is_some_and(|end| end <= input.len());
+        if !fits {
             return Err(Error::invalid("TGA: pixel data truncated"));
         }
         for y in 0..height {
@@ -530,18 +514,12 @@ pub fn parse_tga_scan_line(
         ..*header
     };
     let row_input = &input[offset..];
-    let pixels = if image_type.is_rle() {
-        decode_rle_pixels(&row_header, image_type, row_input, false)?
-    } else {
-        decode_raw_pixels(&row_header, image_type, row_input)?
-    };
-    let pixels = if let (TgaPixelFormat::Pal8, Some(pal)) = (v.format, palette.as_ref()) {
+    let pixels = decode_plane(&row_header, image_type, row_input, false)?;
+    let data = if let (TgaPixelFormat::Pal8, Some(pal)) = (v.format, palette.as_ref()) {
         rebase_indices(pixels, header.cmap_first, pal.len())?
     } else {
         pixels
     };
-    let bpp = v.format.bytes_per_pixel();
-    let data = normalise_origin(pixels, header.width as usize, 1, bpp, &row_header);
 
     let mut row = TgaImage::packed_unchecked(header.width as u32, 1, v.format, data);
     if v.format == TgaPixelFormat::Pal8 {
@@ -921,19 +899,22 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
     // palette).
     let (palette, _pixel_start) = read_palette(input, &header, image_type)?;
 
-    let pp_off = ext.postage_stamp_offset as usize;
-    if input.len() < pp_off + 2 {
+    let Some(stamp) = usize::try_from(ext.postage_stamp_offset)
+        .ok()
+        .and_then(|off| input.get(off..))
+        .filter(|s| s.len() >= 2)
+    else {
         return Err(Error::invalid("TGA: postage stamp size header truncated"));
-    }
-    let stamp_w = input[pp_off] as u16;
-    let stamp_h = input[pp_off + 1] as u16;
+    };
+    let stamp_w = stamp[0] as u16;
+    let stamp_h = stamp[1] as u16;
     if stamp_w == 0 || stamp_h == 0 {
         return Err(Error::invalid("TGA: postage stamp has zero dimension"));
     }
 
     // Postage stamps are always uncompressed regardless of the parent
     // image's compression. Construct a synthetic header so we can reuse
-    // decode_raw_pixels().
+    // decode_plane().
     let stamp_header = TgaHeader {
         id_length: 0,
         cmap_type: header.cmap_type,
@@ -966,8 +947,8 @@ pub fn parse_tga_postage_stamp(input: &[u8]) -> Result<Option<TgaImage>> {
     // aborting the process.
     validate_depth(stamp_image_type, stamp_header.depth)?;
 
-    let pixels_in = &input[pp_off + 2..];
-    let pixels = decode_raw_pixels(&stamp_header, stamp_image_type, pixels_in)?;
+    let pixels_in = &stamp[2..];
+    let pixels = decode_plane(&stamp_header, stamp_image_type, pixels_in, false)?;
     let format = native_format(stamp_image_type, stamp_header.depth);
     let pixels = if let (TgaPixelFormat::Pal8, Some(pal)) = (format, palette.as_ref()) {
         rebase_indices(pixels, header.cmap_first, pal.len())?
@@ -1010,11 +991,10 @@ pub fn parse_tga_postage_stamp_dimensions(input: &[u8]) -> Result<Option<Postage
     if ext.postage_stamp_offset == 0 {
         return Ok(None);
     }
-    let off = ext.postage_stamp_offset as usize;
-    if input.len() < off + 2 {
+    let Some(size) = crate::types::span_at(input, ext.postage_stamp_offset, 2) else {
         return Err(Error::invalid("TGA: postage stamp size header truncated"));
-    }
-    Ok(Some(PostageStamp::new(input[off], input[off + 1])))
+    };
+    Ok(Some(PostageStamp::new(size[0], size[1])))
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,143 +1227,253 @@ fn expand5(v: u8) -> u8 {
     (v << 3) | (v >> 2)
 }
 
-/// Native-layout output size per source pixel.
-fn out_bpp(image_type: ImageType, depth: u8) -> usize {
-    native_format(image_type, depth).bytes_per_pixel()
+/// How one pixel sits on the wire (§C.2 Pixel Depth / image type) and
+/// what it becomes in the native layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WireLayout {
+    /// One byte kept as it is: a colour-map index or a luma sample.
+    Byte,
+    /// Two bytes, little-endian `ARRRRRGG GGGBBBBB`, expanded to RGBA.
+    /// `attribute` is true for 16-bit pixels (the top bit is alpha) and
+    /// false for 15-bit ones (alpha is constant opaque).
+    A1R5G5B5 { attribute: bool },
+    /// Three bytes blue, green, red → RGB.
+    Bgr,
+    /// Four bytes blue, green, red, attribute → RGBA.
+    Bgra,
 }
 
-fn decode_raw_pixels(header: &TgaHeader, image_type: ImageType, input: &[u8]) -> Result<Vec<u8>> {
-    let pixel_count = header.width as usize * header.height as usize;
-    let in_bpp = header.depth.div_ceil(8) as usize;
-    if input.len() < pixel_count * in_bpp {
-        return Err(Error::invalid("TGA: pixel data truncated"));
+impl WireLayout {
+    /// The layout of a validated image type / pixel depth. Every caller
+    /// runs `validate_depth` first, but the contract for an unsupported
+    /// combination is a returned error, never a panic, so a caller that
+    /// forgets the validation still fails closed.
+    fn of(image_type: ImageType, depth: u8) -> Result<Self> {
+        match image_type {
+            ImageType::UncompressedColourMapped
+            | ImageType::RleColourMapped
+            | ImageType::UncompressedGrayscale
+            | ImageType::RleGrayscale => Ok(Self::Byte),
+            ImageType::UncompressedTrueColour | ImageType::RleTrueColour => match depth {
+                15 => Ok(Self::A1R5G5B5 { attribute: false }),
+                16 => Ok(Self::A1R5G5B5 { attribute: true }),
+                24 => Ok(Self::Bgr),
+                32 => Ok(Self::Bgra),
+                other => Err(Error::unsupported(format!(
+                    "TGA: true-colour pixel depth {other} not supported"
+                ))),
+            },
+            ImageType::None => Err(Error::invalid("TGA: image_type == 0 reached pixel decoder")),
+        }
     }
-    let mut out = Vec::with_capacity(pixel_count * out_bpp(image_type, header.depth));
-    for i in 0..pixel_count {
-        let src = &input[i * in_bpp..i * in_bpp + in_bpp];
-        emit_pixel(image_type, header.depth, src, &mut out)?;
+
+    /// Bytes one pixel occupies in the file.
+    fn wire_bytes(self) -> usize {
+        match self {
+            Self::Byte => 1,
+            Self::A1R5G5B5 { .. } => 2,
+            Self::Bgr => 3,
+            Self::Bgra => 4,
+        }
     }
-    Ok(out)
+
+    /// Bytes one pixel occupies in the native layout.
+    fn native_bytes(self) -> usize {
+        match self {
+            Self::Byte => 1,
+            Self::Bgr => 3,
+            Self::A1R5G5B5 { .. } | Self::Bgra => 4,
+        }
+    }
+
+    /// Convert a span of whole pixels: `src` holds `n` wire pixels and
+    /// `dst` room for exactly `n` native ones.
+    fn convert(self, src: &[u8], dst: &mut [u8]) {
+        match self {
+            Self::Byte => dst.copy_from_slice(src),
+            Self::A1R5G5B5 { attribute } => {
+                let depth = if attribute { 16 } else { 15 };
+                for (d, s) in dst
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(src.as_chunks::<2>().0)
+                {
+                    *d = expand_a1r5g5b5(u16::from_le_bytes(*s), depth);
+                }
+            }
+            Self::Bgr => {
+                for (d, s) in dst
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(src.as_chunks::<3>().0)
+                {
+                    *d = [s[2], s[1], s[0]];
+                }
+            }
+            Self::Bgra => {
+                for (d, s) in dst
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .zip(src.as_chunks::<4>().0)
+                {
+                    *d = [s[2], s[1], s[0], s[3]];
+                }
+            }
+        }
+    }
+
+    /// Fill `dst` (whole native pixels) with the one wire pixel `px`.
+    fn fill(self, px: &[u8], dst: &mut [u8]) {
+        match self {
+            Self::Byte => dst.fill(px[0]),
+            Self::A1R5G5B5 { attribute } => {
+                let depth = if attribute { 16 } else { 15 };
+                let v = expand_a1r5g5b5(u16::from_le_bytes([px[0], px[1]]), depth);
+                dst.as_chunks_mut::<4>().0.fill(v);
+            }
+            Self::Bgr => dst.as_chunks_mut::<3>().0.fill([px[2], px[1], px[0]]),
+            Self::Bgra => dst
+                .as_chunks_mut::<4>()
+                .0
+                .fill([px[2], px[1], px[0], px[3]]),
+        }
+    }
 }
 
-fn decode_rle_pixels(
+/// Decode the pixel array `data` (starting at its first byte) into the
+/// native layout, normalised to a top-left origin: stored rows land
+/// bottom-up when descriptor bit 5 is clear and columns are mirrored
+/// when bit 4 is set.
+///
+/// Nothing is allocated before the data is known to be able to fill the
+/// declared raster: an uncompressed array must hold `width × height`
+/// whole pixels, and a run-length stream at least the bytes of its
+/// densest possible encoding (one run packet — a count byte and one
+/// pixel — per 128 pixels, §C.5's packet maximum).
+fn decode_plane(
     header: &TgaHeader,
     image_type: ImageType,
-    input: &[u8],
+    data: &[u8],
     strict: bool,
 ) -> Result<Vec<u8>> {
+    let layout = WireLayout::of(image_type, header.depth)?;
     let width = header.width as usize;
-    let pixel_count = width * header.height as usize;
-    let in_bpp = header.depth.div_ceil(8) as usize;
-    let mut out = Vec::with_capacity(pixel_count * out_bpp(image_type, header.depth));
-    let mut cursor = 0usize;
-    let mut produced = 0usize;
-    while produced < pixel_count {
-        if cursor >= input.len() {
-            return Err(Error::invalid("TGA: RLE stream truncated (no packet hdr)"));
-        }
-        let packet = input[cursor];
-        cursor += 1;
-        let count = (packet & 0x7F) as usize + 1;
-        let is_run = (packet & 0x80) != 0;
-        if produced + count > pixel_count {
-            return Err(Error::invalid(format!(
-                "TGA: RLE packet overruns pixel array (produced={produced}, packet count={count}, total={pixel_count})"
-            )));
-        }
-        if strict && count > width - produced % width {
-            return Err(Error::invalid(format!(
-                "TGA: strict mode rejects an RLE packet spanning a scan-line boundary \
-                 (row has {} pixel(s) left, packet encodes {count})",
-                width - produced % width
-            )));
-        }
-        if is_run {
-            // Run-length packet: 1 pixel × `count`. Every output pixel
-            // in the run is byte-identical, so expand the source pixel
-            // exactly once through `emit_pixel`, then replicate the
-            // resulting output bytes for the remaining `count - 1`
-            // pixels. This is bit-identical to calling `emit_pixel`
-            // `count` times (same bytes, same order) but skips the
-            // per-pixel image_type/depth match dispatch on the run.
-            if cursor + in_bpp > input.len() {
-                return Err(Error::invalid("TGA: RLE run packet truncated"));
-            }
-            let src = &input[cursor..cursor + in_bpp];
-            let before = out.len();
-            emit_pixel(image_type, header.depth, src, &mut out)?;
-            let unit = out.len() - before;
-            // Replicate the just-emitted pixel's bytes `count - 1` more
-            // times by doubling the freshly-written tail in place.
-            out.reserve(unit * (count - 1));
-            let mut filled = unit;
-            let target = unit * count;
-            while filled < target {
-                let chunk = filled.min(target - filled);
-                out.extend_from_within(before..before + chunk);
-                filled += chunk;
-            }
-            cursor += in_bpp;
-        } else {
-            // Raw packet: `count` literal pixels.
-            if cursor + count * in_bpp > input.len() {
-                return Err(Error::invalid("TGA: RLE raw packet truncated"));
-            }
-            for i in 0..count {
-                let src = &input[cursor + i * in_bpp..cursor + i * in_bpp + in_bpp];
-                emit_pixel(image_type, header.depth, src, &mut out)?;
-            }
-            cursor += count * in_bpp;
-        }
-        produced += count;
+    let height = header.height as usize;
+    let wire = layout.wire_bytes();
+    let native = layout.native_bytes();
+    let too_large = || Error::limit("TGA: raster exceeds the address space");
+    let pixel_count = width.checked_mul(height).ok_or_else(too_large)?;
+    let plane_len = pixel_count.checked_mul(native).ok_or_else(too_large)?;
+    if pixel_count == 0 {
+        return Ok(Vec::new());
     }
-    Ok(out)
-}
+    let stride = width * native;
+    let top_down = header.is_top_down();
 
-/// Append one source pixel in the native layout: the raw 8-bit index
-/// for colour-mapped types (rebased + range-checked by the caller),
-/// RGB for 24-bit true colour, RGBA for 32-bit and the 15 / 16-bit
-/// expansion, the luma byte for grayscale.
-fn emit_pixel(image_type: ImageType, depth: u8, src: &[u8], out: &mut Vec<u8>) -> Result<()> {
-    match image_type {
-        ImageType::UncompressedColourMapped | ImageType::RleColourMapped => {
-            out.push(src[0]);
+    let mut out;
+    if image_type.is_rle() {
+        // `pixel_count * 5 / 128 + 5` cannot overflow once
+        // `pixel_count * native` did not.
+        let densest = pixel_count.div_ceil(128) * (1 + wire);
+        if data.len() < densest {
+            return Err(Error::invalid(format!(
+                "TGA: RLE stream truncated ({} byte(s) cannot encode {pixel_count} pixels)",
+                data.len()
+            )));
         }
-        ImageType::UncompressedTrueColour | ImageType::RleTrueColour => match depth {
-            15 | 16 => {
-                let v = u16::from_le_bytes([src[0], src[1]]);
-                let rgba = expand_a1r5g5b5(v, depth);
-                out.extend_from_slice(&rgba);
-            }
-            24 => {
-                // BGR on disk → RGB in memory.
-                out.extend_from_slice(&[src[2], src[1], src[0]]);
-            }
-            32 => {
-                // BGRA on disk → RGBA in memory.
-                out.extend_from_slice(&[src[2], src[1], src[0], src[3]]);
-            }
-            // Defensive: every caller runs `validate_depth` before
-            // driving this routine, but a returned `Err` is the
-            // documented contract for an unsupported depth — never a
-            // panic — so a future caller that forgets the validation
-            // still fails closed.
-            other => {
-                return Err(Error::unsupported(format!(
-                    "TGA: true-colour pixel depth {other} not supported"
+        out = vec![0u8; plane_len];
+        let mut pos = 0usize; // read position in `data`
+        let mut produced = 0usize; // pixels decoded so far
+        let mut row = 0usize; // stored row being filled
+        let mut x = 0usize; // pixels already in that row
+        while produced < pixel_count {
+            let Some(&packet) = data.get(pos) else {
+                return Err(Error::invalid("TGA: RLE stream truncated (no packet hdr)"));
+            };
+            pos += 1;
+            let count = (packet & 0x7F) as usize + 1;
+            let is_run = (packet & 0x80) != 0;
+            if count > pixel_count - produced {
+                return Err(Error::invalid(format!(
+                    "TGA: RLE packet overruns pixel array (produced={produced}, packet count={count}, total={pixel_count})"
                 )));
             }
-        },
-        ImageType::UncompressedGrayscale | ImageType::RleGrayscale => {
-            // 8 bpp luma, single byte.
-            out.push(src[0]);
+            if strict && count > width - x {
+                return Err(Error::invalid(format!(
+                    "TGA: strict mode rejects an RLE packet spanning a scan-line boundary \
+                     (row has {} pixel(s) left, packet encodes {count})",
+                    width - x
+                )));
+            }
+            // A run packet carries one pixel, a raw packet `count`.
+            let body = if is_run { wire } else { count * wire };
+            let Some(src) = data.get(pos..pos + body) else {
+                return Err(Error::invalid(if is_run {
+                    "TGA: RLE run packet truncated"
+                } else {
+                    "TGA: RLE raw packet truncated"
+                }));
+            };
+            pos += body;
+            // Hand the packet out a row at a time (a packet may run
+            // past a scan-line end unless `strict`), each piece
+            // straight into its final row.
+            let mut left = count;
+            let mut taken = 0usize; // raw-packet pixels consumed
+            while left > 0 {
+                let n = left.min(width - x);
+                let y = if top_down { row } else { height - 1 - row };
+                let dst = &mut out[y * stride + x * native..][..n * native];
+                if is_run {
+                    layout.fill(src, dst);
+                } else {
+                    layout.convert(&src[taken * wire..(taken + n) * wire], dst);
+                    taken += n;
+                }
+                left -= n;
+                x += n;
+                if x == width {
+                    x = 0;
+                    row += 1;
+                }
+            }
+            produced += count;
         }
-        // Defensive: `validate_header` already rejects `image_type == 0`,
-        // but as with the depth `match` above the contract is
-        // returned-error, not panic.
-        ImageType::None => {
-            return Err(Error::invalid("TGA: image_type == 0 reached pixel decoder"));
+    } else {
+        let need = pixel_count.checked_mul(wire).ok_or_else(too_large)?;
+        let Some(src) = data.get(..need) else {
+            return Err(Error::invalid("TGA: pixel data truncated"));
+        };
+        if top_down {
+            if layout == WireLayout::Byte {
+                out = src.to_vec();
+            } else {
+                out = vec![0u8; plane_len];
+                layout.convert(src, &mut out);
+            }
+        } else {
+            out = vec![0u8; plane_len];
+            for (dst_row, src_row) in out
+                .chunks_exact_mut(stride)
+                .rev()
+                .zip(src.chunks_exact(width * wire))
+            {
+                layout.convert(src_row, dst_row);
+            }
         }
     }
-    Ok(())
+
+    if header.is_right_to_left() {
+        for row in out.chunks_exact_mut(stride) {
+            match native {
+                1 => row.reverse(),
+                3 => row.as_chunks_mut::<3>().0.reverse(),
+                _ => row.as_chunks_mut::<4>().0.reverse(),
+            }
+        }
+    }
+    Ok(out)
 }

@@ -20,8 +20,8 @@
 //! harness completes in well under a minute on a laptop. Tune via
 //! `cargo bench -- --sample-size N` if needed.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use oxideav_tga::{EncodeOptions, TgaImage, decode, encode, encode_rgb8, encode_rgba8};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use oxideav_tga::{EncodeOptions, RowOrder, TgaImage, decode, encode, encode_rgb8, encode_rgba8};
 
 fn unc() -> EncodeOptions {
     EncodeOptions::default()
@@ -250,5 +250,70 @@ fn bench_encode(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_decode, bench_encode);
+// -- benches: megapixels per second ------------------------------------------
+
+/// One megapixel of mixed content: the left half of every row is flat
+/// bands (run packets under RLE), the right half a deterministic
+/// pseudo-random texture (raw packets). `bpp` 3 → `Rgb24`, 4 → `Rgba`
+/// with a varying alpha.
+fn mixed_megapixel(bpp: usize) -> Vec<u8> {
+    const N: usize = 1024;
+    let mut out = Vec::with_capacity(N * N * bpp);
+    let mut state = 0x2545_F491u32;
+    for y in 0..N {
+        for x in 0..N {
+            let px = if x < N / 2 {
+                let band = (x / 48) as u8;
+                [band.wrapping_mul(37), (y / 8) as u8, band, 0xFF]
+            } else {
+                // xorshift32
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state.to_le_bytes()
+            };
+            out.extend_from_slice(&px[..bpp]);
+        }
+    }
+    out
+}
+
+/// Decode and encode throughput on a 1024 x 1024 picture; criterion
+/// reports elements (pixels) per second, i.e. `Melem/s` = MP/s.
+fn bench_megapixel(c: &mut Criterion) {
+    const N: u32 = 1024;
+    let mut group = c.benchmark_group("megapixel");
+    group.throughput(Throughput::Elements(u64::from(N) * u64::from(N)));
+    group.sample_size(30);
+
+    for (bpp, name) in [(3usize, "24"), (4usize, "32")] {
+        let plane = mixed_megapixel(bpp);
+        let image = if bpp == 3 {
+            TgaImage::from_rgb8(N, N, plane).unwrap()
+        } else {
+            TgaImage::from_rgba8(N, N, plane).unwrap()
+        };
+        for (rle, kind) in [(false, "raw"), (true, "rle")] {
+            let opts = EncodeOptions::default().with_rle(rle);
+            let file = encode(&image, &opts).unwrap();
+            group.bench_function(format!("decode_{kind}_{name}bpp"), |b| {
+                b.iter(|| black_box(decode(black_box(&file)).unwrap()))
+            });
+            group.bench_function(format!("encode_{kind}_{name}bpp"), |b| {
+                b.iter(|| black_box(encode(black_box(&image), &opts).unwrap()))
+            });
+        }
+        // Bottom-up storage (descriptor bit 5 clear) adds the row flip.
+        let opts = EncodeOptions::default()
+            .with_rle(false)
+            .with_row_order(RowOrder::BottomUp);
+        let file = encode(&image, &opts).unwrap();
+        group.bench_function(format!("decode_raw_{name}bpp_bottom_up"), |b| {
+            b.iter(|| black_box(decode(black_box(&file)).unwrap()))
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_decode, bench_encode, bench_megapixel);
 criterion_main!(benches);
